@@ -1,0 +1,838 @@
+{
+  "record_version": 1,
+  "status": "Windows, Mac and Linux native hover components accepted on attributed cohorts; Linux caller postcondition failure retained",
+  "scope": "Observed operating-system cursor glyphs while hovering; this is not drag, multi-DPI or whole-window qualification.",
+  "components": {
+    "Windows": {
+      "status": "Previously accepted component, not rerun",
+      "GUI_source": "7ad3e2ab2e910c8f8962620d8f176d08dd4242f3",
+      "mixed_support_source": "56659f3532b7835e3847b175d3aaf1f3fee7e5c1",
+      "observations": 10,
+      "method": "Native GetCursorInfo/LoadCursor stock-shape comparison at owned window points, exact retained source cohort.",
+      "private_root_acceptance_sha256": "048bc1f37abfd22f096e716a1a80f81b1e4d015e3f82431a7eed77afb24f4511",
+      "limits": "No actual resize/drag, other DPI, Mac or Linux evidence inferred from the Windows component."
+    },
+    "macOS": {
+      "status": "ACCEPTED_PINNED_HOVER_COMPONENT",
+      "GUI_version": "0.17.27",
+      "GUI_source": "feddda297921e59434959097548812fb9653a9e0",
+      "GUI_kind": "Installed genuine signed public GUI",
+      "actual_OS_version_read_once": "27.2.1",
+      "architecture": "arm64",
+      "scale": 2,
+      "window_global_logical_bounds_xywh": [
+        6,
+        57,
+        1000,
+        1277
+      ],
+      "native_window_id": 12338,
+      "method": "Existing AX/CG ownership checks and move-only input; native target-window screencapture includes the current cursor and default shadow. Visual glyph classification does not infer a stock/private cursor constructor.",
+      "captures": 10,
+      "moves": 9,
+      "other_input_events": 0,
+      "duration_seconds": 6.545,
+      "observations": [
+        {
+          "label": "01-interior",
+          "pointer_global_logical_xy": [
+            107.0,
+            822.0
+          ],
+          "observed_native_shape": "arrow",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/01-interior.png",
+            "bytes": 3806,
+            "sha256": "13ba73b140fbc43e164bee439bd447d2f2a1458607041532c915487a9bea6f0d",
+            "dimensions": [
+              48,
+              63
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              298,
+              1590,
+              346,
+              1653
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "01-interior.png",
+            "bytes": 926893,
+            "sha256": "c0f84c2bb3a3ff157c473aba480c3befa209c9b30488c6cb5d9286a2cb29bb31",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "02-left",
+          "pointer_global_logical_xy": [
+            10,
+            695
+          ],
+          "observed_native_shape": "horizontal resize, left edge",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/02-left.png",
+            "bytes": 4391,
+            "sha256": "009d2c3aadb97cf979684f0282fd9ba6c59acbd7acd9a46008419565c3cf5e16",
+            "dimensions": [
+              56,
+              56
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              84,
+              1326,
+              140,
+              1382
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "02-left.png",
+            "bytes": 926186,
+            "sha256": "15d0645b8ae3242e603a05dc37e7945183a314efd7cd6257bc6cc46066bc8d9e",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "03-right",
+          "pointer_global_logical_xy": [
+            1002,
+            695
+          ],
+          "observed_native_shape": "horizontal resize, right edge",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/03-right.png",
+            "bytes": 4357,
+            "sha256": "e6134a57c8cdae35c6c06b1ea88bbdcdc15a8226785e086a82ba0a9f9ee4b10a",
+            "dimensions": [
+              56,
+              56
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              2084,
+              1326,
+              2140,
+              1382
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "03-right.png",
+            "bytes": 926155,
+            "sha256": "8bc3f573fb70126aad90d105b70b591e0a81073aee50b07e8b6429248bfe6a45",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "04-top",
+          "pointer_global_logical_xy": [
+            506,
+            61
+          ],
+          "observed_native_shape": "vertical resize, top edge",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/04-top.png",
+            "bytes": 4772,
+            "sha256": "64a2d744f75819d68301091ba660956f2539f678e43ce4d00b9493b83ddff162",
+            "dimensions": [
+              58,
+              59
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              1083,
+              49,
+              1141,
+              108
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "04-top.png",
+            "bytes": 927053,
+            "sha256": "e9ec7757d7c20a97d6f24ad33bf4c7fdd58941de87e09c68eb92f581f6b070ec",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "05-bottom",
+          "pointer_global_logical_xy": [
+            506,
+            1330
+          ],
+          "observed_native_shape": "vertical resize, bottom edge",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/05-bottom.png",
+            "bytes": 4737,
+            "sha256": "fb7d9bb54e8d0d205ecb0499408ceaa97608fd84545e6e2ffcd67b865536a724",
+            "dimensions": [
+              60,
+              58
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              1082,
+              2602,
+              1142,
+              2660
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "05-bottom.png",
+            "bytes": 927063,
+            "sha256": "e0bd4cdbc8da4d9b721801718fcaa4726f8730d09e33c77410deb360c3632c29",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "06-top-left",
+          "pointer_global_logical_xy": [
+            10,
+            61
+          ],
+          "observed_native_shape": "NW–SE diagonal resize, top-left corner",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/06-top-left.png",
+            "bytes": 6170,
+            "sha256": "06d914c7bd871cfe7c6919409efed6da31cf258b065b2543360a4b7931586a73",
+            "dimensions": [
+              63,
+              63
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              88,
+              54,
+              151,
+              117
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "06-top-left.png",
+            "bytes": 926970,
+            "sha256": "5547cb84b0fff17bd81e0d34e478a6347e3e4ed767f8ebd7c3d3f71bc7297e5a",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "07-top-right",
+          "pointer_global_logical_xy": [
+            1002,
+            61
+          ],
+          "observed_native_shape": "NE–SW diagonal resize, top-right corner",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/07-top-right.png",
+            "bytes": 6211,
+            "sha256": "d258272d867a1cb113da8fff697c97a1171e92a34619a4e878e5d824edaa0f53",
+            "dimensions": [
+              63,
+              63
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              2073,
+              54,
+              2136,
+              117
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "07-top-right.png",
+            "bytes": 926916,
+            "sha256": "fae72be5f4f9e0c0d0f7288575ff87a4bfd75bd382cedec039f58e8ec43e5248",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "08-bottom-left",
+          "pointer_global_logical_xy": [
+            10,
+            1330
+          ],
+          "observed_native_shape": "NE–SW diagonal resize, bottom-left corner",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/08-bottom-left.png",
+            "bytes": 6058,
+            "sha256": "27aaab3cc5017fa3f7f3ae484e09b45da9b7bf903c0fb442fdc377c62cae5ecc",
+            "dimensions": [
+              62,
+              62
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              88,
+              2594,
+              150,
+              2656
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "08-bottom-left.png",
+            "bytes": 926250,
+            "sha256": "1631d25400d6f6d950c5f1fc112f3ea54eeb6eb08bbc8d4683ab82e881011940",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "09-bottom-right",
+          "pointer_global_logical_xy": [
+            1002,
+            1330
+          ],
+          "observed_native_shape": "NW–SE diagonal resize, bottom-right corner",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/09-bottom-right.png",
+            "bytes": 5960,
+            "sha256": "279a08d99509a78984fe0ccdc3258c10229cf0382462c5e5ddf89ca851f003b6",
+            "dimensions": [
+              62,
+              62
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              2074,
+              2594,
+              2136,
+              2656
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "09-bottom-right.png",
+            "bytes": 926709,
+            "sha256": "ee77fa2b44f84a54313d96b7b3f62fcb94a4cc5bc6f599ed54c007426b01c494",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        },
+        {
+          "label": "10-original-interior",
+          "pointer_global_logical_xy": [
+            107.0,
+            822.0
+          ],
+          "observed_native_shape": "arrow, restored interior",
+          "same_ownership_before_after": true,
+          "derived_ROI": {
+            "path": "native-cursor-hover/macos-0.17.27/derived-rois/10-original-interior.png",
+            "bytes": 3806,
+            "sha256": "13ba73b140fbc43e164bee439bd447d2f2a1458607041532c915487a9bea6f0d",
+            "dimensions": [
+              48,
+              63
+            ],
+            "pixel_mode": "RGBA",
+            "derivation": "Exact rectangular region of the decoded canonical capture; no scaling, color conversion, repainting or reconstruction.",
+            "rectangle_in_canonical_pixels_left_top_right_bottom": [
+              298,
+              1590,
+              346,
+              1653
+            ],
+            "decoded_pixels_equal_canonical_region": true
+          },
+          "canonical_capture": {
+            "basename": "10-original-interior.png",
+            "bytes": 926893,
+            "sha256": "c0f84c2bb3a3ff157c473aba480c3befa209c9b30488c6cb5d9286a2cb29bb31",
+            "dimensions": [
+              2224,
+              2778
+            ],
+            "availability": "Private original retained locally; not included in repository because the full production Settings capture is private."
+          }
+        }
+      ],
+      "restoration": "Exact original pointer and foreground/window restored; geometry unchanged; every PID/birth/image/foreground/window/bounds/topmost/pointer guard passed.",
+      "first_results_retained": [
+        "Earlier within-window captures clipped glyphs and remained unclassified. They are retained privately and are not wrong-shape results.",
+        "The earlier system AX getter failed before input; its cause remains unknown. No OS/TCC/helper change was made to force a pass."
+      ],
+      "root_acceptance_sha256": "9f2b59d5ad4973fdfc58488f7345a0a484e5fd6683f0208772dbca210dfa8c66",
+      "private_final_packet_sha256": "52105b3209ce205a45b60d07e62f4dce2cbb7556becff4cbad5284f664b07b3f",
+      "limits": [
+        "Hover at this one observed native scale/window/OS only; no drag, geometry change, other DPI or completion of broader window validation.",
+        "Canonical full production Settings screenshots remain private. Public ROIs are explicitly derived, exact native pixels with coordinates and source hashes, not full screenshots.",
+        "Only the approved cursor ROIs with generic glyph/UI bits are public; no personal paths, account/workspace names, production Settings values, terminal contents or credentials are included.",
+        "No app/runtime/helper source change, new framework, TCC or OS permission change."
+      ],
+      "public_asset_kind": "DERIVED_PIXEL_PRESERVING_CURSOR_ROI"
+    },
+    "Linux": {
+      "status": "ACCEPTED_NATIVE_OBSERVATIONS_AND_POSITIVE_RESTORATION_WITH_ORIGINAL_CONTROLLER_POSTCONDITION_FAILED",
+      "GUI_version": "0.17.24",
+      "GUI_source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "GUI_MAIN_sha256": "1d6147044c9b9618055b786458e76af769b6b41e2c90e5f55f6e37c24c435ce3",
+      "GUI_release_run": 45200242229,
+      "GUI_artifact": 14834386522,
+      "GUI_kind": "Cached genuine signed Linux ARM GUI; not relabeled as current0.17.27",
+      "window_geometry_xywh": [
+        116,
+        82,
+        752,
+        516
+      ],
+      "display_pixels": [
+        1024,
+        768
+      ],
+      "backend": "X11",
+      "lab_helper": {
+        "repository": "fes/vm-evidence-lab",
+        "commit": "06fe82b7046d8116f42cddced8da07dc476c8ce9",
+        "driver_sha256": "245bb5bec27f6921369971060580ba35c2c8376b3f308bc8ec24df36b0b4fbf3",
+        "first_capability": "Top-level and cursor child used -B; the first capability passed without bytecode. That result does not qualify the entire original caller phase."
+      },
+      "observations_count": 10,
+      "first_capability_reused_as_first_observation": true,
+      "additional_native_reads": 9,
+      "observations": [
+        {
+          "label": "01-interior",
+          "global_pointer_xy": [
+            492,
+            534
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            4,
+            4
+          ],
+          "observed_native_shape": "arrow",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/01-interior.argb",
+              "bytes": 2304,
+              "sha256": "164c25946dc51a54b834c9e8c602d54d146cc6ea9224717a5a6daf582d8dbd03"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/01-interior.png",
+              "bytes": 666,
+              "sha256": "179823e800199fbd2977440622bd4764d32b124652384a13172acfce9b5d0002"
+            }
+          }
+        },
+        {
+          "label": "02-left",
+          "global_pointer_xy": [
+            120,
+            340
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "horizontal paired arrows, left edge",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/02-left.argb",
+              "bytes": 2304,
+              "sha256": "de36507b7aa614187988d1fdf63b06080e70213208c0b2cc48c3c797fca87daa"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/02-left.png",
+              "bytes": 666,
+              "sha256": "148d7b2092928d384cbd7922c3b203a744d0575d6341db2337761c11c69867f3"
+            }
+          }
+        },
+        {
+          "label": "03-right",
+          "global_pointer_xy": [
+            864,
+            340
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "horizontal paired arrows, right edge",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/03-right.argb",
+              "bytes": 2304,
+              "sha256": "c06f9c540d6fac555a2b6fe77d267decd5d5ff8d90f005bf0cda64e678088b4e"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/03-right.png",
+              "bytes": 662,
+              "sha256": "49706e5fd2f4fb8cce00e27140abffb3a0e86269c8e0e8f4c8b96fb274d8ea08"
+            }
+          }
+        },
+        {
+          "label": "04-top",
+          "global_pointer_xy": [
+            492,
+            86
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "vertical paired arrows, top edge",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/04-top.argb",
+              "bytes": 2304,
+              "sha256": "dc0c4e3cfa523c83d38b43d2ec079798107193f70b07941ea840e08d20b13802"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/04-top.png",
+              "bytes": 690,
+              "sha256": "e4e256e8e00c7c2941105dd9daf5145669306cf4389a59f79b8555e3529e4283"
+            }
+          }
+        },
+        {
+          "label": "05-bottom",
+          "global_pointer_xy": [
+            492,
+            594
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "vertical paired arrows, bottom edge",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/05-bottom.argb",
+              "bytes": 2304,
+              "sha256": "dc0c4e3cfa523c83d38b43d2ec079798107193f70b07941ea840e08d20b13802"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/05-bottom.png",
+              "bytes": 690,
+              "sha256": "e4e256e8e00c7c2941105dd9daf5145669306cf4389a59f79b8555e3529e4283"
+            }
+          }
+        },
+        {
+          "label": "06-top-left",
+          "global_pointer_xy": [
+            120,
+            86
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "NW–SE diagonal pair, top-left corner",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/06-top-left.argb",
+              "bytes": 2304,
+              "sha256": "6762fcf707071d9f74eabfb113706ae7fc4116322ae3fa5895f3d9cfb45fc50b"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/06-top-left.png",
+              "bytes": 817,
+              "sha256": "27c97049a9e1c64d6ea6f2834210a44d7a89bbd81a256a8a3bcb3dd1566aab77"
+            }
+          }
+        },
+        {
+          "label": "07-top-right",
+          "global_pointer_xy": [
+            864,
+            86
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "NE–SW diagonal pair, top-right corner",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/07-top-right.argb",
+              "bytes": 2304,
+              "sha256": "6e01e0be6036589516566a64b382cf99bfb6009e75917e205ac7ff49eea7ab77"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/07-top-right.png",
+              "bytes": 816,
+              "sha256": "79d13d3e4e34c7a05a1c89b8f6d77d7936c0d959fc49f990165a34d5833d1196"
+            }
+          }
+        },
+        {
+          "label": "08-bottom-left",
+          "global_pointer_xy": [
+            120,
+            594
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "NE–SW diagonal pair, bottom-left corner",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/08-bottom-left.argb",
+              "bytes": 2304,
+              "sha256": "d0d0228240994d01647352c5a93ed072365eccaf48ab65365256078c0c683651"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/08-bottom-left.png",
+              "bytes": 811,
+              "sha256": "31061b037ff1912089f125ec6b2b6dc5a8611f7191c51d20ca90924e571b468c"
+            }
+          }
+        },
+        {
+          "label": "09-bottom-right",
+          "global_pointer_xy": [
+            864,
+            594
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            12,
+            12
+          ],
+          "observed_native_shape": "NW–SE diagonal pair, bottom-right corner",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/09-bottom-right.argb",
+              "bytes": 2304,
+              "sha256": "2ceb14b6636076d0d949c9727e4b768f050f348828960e2f8625d05ac4991d33"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/09-bottom-right.png",
+              "bytes": 822,
+              "sha256": "fe7b636a4e8e3164bef522704db9bb58bcea0b6359d2eff6c27d7f36614fad88"
+            }
+          }
+        },
+        {
+          "label": "10-original-interior",
+          "global_pointer_xy": [
+            492,
+            534
+          ],
+          "dimensions": [
+            24,
+            24
+          ],
+          "hotspot_xy": [
+            4,
+            4
+          ],
+          "observed_native_shape": "arrow, restored interior",
+          "native_observe_status": "pass",
+          "name_hint_used_for_classification": false,
+          "raw_format": "premultiplied ARGB32, big-endian byte order",
+          "PNG_conversion": "Exact ARGB→RGBA channel permutation; premultiplied channel values retained. No shape reconstruction, scaling or unpremultiplication.",
+          "decoded_PNG_bytes_equal_permuted_native_raw": true,
+          "assets": {
+            "raw_argb": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/10-original-interior.argb",
+              "bytes": 2304,
+              "sha256": "164c25946dc51a54b834c9e8c602d54d146cc6ea9224717a5a6daf582d8dbd03"
+            },
+            "PNG": {
+              "path": "native-cursor-hover/linux-0.17.24/native-cursor-images/10-original-interior.png",
+              "bytes": 666,
+              "sha256": "179823e800199fbd2977440622bd4764d32b124652384a13172acfce9b5d0002"
+            }
+          }
+        }
+      ],
+      "classification": "Root visual review of all ten full native24×24 PNGs; no cursor-name, stock enum or private-constructor inference.",
+      "original_controller_result": {
+        "status": "FAILED_POSTCONDITION_AFTER_ALL_TEN_NATIVE_OBSERVATIONS",
+        "cause": "The stdin caller imported the driver without -B and created one PYC after the bytecode-free first capability.",
+        "PYC_bytes": 63414,
+        "PYC_allocated_bytes": 65536,
+        "PYC_sha256": "1d5434e9681fc3e6c2e5be2642b3dd52ac9f8252122d07cf92c3417670ef68f9",
+        "not_claimed": "The whole original phase was not bytecode-free and is not relabeled fully PASS. No native replay or product patch."
+      },
+      "minimal_caller_fix": {
+        "status": "QUALIFIED_CALLER_ONLY_COLD_IMPORT_CORRECTION",
+        "corrected_caller_sha256": "ebaa1345b3c518a508d9e929d841e30add8303bbb9ce67266c33db7bfc1e8e9d",
+        "change": "Only the existing SSH stdin caller argv adds -B before -. No driver, product or input change.",
+        "old_control": {
+          "guest_Python": "3.12",
+          "exit": 1,
+          "cache_count": 1,
+          "bytecode_bytes": 63439,
+          "bytecode_allocated_bytes": 65536
+        },
+        "corrected_control": {
+          "exit": 0,
+          "cache_count": 0
+        },
+        "native_or_process_calls": 0,
+        "native_replay": false,
+        "original_failed_phase_reclassified": false,
+        "limit": "Cold-import qualification only. The original native phase postcondition failure, script and bytecode remain unchanged."
+      },
+      "restoration": {
+        "normal_AltF4_exit": 0,
+        "GUI_supervisor_unit_cgroup_helpers": "Absent/inactive/empty after normal drain; accepted independently of the caller postcondition.",
+        "original_pointer_xy": [
+          166,
+          693
+        ],
+        "original_foreground_XID": 50331671,
+        "original_foreground_identity_restored": true,
+        "display_unchanged": [
+          1024,
+          768
+        ],
+        "preservation": "Linux95/all26/full cataloga62d/50operations, new7ec writer7 detached at HOME, existing authorization and SFTP fixtures unchanged.",
+        "resource_floor_held": true
+      },
+      "retained_other_limits": [
+        "A read-only transport-label case check refused before SSH; only that label was corrected, with no product replay.",
+        "Disposable isolated workspace autosaved false→true, while accounts/profiles/recipes remained zero.",
+        "Current X11/pinned GUI24 hover only; no drag, resize execution, other DPI, completion of broader window validation or SFTP qualification or uniform current-release qualification."
+      ],
+      "root_acceptance_sha256": "6e7370a81a1a96327fc8ff5edca86398dc5b351b0f7f676c6651d502c0e2b4b8",
+      "private_final_packet_sha256": "92decbc612f3e0cdc8590f8c7dea3ff7759aa8c7c4e5d5a76ffee223efe1bfde"
+    }
+  },
+  "broader_window_validation_complete": false,
+  "global_current_release_qualified": false
+}

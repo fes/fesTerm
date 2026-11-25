@@ -83,3 +83,6 @@ validation/dev-tunnels/ios-client-windows-native/*-query.json -text whitespace=-
 
 # Original iOS/macOS query reports retain captured bytes.
 validation/dev-tunnels/ios-client-mac-native/*-query.json -text whitespace=-blank-at-eof
+
+# Preserve original native cursor ARGB bytes without line-ending conversion.
+validation/native-cursor-hover/linux-0.17.24/native-cursor-images/*.argb binary

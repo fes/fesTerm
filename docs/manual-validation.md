@@ -2107,7 +2107,7 @@ remain active rolling qualification but do not independently keep M6 open.
 | --- | --- | --- | --- |
 | M6 native-window foundation | Windows, macOS, Linux desktop environments named by the M6 gate | Real focus, renderer/window startup, resize continuity, PTY input/output, compositor behavior | Manual pending; umbrella implementation [#8](https://github.com/fes/fesTerm/issues/8), Linux focus [#21](https://github.com/fes/fesTerm/issues/21), environment findings #32–#36 |
 | Reference terminal applications | Representative supported desktops; tool-specific platforms where applicable | Shell editing, `less`, Vim/Neovim, tmux, htop, GitHub Copilot CLI, `vttest`, selection and input semantics | M6 blocking evidence pending; [#26](https://github.com/fes/fesTerm/issues/26), checklist in `m6-compatibility-checklist.md`; Emacs remains useful rolling compatibility evidence and `tack` remains M10 work under [#27](https://github.com/fes/fesTerm/issues/27) |
-| Custom title bar and window chrome | Windows, macOS, Linux/X11 and Linux/Wayland; multiple scale factors | Drag/double-click, minimize/maximize/restore/close, snap/system menu behavior, multi-monitor DPI, narrow layout, chip drag interaction, accessibility. Inspect all eight edge/corner cursor shapes after full-frame controls/terminal rendering, return to interior text/link/control cursors, and check maximized/fullscreen plus native macOS traffic-light overlap. Hover must not resize; real drags retain platform ownership. | Headless final PlatformOutput and overlapping-control regressions are automated; actual OS cursor shape/precedence, native drag, DPI and accessibility remain manual pending; [#29](https://github.com/fes/fesTerm/issues/29) |
+| Custom title bar and window chrome | Windows, macOS, Linux/X11 and Linux/Wayland; multiple scale factors | Drag/double-click, minimize/maximize/restore/close, snap/system menu behavior, multi-monitor DPI, narrow layout, chip drag interaction, accessibility. Inspect all eight edge/corner cursor shapes after full-frame controls/terminal rendering, return to interior text/link/control cursors, and check maximized/fullscreen plus native macOS traffic-light overlap. Hover must not resize; real drags retain platform ownership. | Headless final PlatformOutput and overlapping-control regressions are automated. The [Windows, Mac27 and Linux24 native hover components](../validation/native-cursor-hover.json) are accepted on their separate pinned cohorts. The Linux caller postcondition failed after all ten observations; its correction is tracked separately. Actual drag, other DPI, broader control precedence and accessibility remain pending; [#29](https://github.com/fes/fesTerm/issues/29) |
 | Native macOS application menu | Logged-in macOS desktop | Menu installation and conventions; shortcuts; dynamic Close and Inspector state; focus-aware Copy/Paste without PTY leakage; native Services/Hide/Quit/window actions | Manual pending; [#44](https://github.com/fes/fesTerm/issues/44) |
 | Launcher and integrated chrome | Windows, macOS, Linux; narrow and scaled viewports | Visual comparison to approved mockups; keyboard-only launch flow; focused-chip-first compaction before overflow; fixed New Session placement; first/middle/last focus reveal; chip overflow/reorder/rename; stable vertical geometry and compactness | Usability pending; deterministic allocation/geometry regressions are automated, while native visual and interaction judgment remains in the umbrella |
 | Session Inspector | Windows, macOS, Linux; narrow and scaled viewports; local and SSH sessions | Overlay geometry without terminal resize; focus restoration; first-click dismissal; selectable facts; failure/diagnostic comprehension; active-session switching | Automated structurally; native visual/usability pass pending in umbrella |
@@ -7432,3 +7432,60 @@ booking is outside this closed case and has its own restoration obligation.
 Current totals are 24/24 (desktop 12, Android 6, iOS 6), no partial or unstarted
 cases. These are accepted pinned functional cases across attributed cohorts,
 not one current combined-release or global pixel/visual qualification.
+
+
+### Native cursor hover: pinned Windows, Mac and Linux components
+
+NP-01 / NP-02 / CP-09: the [native cursor hover record](../validation/native-cursor-hover.json)
+keeps the previously accepted ten Windows GetCursorInfo/LoadCursor observations
+separate from the Mac and Linux components; no platform is qualified by another
+platform's result. Hover is accepted on these cohorts; broader window-chrome, drag and other-DPI
+validation remain pending. PR #818's implementation is already merged.
+
+On the native arm64 macOS host (observed 27.2.1), installed signed GUI0.17.27
+from source `feddda29` showed an arrow in the interior, horizontal glyphs at the
+left/right edges, vertical glyphs at the top/bottom edges, the corresponding
+paired diagonals at all four corners, and an arrow after return. Ten native
+window captures used nine move-only events and no other input. All PID/birth/
+image/window/foreground/topmost/pointer guards passed; the original pointer,
+foreground and unchanged 1000×1277 window geometry were restored. This qualifies
+hover at the observed 2× scale, not dragging, resizing, other DPI or a global
+current-release claim. No stock/private cursor-constructor identity is inferred
+from the visual glyphs.
+
+The ten public images are explicitly **derived cursor ROIs**, copied from
+reviewed, pixel-preserving regions of the native captures. Each records
+its exact canonical pixel rectangle, decoded dimensions, source SHA-256 and
+byte size. Every decoded ROI pixel equals the corresponding canonical region;
+there is no scaling, color conversion, repainting or reconstruction. Full
+production Settings captures stay private, with only hashes, sizes and local
+availability published. No personal paths, account/workspace names or private
+production content are included.
+
+Earlier within-window crops clipped the glyphs and remain unclassified; they
+are not reported as wrong shapes. The earlier system AX getter failed before
+input and its cause remains unknown. No app/helper/runtime change, new framework,
+TCC or OS-permission change was used to obtain these observations.
+
+On Linux/X11, cached genuine GUI0.17.24 from source `697daa9a` showed the
+interior arrow, both edge axes, all four diagonal pairs and the returned arrow
+in ten native 24×24 cursor samples. The 752×516 window and 1024×768 display
+were unchanged. Normal GUI exit and supervisor/unit/cgroup drain passed; the
+original pointer and foreground were restored, and Linux95's protected actors,
+catalog, policy and fixtures were preserved. The helper was pinned separately
+to lab source `06fe82b7`; this is not a current combined-release claim.
+
+The ten Linux PNGs and original native ARGB files are published unchanged.
+Decoded PNG bytes equal the original ARGB-to-RGBA channel permutation, retaining
+premultiplied channel values. Shapes are visually classified from the native
+pixels, without relying on a cursor name or reconstructing a glyph.
+
+The original Linux controller **failed its postcondition after all ten cursor
+observations**: a caller import without `-B` created a 63,414-byte bytecode file
+with 65,536 allocated bytes. The observations and positive restoration are
+accepted separately; the whole controller phase is not reported as passing or
+bytecode-free. A separate caller-only correction added `-B` to the existing SSH stdin argv.
+An actual guest Python 3.12 cold import failed without it (one bytecode file)
+and passed with it (no bytecode); native and process APIs were forbidden. This
+qualifies only that caller correction, not the original failed phase. No native
+replay, resize/drag or other-DPI qualification is implied.
