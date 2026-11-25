@@ -6948,6 +6948,17 @@ settings, registration and Files policy. Mac parent/child behavior and its
 separate ambiguous warning are unchanged. Owned source fixtures are automated
 evidence only; corrected managed native qualification remains pending.
 
+The positive real-lock/full-Snapshot fixture uses a fixed logical clock with the
+same one-second budget, retaining actual Busy-before-release and two fresh reads.
+A logical-expiry regression refuses another read even after that lock is released;
+the existing real-clock cancellation/deadline/fatal-read cases remain unchanged.
+Production supplies the real monotonic clock and original operation deadline.
+This stabilizes test scheduling, not a native backend failure or a timeout policy.
+The separate revoked-generation fixture forces actual local-End lease contention
+before releasing it and uses the existing bounded Busy retry for the same exact
+owner/target, requiring StopRequested and retaining revocation/reconsent checks.
+The observed CI Busy is preserved; this adds no production stop/retry behavior.
+
 
 ### First confirmed remote Terminate completion
 

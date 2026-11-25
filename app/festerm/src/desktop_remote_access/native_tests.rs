@@ -1671,11 +1671,12 @@ fn desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot
         let held = std::cell::RefCell::new(Some(held));
         let reads = std::cell::Cell::new(0);
         let busy_seen = std::cell::Cell::new(false);
-        let result = final_enable_scope(
+        let start = std::time::Instant::now();
+        let result = final_enable_scope_with_clock(
             &state,
             &expected,
             &CancellationToken::new(),
-            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            start + std::time::Duration::from_secs(1),
             || {
                 reads.set(reads.get() + 1);
                 let result = store.snapshot();
@@ -1699,6 +1700,7 @@ fn desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot
                 }
                 result
             },
+            || start,
         );
         assert!(
             busy_seen.get(),
@@ -1715,6 +1717,53 @@ fn desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot
             assert_eq!(result, Err(Failure::ScopeChanged));
         }
     }
+}
+
+#[test]
+fn desktop_remote_access_final_scope_logical_expiry_never_reacquires_released_lock() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+    let expected = store.snapshot().unwrap();
+    let directory = storage::private_directory(&state, false).unwrap();
+    let held =
+        storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false).unwrap();
+    fs2::FileExt::try_lock_exclusive(&held).unwrap();
+    let held = std::cell::RefCell::new(Some(held));
+    let start = std::time::Instant::now();
+    let until = start + std::time::Duration::from_secs(1);
+    let now = std::cell::Cell::new(start);
+    let reads = std::cell::Cell::new(0);
+    let result = final_enable_scope_with_clock(
+        &state,
+        &expected,
+        &CancellationToken::new(),
+        until,
+        || {
+            reads.set(reads.get() + 1);
+            let result = store.snapshot();
+            assert!(result
+                .as_ref()
+                .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock));
+            drop(held.borrow_mut().take());
+            now.set(until);
+            result
+        },
+        || now.get(),
+    );
+    assert_eq!(
+        reads.get(),
+        1,
+        "expiry forbids another read even after lock release"
+    );
+    assert_eq!(
+        result,
+        Err(Failure::Observation {
+            boundary: ObservationBoundary::FinalScope,
+            kind: io::ErrorKind::WouldBlock,
+        })
+    );
+    assert_eq!(store.snapshot().unwrap(), expected);
 }
 
 #[test]

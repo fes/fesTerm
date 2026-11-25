@@ -1893,10 +1893,13 @@ fn revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_re
         Err(ControlError::Busy)
     );
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
-    fixture
-        .control()
-        .end_local(&fixture.owner, &running.target)
-        .unwrap();
+    assert_eq!(
+        retry_after_generation_contention(&fixture, &running.target, || {
+            fixture.control().end_local(&fixture.owner, &running.target)
+        })
+        .unwrap(),
+        festerm_sessiond::host_control::EndOutcome::StopRequested
+    );
     eventually(|| {
         fixture
             .control()

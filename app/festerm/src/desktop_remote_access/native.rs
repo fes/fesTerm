@@ -232,7 +232,21 @@ fn final_enable_scope(
     expected: &Snapshot,
     cancel: &CancellationToken,
     until: std::time::Instant,
+    read: impl FnMut() -> io::Result<Snapshot>,
+) -> Result<(), Failure> {
+    final_enable_scope_with_clock(root, expected, cancel, until, read, std::time::Instant::now)
+}
+
+// The positive real-lock fixture controls elapsed time, not storage or policy.
+// Production always supplies the real monotonic clock through the wrapper.
+#[cfg(any(test, not(target_os = "macos")))]
+fn final_enable_scope_with_clock(
+    root: &Path,
+    expected: &Snapshot,
+    cancel: &CancellationToken,
+    until: std::time::Instant,
     mut read: impl FnMut() -> io::Result<Snapshot>,
+    mut now: impl FnMut() -> std::time::Instant,
 ) -> Result<(), Failure> {
     completion_event(
         root,
@@ -258,7 +272,7 @@ fn final_enable_scope(
             );
             return Err(Failure::Cancelled);
         }
-        if last_busy.is_some() && std::time::Instant::now() >= until {
+        if last_busy.is_some() && now() >= until {
             break Err(last_busy.take().expect("retained contention error"));
         }
         match read() {
@@ -266,7 +280,7 @@ fn final_enable_scope(
                 last_busy = Some(error);
                 std::thread::sleep(
                     until
-                        .saturating_duration_since(std::time::Instant::now())
+                        .saturating_duration_since(now())
                         .min(std::time::Duration::from_millis(25)),
                 );
             }

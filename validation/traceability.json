@@ -7407,6 +7407,7 @@
         "desktop_start_parent_current_does_not_retry_fatal_read",
         "native_start_completion_retains_operation_and_original_deadline_without_replay",
         "desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot",
+        "desktop_remote_access_final_scope_logical_expiry_never_reacquires_released_lock",
         "desktop_remote_access_final_scope_bounds_busy_cancel_and_fatal_reads",
         "native_start_transitioning_final_read_busy_is_distinct_without_manager_start",
         "native_start_final_fence_refuses_expired_cancelled_fatal_and_superseded_reads",
