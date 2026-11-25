@@ -1,0 +1,208 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional iOS-to-Mac creation-ON case23; navigation variance open",
+  "case_number": 23,
+  "direction": {
+    "client": "iOS Simulator",
+    "server": "macOS ARM VM"
+  },
+  "creation_policy": "ON",
+  "functional_case_accepted": true,
+  "global_TUI_identity_qualified": false,
+  "full_24_case_matrix_complete": false,
+  "sources": {
+    "iOS": {
+      "version": "0.17.26",
+      "binary_sha256": "8389c03c5c94200f88a4d09fc02148d7d1523f29bafb6a52bcc17698500312e1",
+      "producer_base": "0e86be3040f5ce82c3b7c56a452951318ccf317a",
+      "producer_tree": "22dad36b212d66e3de24781f8c60677e6724d829"
+    },
+    "Mac_HOST_and_local_GUI": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "kind": "genuine signedHOST/currentversioned26sessiond and signedlocalGUI26; not public27combinedreleasequalification"
+    },
+    "supporting_SDK": "Prior accepted ON43 service/policy evidence, independently attributed and not rerun.",
+    "CLI": "Copilot1.0.112 fresh unauthenticated initial screen/no model request"
+  },
+  "workflow": {
+    "policy_epoch": 47,
+    "creation": "One persistent Create5e40/gen1795562989602610768; oneCreated/new2actors, signed26 zsh-l/HOME, no replacement/recreation.",
+    "input_reconnect": "Actual System/app-owned touch echo+Return and same-generationforeground; normal CLI exits/HOME/detach writer7.",
+    "saved_profile": {
+      "ID_prefix": "c0f39c63",
+      "public_name": "Lab sharedLab sharedLab sharedLab shared",
+      "name_characters": 40,
+      "behavior": "AttachOnly exactoriginalgeneration",
+      "old_four_profiles_and_other_metadata_exact": true,
+      "saved_reopen_passed": true
+    },
+    "all_actors": 18,
+    "catalog_sha256": "7ec3ae63da01f614961939a1c2ff692273247f7580d44dd602d9ea106da1c5bd",
+    "operations": 27,
+    "local_shell_attribution": "Both isolated genuineGUI references initially launched sh-l, then explicit exec zsh-l in the same ownedPTY. No environment-unset normalization/control used.",
+    "cleanup": "Normal remote/localCLI and ownedGUI/shell/carrier exit; Macmode10 restored; Windows82sameworker/all33 resumed; allSimulatorsShutdown/allVMsRunning, originalsettings/olderactors/records preserved."
+  },
+  "comparisons": [
+    {
+      "grid": [
+        44,
+        34
+      ],
+      "reports": [
+        {
+          "path": "ios-client-mac-native/ios-mac-on-44x34-remote-query.json",
+          "bytes": 1367,
+          "sha256": "485bb321c110b82c5b6cf62148ea75163db5071ff641a5525b0871160e9174ed"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-on-44x34-local-query.json",
+          "bytes": 1373,
+          "sha256": "d43df91093d333b0c5a5a50427658460f13bfe22e0e0234016b4966143d44f8d"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-mac-native/ios-mac-on-44x34-remote-copilot.png",
+          "bytes": 235230,
+          "sha256": "c5d652f63f9de05907b69bfd0ac582a68a0c98242918e150b411457aa576704c"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-on-44x34-local-copilot.png",
+          "bytes": 46472,
+          "sha256": "a774e3671d3ead67ca2e509315bd948c99490f791a1202f69b51cd060252806f"
+        }
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true,
+      "PENDIN_changed_both": true,
+      "descriptor_states_restored_both": true,
+      "local_font_points": 14,
+      "remote_font_preset": "Large14"
+    },
+    {
+      "grid": [
+        53,
+        42
+      ],
+      "reports": [
+        {
+          "path": "ios-client-mac-native/ios-mac-on-53x42-remote-query.json",
+          "bytes": 1367,
+          "sha256": "b6077f2fd7136a66cb50c4ba8235665e2468ef6cb322287c18a0f26d6d708afa"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-on-53x42-local-query.json",
+          "bytes": 1373,
+          "sha256": "c78af34a6c8666212be49c496ec66ed92ccebd03bdd71d5618eb1527c57cabe4"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-mac-native/ios-mac-on-53x42-remote-copilot.png",
+          "bytes": 214923,
+          "sha256": "949c2983aec198bad3261c10ce29b53a168902016e2c211a86353dba06032ec4"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-on-53x42-local-copilot.png",
+          "bytes": 51721,
+          "sha256": "dda9a8a8a48df80ca37ab823acd1944b08003e02e18b3e571d6c39e8c3e82ad4"
+        }
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true,
+      "PENDIN_changed_both": true,
+      "descriptor_states_restored_both": true,
+      "local_font_points": 14,
+      "remote_font_preset": "Normal11.5"
+    }
+  ],
+  "visual_observations": {
+    "current_body": "At default14 local in both grids, full controlledCWD suffixr22, MCP wording/bodywrap/palette/footer agree with corresponding remote images.",
+    "open_tall_navigation": "Local53x42 shows Pull requests navigation; corresponding remote shows Issues plus an arrow. Identical navigation/globalvisualcompletion/pixelidentity not claimed.",
+    "historical_Android11pt": "Earlier CWD-label/MCP differences remain historical with unknown cause; not relabeled fixed by current iOS/default14 comparisons."
+  },
+  "assets": {
+    "ios-mac-on-44x34-remote-query.json": {
+      "path": "ios-client-mac-native/ios-mac-on-44x34-remote-query.json",
+      "bytes": 1367,
+      "sha256": "485bb321c110b82c5b6cf62148ea75163db5071ff641a5525b0871160e9174ed"
+    },
+    "ios-mac-on-44x34-local-query.json": {
+      "path": "ios-client-mac-native/ios-mac-on-44x34-local-query.json",
+      "bytes": 1373,
+      "sha256": "d43df91093d333b0c5a5a50427658460f13bfe22e0e0234016b4966143d44f8d"
+    },
+    "ios-mac-on-44x34-remote-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-on-44x34-remote-copilot.png",
+      "bytes": 235230,
+      "sha256": "c5d652f63f9de05907b69bfd0ac582a68a0c98242918e150b411457aa576704c"
+    },
+    "ios-mac-on-44x34-local-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-on-44x34-local-copilot.png",
+      "bytes": 46472,
+      "sha256": "a774e3671d3ead67ca2e509315bd948c99490f791a1202f69b51cd060252806f"
+    },
+    "ios-mac-on-53x42-remote-query.json": {
+      "path": "ios-client-mac-native/ios-mac-on-53x42-remote-query.json",
+      "bytes": 1367,
+      "sha256": "b6077f2fd7136a66cb50c4ba8235665e2468ef6cb322287c18a0f26d6d708afa"
+    },
+    "ios-mac-on-53x42-local-query.json": {
+      "path": "ios-client-mac-native/ios-mac-on-53x42-local-query.json",
+      "bytes": 1373,
+      "sha256": "c78af34a6c8666212be49c496ec66ed92ccebd03bdd71d5618eb1527c57cabe4"
+    },
+    "ios-mac-on-53x42-remote-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-on-53x42-remote-copilot.png",
+      "bytes": 214923,
+      "sha256": "949c2983aec198bad3261c10ce29b53a168902016e2c211a86353dba06032ec4"
+    },
+    "ios-mac-on-53x42-local-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-on-53x42-local-copilot.png",
+      "bytes": 51721,
+      "sha256": "dda9a8a8a48df80ca37ab823acd1944b08003e02e18b3e571d6c39e8c3e82ad4"
+    }
+  },
+  "limits": [
+    "One initial local interpreter refusal before product dispatch; same previously qualified Python3.13 used.",
+    "First short local controller missing allocation field refused before guest work, and first stale short geometry guard exited1 before GUI launch. The corrected mechanically retargeted carrier launched only one actual short signed GUI.",
+    "Tall planned 468\u00d7854 clamped to 468\u00d7838; actual native stty and GUI 53\u00d742 at default14. No resize. Positive short final last-line field name Mac45/all16 was retained stale template wording; its real authoritative preceding scope shows Mac47/all18/writer7 and 27 operations; final tall verifier emitted correct label.",
+    "First Windows resume read Starting/no failure, then original exact Listening82 settled. No restart or policy mutation.",
+    "Physicalscale/raster/chrome/topoffset and remoteLarge/Normal versuslocaldefault14 differ; no exactpixelidentity.",
+    "Built-in UIKit software keyboard visibility remains unqualified, distinct from actual System input and visible app-owned key touch.",
+    "The user productionGUI/HOST27 upgrade is a separate private qualification; these native case23 producers remain pinned26. No private production captures or data are included."
+  ],
+  "root_acceptance_sha256": "f521f1bf59d7a378f3f03bf1a44ee7506a08ad0771ac1ac089b97d75cbde2b05",
+  "candidate_sha256": "05f3fc6e6577d630b89dddff862f1aabc37ca55df47ce033b41efbb612874957",
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 23,
+    "desktop_accepted": 12,
+    "mobile_accepted": 11,
+    "Android_accepted": 6,
+    "iOS_accepted": 5,
+    "partial": 0,
+    "unstarted": 1,
+    "remaining_iOS": [
+      "MacOFF"
+    ]
+  }
+}

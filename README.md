@@ -144,9 +144,22 @@ private with hashes and provenance; two iOS originals and four raw reports are p
 The [iOS→Windows creation-OFF record](validation/dev-tunnels/ios-client-windows-native-off.json)
 adds same-generation System/app-key input, foreground/saved reopen and two fresh
 matched-grid references, with the Windows72 SDK policy evidence attributed separately.
-There are twenty-one accepted pinned functional cases (desktop 12/12, mobile 9/12),
-one partial case and two unstarted cases. Three iOS cases remain; the full
-24-case matrix and combined-release qualification remain incomplete. A separate
+The [iOS→Linux creation-ON record](validation/dev-tunnels/ios-client-linux-native-on.json)
+adds one creation under policy epoch 93 and two fresh query/CLI comparisons.
+It explicitly combines that phase with a later saved AttachOnly reopening under
+restored creation-OFF epoch 95 and separately attributed SDK epoch 89 policy proof.
+The [iOS→Mac creation-ON record](validation/dev-tunnels/ios-client-mac-native-on.json)
+adds one persistent login-shell creation at HOME, saved AttachOnly reopening and
+two fresh comparisons. With the local font at its default 14 points, current
+body text, the CWD label and MCP wording agree. Tall top navigation still differs;
+the earlier Android 11-point text differences remain unexplained.
+The [iOS→Mac creation-OFF record](validation/dev-tunnels/ios-client-mac-native-off.json)
+completes the pinned functional matrix: all twenty-four cases are accepted
+(desktop 12/12, Android 6/6, iOS 6/6), with no partial or unstarted cases.
+Both current OFF references agree on body text, CWD, MCP wording and navigation.
+Earlier ON navigation and Android 11-point text differences remain unexplained.
+This is acceptance of attributed native cohorts, not pixel identity or
+qualification of one current combined release. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
 qualifies one historical matched pair; it does not establish the current full
 workflow case by itself. Explicit

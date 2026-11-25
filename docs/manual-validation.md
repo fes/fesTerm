@@ -1172,10 +1172,11 @@ qualification remains pending. The original DSR cursor fixture mismatch and
 changed CLS control are retained, as are the open #800 recovery and #795 credential-persistence limits.
 The #803 reporting correction is merged as #805; its original precise read
 boundary remains unproved. No final-release status is inferred. The matrix now
-has twenty-one accepted pinned functional cases (desktop12/12, mobile9/12),
-one partial case and two unstarted cases after the separately attributed
-Android OFF/ON pairs and iOS Linux OFF/Windows ON cases below. The Mac exact visual-text
-variance remains open; these counts do not claim global TUI identity. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+has all twenty-four pinned functional cases accepted (desktop 12/12, Android6/6,
+iOS6/6), with no partial or unstarted cases after the separately attributed
+Android and iOS records below. Historical
+Android 11-point text variance and historical iOS ON tall-navigation variance remain
+open; these counts do not establish identical overall TUI output. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -7067,9 +7068,10 @@ exact-owned pidfd SIGINT cleanup preserved idle Bash. The historical private
 ledger is retained with its recorded PID absent, not a live private-shell proof.
 The later PR902 corrected26 APK was not used in either case. These accepted
 Linux components remain two accepted mobile cases. With the Android→Windows
-and Android→Mac OFF/ON cases below, current totals are21/24 (desktop12/12,
-mobile9/12), one partial and two unstarted; three iOS cases, Mac exact
-visual-text variance and combined-release qualification remain open.
+and Android→Mac pairs and later iOS records below, current totals are 24/24
+(desktop 12/12, Android6/6, iOS6/6), with no partial or unstarted cases.
+Historical Android text and ON navigation differences and qualification of one
+combined release remain open; functional counts do not claim identical visuals.
 
 
 ### Windows reviewed Files restoration after historical Task failure
@@ -7198,9 +7200,10 @@ local PNG equals ON bytes, but independent capture provenance distinguishes
 ON CLI77987 from OFF CLI90612, its GUI88544/window1345 and phase receipts.
 Byte equality is not evidence of capture reuse. All originals are unedited; no
 config/vault/credential-reference/private SDK logs are published.
-Current totals are21/24 pinned functional cases (desktop12/12, mobile9/12),
-one partial and two unstarted. All six Android functional cases and iOS Linux
-OFF/Windows ON/OFF are accepted; three iOS cases and the named Mac visual-text variance remain open.
+Current totals are 24/24 pinned functional cases (desktop 12/12, Android6/6,
+iOS6/6), with no partial or unstarted cases. All six Android and six iOS cases
+are accepted on their attributed producers. Historical Android text variance
+and ON navigation variance remain unexplained; the current OFF pairs agree.
 
 
 ### iOS→Linux OFF pinned functional case19
@@ -7252,10 +7255,10 @@ public saved label remain explicit. The local transient Shell autosaved zero
 profiles; that is not loss of an original saved profile. No new SDK dispatch
 occurred in the local comparison phase. All33 actors/catalog/29 operations
 and original metadata/settings survived; app/CLI/Simulator/localGUI/CMD/Job/
-input/task groups drained normally. Current totals after the OFF case below are21/24 functional cases
-(desktop12/mobile9: Android6/iOS3), one partial/two unstarted. Linux ON,
-Mac ON and Mac OFF remain; no blanket combined-release or
-built-in UIKit keyboard-visibility acceptance follows.
+input/task groups drained normally. At case 20 acceptance, totals were 20/24
+functional cases (desktop 12, Android 6, iOS 2), with one partial and three
+unstarted cases. Later accepted cases are recorded below; these results do not
+establish a combined-release qualification or built-in UIKit keyboard visibility.
 
 
 ### Native test registry observations during local adoption/detach
@@ -7304,7 +7307,128 @@ cleanup-reserve refusals and separately authorized conservative local disk
 booking (256MiB OS plus8MiB controls, no post-start rebase) remain recorded.
 No unknown timing/probe/I/O cause is inferred. The separate future-main
 registry-observation test correction is not relabeled as native product
-behavior or as the immutable release27 source. Totals are21/24 functional
-cases (desktop12/mobile9: Android6/iOS3), one partial/two unstarted; iOS Linux
-ON and Mac ON/OFF remain. Built-in UIKit keyboard visibility, combined-current-
-release acceptance and Mac CWD-label/MCP visual text variance remain open.
+behavior or as the immutable release 27 source. At case 21 acceptance, totals
+were 21/24 functional cases (desktop 12, Android 6, iOS 3), with one partial and
+two unstarted cases. Later accepted cases are recorded below. Built-in UIKit
+visibility, qualification of a combined release and historical Android text
+variance remain separate.
+
+
+### iOS→Linux ON pinned functional case 22
+
+DT-02 / MOB-06 / HOST-02: the [case 22 record](../validation/dev-tunnels/ios-client-linux-native-on.json)
+qualifies one ordinary persistent creation under ON epoch 93: one Created result,
+no Recreated result, new session `7ec` with generation 1795557643168952202 and a
+signed version 24 Bash login shell at HOME. System input, visible app-owned key
+input and Return, foreground reopening of the same generation, and two fresh
+44×34/53×42 query/Copilot pairs passed with normal CLI exit. Original creation
+OFF was restored at epoch 95. A separate later phase saved one new 3a94557e
+AttachOnly profile with the actual name `Lab sharedLab shared`, then reopened,
+echoed to and detached that exact generation under OFF95. These phases are
+explicitly composed; saved reopening was not observed under ON. Earlier Linux epoch 89
+SDK ON policy/authorization proof remains separately attributed and was not rerun.
+
+All ten singleton observations, 202 bytes and DSR1,1 agree at both grids. Actual
+LC_ALL was unset remotely and en_US.UTF-8 locally. Four original screenshots
+and four raw reports are public. The local GUI24 font was at its default 14 points;
+iOS used Large (14) and Normal (11.5). Physical scale, rasterization and chrome
+differ, without normalization or pixel identity. iOS binary `8389` (version 0.17.26) from old base
+`0e86` and tree `22dad`, signed HOST/local GUI 0.17.24 from source `697`, and SDK89 are not
+relabeled as public 0.17.27 or as a current production/TestFlight installation.
+Built-in UIKit keyboard visibility remains unqualified.
+
+Initial transitional Enable observations, a corrected read-only Windows-field
+assumption, one uncommitted touch-key correction and old local seed/display-timer
+identity guard refusals remain retained; no unknown cause is inferred. The
+original three profiles, other public metadata/preferences, all original 24 plus
+new two actors, catalog prefix `a62d` and 50 operations, detached writer 7 at HOME, original
+1024×768 display and timer/CLI/GUI/carrier/Simulator cleanup checks passed without
+policy or VM debt. At case 22 acceptance, totals were 22/24 (desktop 12, Android 6,
+iOS 4), with no partial cases and two unstarted cases. This does not establish
+identical overall TUI output, one combined-release qualification or additional
+native keyboard coverage.
+
+
+### iOS→Mac ON pinned functional case 23; navigation variance open
+
+DT-02 / MOB-06 / HOST-02: the [case 23 record](../validation/dev-tunnels/ios-client-mac-native-on.json)
+adds one persistent creation under ON47: session `5e40`, generation
+1795562989602610768, with signed version 26 zsh running as a login shell at HOME.
+System input, app-owned key input and Return, foreground reopening, a new
+`c0f39c63` AttachOnly save/reopen with the actual 40-character public name, and two
+fresh 44×34/53×42 query/Copilot comparisons passed. All ten singleton observations,
+202 bytes, DSR1,1, six actual environment values, PENDIN changes and descriptor
+restoration agree except for case labels and elapsed time. Prior SDK ON43 policy
+and service evidence remains separately attributed and was not rerun. The cached
+iOS binary `8389` (version 0.17.26) from old base `0e86` and tree `22dad` and signed Mac HOST/local
+GUI 0.17.26 from `edace` remain the actual producers. The separate production GUI/HOST 0.17.27
+upgrade and TestFlight qualification are not part of this case.
+
+Four public original screenshots and four raw reports show that the current
+local default 14-point CWD label, including suffix `r22`, MCP wording, body wrapping
+and palette agree with the corresponding iOS frames at both grids. Tall local
+top navigation shows Pull requests; remote navigation shows Issues plus an arrow.
+That variance remains open. Identical navigation, pixel identity and identical
+overall TUI output are not claimed. Historical Android 11-point CWD/MCP differences
+remain unexplained and are not relabeled fixed. Both isolated local GUIs initially
+launched sh as a login shell, then explicitly used exec to replace it with a zsh
+login shell in the same owned PTY. No environment-unset normalization or alternate
+comparison was used. Remote Large/Normal, local default 14 points in mode 20 at 1×,
+chrome, rasterization and top offset differ.
+
+Remote/local CLI, shell, GUI and carrier cleanup and mode 10 restoration passed.
+All 18 actors, catalog prefix `7ec3` and 27 operations, original ON47/settings/older records and
+the same Windows82 worker and all 33 actors survived resume. All Simulators were
+Shutdown and all VMs were Running, without memory-save debt. Initial interpreter,
+allocation and geometry refusals, planned tall 468×854 clamping to actual 468×838
+at 53×42, and stale final-label wording remain scoped to their authoritative facts.
+At case 23 acceptance, totals were 23/24 functional cases (desktop 12, Android6,
+iOS5), with no partial cases and one unstarted Mac OFF case. The case below
+completes the pinned functional matrix. Built-in UIKit visibility, qualification
+of a combined release and the stated visual differences remain separate.
+
+
+### iOS→Mac OFF pinned functional case 24; functional matrix complete
+
+DT-02 / MOB-06 / HOST-02: the [case 24 record](../validation/dev-tunnels/ios-client-mac-native-off.json)
+completes all 24 pinned functional cases. Under OFF49, ordinary discovery and
+disabled-creation UI led to the existing c0f39c63 AttachOnly profile and the same
+5e40 generation 1795562989602610768 created in case 23. System input, visible
+app-owned key input, foreground reconnect and two fresh 44×34/53×42 query/CLI
+pairs passed, without Create, Ensure, End, a new profile or SDK replay. Prior
+OFF45 service-policy negatives are separately attributed.
+
+Both complete raw pairs agree except for case labels and elapsed time, including
+ten singleton observations, 202 bytes, DSR1,1, six actual environment values,
+PENDIN and terminal/descriptor restoration. Four original screenshots and four
+raw reports are public. Current OFF body text, full CWD, MCP wording, navigation,
+wrapping and palette agree at both grids; both tall images include Pull requests.
+Older ON navigation and Android 11-point text differences remain unexplained,
+not relabeled fixed. No pixel identity or identical overall TUI output is claimed.
+The local OFF PNGs are byte-identical to the corresponding ON local PNGs, with
+separate fresh OFF source captures, CLI identities, raw reports and phase proofs
+retained. No crop, reconstruction or private production/control capture is used.
+
+Cached iOS binary `8389` (version 0.17.26) from old base `0e86`/tree `22dad`
+and signed Mac GUI/HOST 0.17.26 from `edace` remain the actual producers.
+Local default 14-point references used zsh-l
+in the same owned shell PID from real HOME, without environment normalization,
+at temporary mode 20/1×. Remote Large/Normal, physical scale and chrome differ.
+This is not public 0.17.27/TestFlight or physical-device input qualification; built-in
+UIKit software-keyboard visibility remains unqualified.
+
+Original ON51 reached Listening on the first Enable. All 18 actors, catalog prefix `7ec3` with
+27 operations, detached writer 11 at HOME and all seven iOS metadata leaves were
+preserved; all 13 Simulators were Shutdown. Windows82 resumed with the same
+worker/task and all 33 actors, catalog prefix `c265`, 29 operations and writer 15. Normal GUI/CLI/zsh exit,
+independent mode 10 restoration and one removal of stopped registrations were
+verified at the closed case boundary. The tall display carrier exit 1 and first
+strict drain refusal are retained: its finally transaction and independent
+CoreGraphics/native/PTY observations proved restoration and cleanup. A later
+post-owner TypeError is also retained; read-only verification supplied final
+preservation without repeating owner input. A separate later TestFlight memory
+booking is outside this closed case and has its own restoration obligation.
+
+Current totals are 24/24 (desktop 12, Android 6, iOS 6), no partial or unstarted
+cases. These are accepted pinned functional cases across attributed cohorts,
+not one current combined-release or global pixel/visual qualification.
