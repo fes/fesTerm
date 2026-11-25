@@ -14,6 +14,107 @@ pub(super) fn app() -> MobileApp {
 }
 
 #[test]
+fn files_host_picker_refuses_terminal_mutation_and_attachment_actions() {
+    let mut app = app();
+    app.open_files_hosts_named("Typed Files name".into());
+    assert_eq!(
+        app.hosts.files_profile_name.as_deref(),
+        Some("Typed Files name")
+    );
+    for action in [
+        Action::Create,
+        Action::Attach(0),
+        Action::EnsureProfile(0),
+        Action::ReviewEnd(0),
+        Action::ConfirmEnd,
+        Action::QuickNew,
+        Action::QuickCreate,
+        Action::AdvancedOwner,
+        Action::Prepare,
+        Action::Load,
+        Action::Import,
+        Action::RecoverOriginals,
+        Action::ReviewOriginal(0),
+        Action::ConfirmForget,
+    ] {
+        assert!(app
+            .host_action(&egui::Context::default(), action)
+            .unwrap_err()
+            .contains("Shell actions"));
+    }
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(app.hosts.originals.is_empty() && app.files.is_none() && app.tabs.is_empty());
+    app.open_hosts();
+    assert!(!app.hosts.files_only);
+    assert!(app.hosts.files_profile_name.is_none());
+}
+
+#[test]
+fn files_privacy_invalidation_between_admission_and_registration_never_mints_a_new_epoch() {
+    let app = app();
+    let ctx = egui::Context::default();
+    let mut rendered = ctx.run_ui(
+        egui::RawInput {
+            focused: true,
+            ..Default::default()
+        },
+        |_| {},
+    );
+    rendered.textures_delta.clear();
+    let epoch = app.files_admission_epoch(&ctx).unwrap();
+    let callback = app.sink.live.content_lock_callback();
+    callback();
+    assert_ne!(app.sink.live.host.epoch(), epoch);
+    assert!(app.files_admitted_token(epoch).is_err());
+    assert!(
+        app.files_admission_epoch(&ctx).is_err(),
+        "old UI admission remains stale until a new foreground frame"
+    );
+}
+
+#[test]
+fn files_host_picker_hides_pairing_history_and_terminal_import_on_failed_connection() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut app = app();
+    app.open_files_hosts();
+    app.hosts.selected = Some(client_recipe());
+    app.hosts.locator = "controlled.fixture".into();
+    app.hosts.ordinary_selected = true;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    assert!(harness
+        .query_by_label("Advanced owner connection…")
+        .is_none());
+    harness.get_by_label("Details & recovery").click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Check protected history").is_none());
+    assert!(harness.query_by_label("Import public profiles").is_none());
+}
+
+#[test]
+fn files_host_picker_never_offers_editable_locator_or_manual_pairing() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut app = app();
+    app.open_files_hosts();
+    // A legacy or stale locator must never reveal a manual owner-pairing path.
+    app.hosts.locator = "controlled.fixture".into();
+    assert!(!app.hosts.ordinary_selected);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Verify host").is_none());
+    assert!(harness.query_by_label("Connect this device").is_none());
+    harness.get_by_label("Details & recovery").click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Host locator").is_none());
+    assert!(harness.query_by_label("Check protected history").is_none());
+    assert!(harness.query_by_label("Import public profiles").is_none());
+}
+
+#[test]
 fn mobile_host_open_is_offline_and_lock_callback_cancels_without_another_frame() {
     let mut app = app();
     app.open_hosts();
@@ -5026,7 +5127,9 @@ fn mobile_files_retirement_preserves_target_metadata_and_fences_host_replacement
         account,
         locator: "build.fixture".into(),
         label: "Files fixture".into(),
-        expected: expected.clone(),
+        expected: (&expected).into(),
+        profile: None,
+        profile_name_hint: None,
     });
     app.files_ctx.host_cancel = Some(token.clone());
     app.invalidate_host_account("unrelated");
@@ -5037,16 +5140,17 @@ fn mobile_files_retirement_preserves_target_metadata_and_fences_host_replacement
         app.files_ctx.host.as_ref().unwrap().locator,
         "build.fixture"
     );
-    assert!(same_files_host(&expected, &expected));
+    let pinned = crate::host_files_profiles::FilesHostIdentity::from(&expected);
+    assert!(same_files_host(&pinned, &expected));
     let mut changed = expected.clone();
     changed.installation = HostId::new();
-    assert!(!same_files_host(&expected, &changed));
+    assert!(!same_files_host(&pinned, &changed));
     let mut changed = expected.clone();
     changed.principal = Default::default();
     if changed.principal == expected.principal {
         changed.route.host.host = HostId::new();
     }
-    assert!(!same_files_host(&expected, &changed));
+    assert!(!same_files_host(&pinned, &changed));
     app.close_files();
     assert!(app.files_ctx.host.is_none());
 }

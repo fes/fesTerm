@@ -384,7 +384,8 @@ change; native/provider qualification remains separate.
   remain unchanged.
 - **GUI/action edges affected:** `TUNNEL-01`, `TUNNEL-03`, `TUNNEL-05`;
   plus `DTFILES-01`–`DTFILES-04` for the Desktop client composition and `HOST-04`
-  for exact read/write/delete consent; Mobile remains separate.
+  for exact read/write/delete consent; `MOB-11`–`MOB-13` cover the opt-in
+  mobile source composition, with native acceptance separate.
 - **Automated tests required:** rooted traversal/listing/transfer/overwrite and
   cleanup tests, reviewed delete identity/capture/restore and unknown/no-replay,
   separate default-off consent/helper probe, stream negotiation/frame bounds, legacy discovery, portable
@@ -518,3 +519,50 @@ existing relocated endpoint/publication/Delete tests; add actual held-source
 replacement and account-cutover tests, real framed queue/conflict tests and
 rendered capability/directory-action tests. Device-native upload, mkdir,
 conflicts, lifecycle retirement and uncertainty remain separate pending gates.
+
+
+### Mobile saved destinations and reviewed Delete
+
+A distinct version-2 mobile Files profile persists only the account reference,
+locator and stable host/key/installation/principal identity. Metadata migration
+preserves version-1 entries and old loaders refuse the new document. Profile
+state owns no credentials or remote operation; Open acquires fresh ordinary
+Files authority, and sign-out leaves an inert exact account reference.
+
+The mobile browsing worker reuses FilesEndpoint's retained reviewed-delete
+owner; no second deletion/publication engine is introduced. Its narrow raw-client
+accessor requires current authority and refuses retained directory/replacement/
+deletion reviews. Non-delete browsing/download operations close an old deletion
+review first; normal endpoint keepalive can retain it. UI receives only a review
+ID and names, never protocol handles. At most eight files/empty folders require
+separate confirmation and negotiated Delete consent. Selection, location,
+listing and authority changes cancel the review. Confirmed prefix/total remain
+observable across cleanup timeout, while only an outstanding mutation is labeled
+unobserved. No automatic retry, replay, recursive/local Delete, background work
+or durable mobile recovery is added.
+
+Validation impact: GUI:MOB-13, ADR-0067, ADR-0059. Preserve shared endpoint and
+ordinary SFTP behavior; test profile migration/downgrade, exact account/identity
+routing, visible review/confirm controls, stale/cancel refusal, confirmed/unknown
+outcomes and the known-reply cleanup-timeout distinction. Native mobile saved
+profiles and reviewed Delete remain pending separate device qualification.
+
+Saved mobile destinations use the additive pinned Files-opening APIs. The
+provider-resolved host UUID and SSH fingerprint must match before native key
+index preparation. Installation and principal are only known from the server
+challenge and must match before device proof signing; no pre-key issuer claim
+is made. Policy epoch is deliberately not persisted or compared as stable
+identity. The browsing stream explicitly negotiates reviewed operations (Open3)
+so Delete advertisement is real; the independent transfer stream keeps plain
+Files negotiation and the browsing scope constraint. Old unpinned APIs keep
+their existing behavior. These are refusal constraints, not new authority,
+consent, protocol fields or a downgrade fallback.
+
+Mobile connection admission captures one UI-acknowledged privacy epoch and
+registers that same value; it never rereads a newer native epoch to authorize a
+stale action. Saved-origin retry and offline name editing compare the exact
+current profile destination. Removed or replaced records refuse before account
+or vault preparation, without closing an already active Files view. A new
+shortcut requires explicit Save as new; Cancel does not rebind. The Files-only
+picker excludes technical shell recovery/import/pairing actions as well as
+terminal creation and attachment.

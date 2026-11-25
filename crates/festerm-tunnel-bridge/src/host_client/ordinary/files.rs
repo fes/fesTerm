@@ -118,6 +118,7 @@ pub async fn open_files(
         request_cancel,
         pinned,
         false,
+        None,
     )
     .await
 }
@@ -141,6 +142,61 @@ pub async fn open_files_reviewed(
         request_cancel,
         pinned,
         true,
+        None,
+    )
+    .await
+}
+
+/// Fresh Files opening constrained to saved stable identity before proof.
+/// The expected identity is a negative constraint, never a Files grant.
+#[allow(clippy::too_many_arguments)]
+pub async fn open_files_pinned(
+    identity: &Identity,
+    locator: &str,
+    index: OrdinaryKeyIndex,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+    pinned: Option<&HostScope>,
+    expected: &ExpectedHost,
+) -> Result<Option<Files>, FilesError> {
+    open_files_mode(
+        identity,
+        locator,
+        index,
+        budgets,
+        account_guard,
+        request_cancel,
+        pinned,
+        false,
+        Some(expected),
+    )
+    .await
+}
+
+/// Fresh Files opening constrained to saved stable identity before proof.
+/// The expected identity is a negative constraint, never a Files grant.
+#[allow(clippy::too_many_arguments)]
+pub async fn open_files_pinned_reviewed(
+    identity: &Identity,
+    locator: &str,
+    index: OrdinaryKeyIndex,
+    budgets: &Budgets,
+    account_guard: OrdinaryAccountGuard,
+    request_cancel: &CancellationToken,
+    pinned: Option<&HostScope>,
+    expected: &ExpectedHost,
+) -> Result<Option<Files>, FilesError> {
+    open_files_mode(
+        identity,
+        locator,
+        index,
+        budgets,
+        account_guard,
+        request_cancel,
+        pinned,
+        true,
+        Some(expected),
     )
     .await
 }
@@ -155,16 +211,21 @@ async fn open_files_mode(
     request_cancel: &CancellationToken,
     pinned: Option<&HostScope>,
     reviewed: bool,
+    expected: Option<&ExpectedHost>,
 ) -> Result<Option<Files>, FilesError> {
+    let source = match expected {
+        Some(expected) => KeySource::PinnedBootstrap(index, expected.clone()),
+        None => KeySource::Bootstrap(index),
+    };
     let Authenticated {
         stream,
         permit,
         info,
         ..
-    } = authenticate_fresh(
+    } = authenticate_fresh_mode(
         identity,
         locator,
-        index,
+        source,
         budgets,
         &account_guard,
         request_cancel,

@@ -20,6 +20,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod deletion;
 mod local_download;
 mod local_root;
 mod local_upload;
@@ -33,6 +34,7 @@ type Reply<T> = mpsc::SyncSender<Result<T, SftpError>>;
 
 enum Command {
     Ping,
+    Delete(deletion::Command),
     List(String, ListOptions, Reply<Listing>),
     Stat(String, Reply<Entry>),
     Download(u64, String, String, CancellationToken),
@@ -52,6 +54,7 @@ struct Lease {
     wake: egui::Context,
     current: Arc<dyn Fn() -> Result<(), SftpError> + Send + Sync>,
     write: std::sync::atomic::AtomicBool,
+    delete: std::sync::atomic::AtomicBool,
     uploads: Mutex<Option<Arc<uploads::Uploads>>>,
     root: Mutex<Option<Arc<local_root::Root>>>,
 }
@@ -278,6 +281,43 @@ impl Transfers for HostTransfers {
                 .ok_or_else(|| "Local preview is unavailable".to_owned())
                 .and_then(|root| root.read_text(path, limit)),
         )
+    }
+    fn delete_available(&self) -> bool {
+        self.0.delete.load(std::sync::atomic::Ordering::SeqCst) && self.0.send_current().is_ok()
+    }
+    fn review_delete(
+        &self,
+        paths: Vec<String>,
+        stop: CancellationToken,
+    ) -> Result<super::files::deletion::Reply<super::files::deletion::Review>, String> {
+        if !self.delete_available() {
+            return Err("Deletion is unavailable".into());
+        }
+        let (send, receive) = mpsc::sync_channel(1);
+        self.0
+            .send(Command::Delete(deletion::Command::Prepare(
+                paths, stop, send,
+            )))
+            .map_err(|_| "Connection closed")?;
+        Ok(receive)
+    }
+    fn commit_delete(
+        &self,
+        id: u64,
+    ) -> Result<super::files::deletion::Reply<super::files::deletion::Outcome>, String> {
+        if !self.delete_available() {
+            return Err("Deletion is unavailable".into());
+        }
+        let (send, receive) = mpsc::sync_channel(1);
+        self.0
+            .send(Command::Delete(deletion::Command::Commit(id, send)))
+            .map_err(|_| "Connection closed")?;
+        Ok(receive)
+    }
+    fn cancel_delete(&self) {
+        // The UI cancels the shared stop token synchronously before this
+        // best-effort close request; a full queue cannot permit a stale commit.
+        let _ = self.0.send(Command::Delete(deletion::Command::Cancel));
     }
     fn rows(&self) -> Vec<TransferRow> {
         if let Some(uploads) = self.0.uploads.lock().unwrap().clone() {
@@ -588,6 +628,7 @@ impl HostConnector {
             wake: wake.clone(),
             current: publish_guard.clone(),
             write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
         });
@@ -606,17 +647,29 @@ impl HostConnector {
                         .scope()
                         .validate()
                         .map_err(|_| "Invalid Files scope")?;
-                    let mut client = files.into_client();
+                    let mut endpoint = festerm_tunnel_bridge::files_endpoint::FilesEndpoint::new(
+                        files,
+                        cancel.clone(),
+                        Default::default(),
+                        festerm_tunnel_bridge::files_endpoint::FilesChannel::Browsing,
+                    );
+                    let client = endpoint
+                        .client_without_reviews()
+                        .map_err(|_| "Files connection closed")?;
                     let root = local_root::Root::open(&local_root)
                         .map_err(|_| "App Documents unavailable or changed")?;
                     let local = root
                         .local_fs()
                         .map_err(|_| "App Documents unavailable or changed")?;
                     let write = client.capabilities().write;
+                    let delete = client.delete_advertised();
                     let Some(lease) = weak.upgrade() else {
                         return Ok(());
                     };
                     *lease.root.lock().unwrap() = Some(root.clone());
+                    lease
+                        .delete
+                        .store(delete, std::sync::atomic::Ordering::SeqCst);
                     lease
                         .write
                         .store(write, std::sync::atomic::Ordering::SeqCst);
@@ -665,7 +718,43 @@ impl HostConnector {
                         let Some(command) = next else {
                             break;
                         };
+                        if (publish_guard)().is_err() || root.check().is_err() {
+                            break;
+                        }
+                        if let Command::Delete(command) = command {
+                            if !rt.block_on(deletion::execute(&mut endpoint, command)) {
+                                break;
+                            }
+                            wake.request_repaint();
+                            continue;
+                        }
+                        if matches!(command, Command::Ping) {
+                            if !matches!(
+                                rt.block_on(async {
+                                    tokio::time::timeout(DEADLINE, endpoint.ping()).await
+                                }),
+                                Ok(Ok(()))
+                            ) {
+                                break;
+                            }
+                            continue;
+                        }
+                        // Navigation and transfers retire the old review before
+                        // exposing the raw serialized client again.
+                        if !matches!(
+                            rt.block_on(async {
+                                tokio::time::timeout(DEADLINE, endpoint.cancel_delete_review())
+                                    .await
+                            }),
+                            Ok(Ok(()))
+                        ) {
+                            break;
+                        }
+                        let Ok(client) = endpoint.client_without_reviews() else {
+                            break;
+                        };
                         match command {
+                            Command::Delete(_) => unreachable!("handled before client access"),
                             Command::Mkdir(path, reply) => {
                                 let result = rt.block_on(async {
                                     tokio::time::timeout(DEADLINE, client.mkdir(&path)).await
@@ -689,11 +778,8 @@ impl HostConnector {
                             }
                             Command::List(path, options, reply) => {
                                 let result = rt.block_on(async {
-                                    tokio::time::timeout(
-                                        DEADLINE,
-                                        listing(&mut client, &path, &options),
-                                    )
-                                    .await
+                                    tokio::time::timeout(DEADLINE, listing(client, &path, &options))
+                                        .await
                                 });
                                 let result = match result {
                                     Ok(result) => result,
@@ -734,7 +820,7 @@ impl HostConnector {
                                 };
                                 let result = download(
                                     &rt,
-                                    &mut client,
+                                    client,
                                     (&root, &target),
                                     &source,
                                     &job_cancel,
@@ -767,7 +853,8 @@ impl HostConnector {
                             break;
                         }
                     }
-                    client.cancel();
+                    cancel.cancel();
+                    drop(endpoint);
                     if let Some(lease) = weak.upgrade() {
                         let uploads = lease.uploads.lock().unwrap().clone();
                         if let Some(uploads) = uploads {
@@ -1422,6 +1509,7 @@ mod tests {
             state: Arc::new(Mutex::new(State::default())),
             wake: egui::Context::default(),
             write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
             current: Arc::new(move || {
@@ -1471,6 +1559,7 @@ mod tests {
             wake: egui::Context::default(),
             current: Arc::new(|| Ok(())),
             write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root)),
         });
@@ -1507,6 +1596,7 @@ mod tests {
             wake: egui::Context::default(),
             current: Arc::new(|| Ok(())),
             write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root.clone())),
         });
@@ -1565,6 +1655,7 @@ mod tests {
             state: Arc::new(Mutex::new(State::default())),
             wake: egui::Context::default(),
             write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
             current: Arc::new(|| Ok(())),

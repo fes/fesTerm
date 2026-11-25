@@ -7870,6 +7870,55 @@
         "Native iOS/Android Files upload/mkdir, progress/conflict decisions, account/lock retirement and truthful uncertainty remain required; source/framed/UI tests are not native acceptance.",
         "Saved Files profiles, mobile reviewed Delete, recursive local upload and durable mobile recovery are outside this tranche."
       ]
+    },
+    {
+      "id": "mobile-files-saved-destinations-reviewed-delete",
+      "edges": [
+        "MOB-13"
+      ],
+      "requirements": [
+        "docs/dev-tunnel-files-protocol.md#mobile-saved-destinations-and-reviewed-deletion"
+      ],
+      "decisions": [
+        "ADR-0067",
+        "ADR-0059"
+      ],
+      "automated_tests": [
+        "files_profiles_roundtrip_without_authority_and_stay_inert_after_account_removal",
+        "files_profiles_reject_unbounded_unpinned_or_authority_shaped_metadata",
+        "v1_migration_preserves_existing_profile_account_and_recipe_metadata",
+        "v2_files_document_is_refused_before_a_v1_reader_collects_unknown_entries",
+        "saved_files_profile_edit_is_offline_and_stale_kind_never_overwrites_another_profile",
+        "saved_files_target_never_substitutes_another_signed_in_account",
+        "saved_files_identity_pins_key_host_installation_and_principal_but_not_epoch",
+        "saved_files_retry_keeps_destination_but_refuses_removed_or_changed_shortcut",
+        "saving_a_new_shortcut_rebinds_only_after_explicit_save_and_preserves_typed_name",
+        "files_privacy_invalidation_between_admission_and_registration_never_mints_a_new_epoch",
+        "files_host_picker_hides_pairing_history_and_terminal_import_on_failed_connection",
+        "files_host_picker_never_offers_editable_locator_or_manual_pairing",
+        "saved_files_route_pin_refuses_changed_host_or_key_before_native_index_action",
+        "saved_files_challenge_pin_refuses_changed_issuer_before_proof_but_allows_new_epoch",
+        "files_session_profile_form_saves_without_reconnecting_or_ssh_fields",
+        "files_host_picker_refuses_terminal_mutation_and_attachment_actions",
+        "files_raw_client_access_refuses_retained_delete_review_then_reopens_after_close",
+        "files_delete_cleanup_timeout_keeps_confirmed_prefix_without_unknown_mutation",
+        "files_delete_returned_uncertainty_keeps_prefix_and_retires_before_untouched_close",
+        "files_delete_requires_capability_bounded_regular_selection_and_explicit_confirmation",
+        "files_delete_selection_refresh_and_authority_cutover_retire_review_before_commit",
+        "files_delete_cancel_pending_review_and_drop_never_commit",
+        "files_delete_unknown_partial_result_is_retained_without_replay_after_retirement",
+        "files_delete_rendered_folder_selection_review_and_confirm_are_separate_actions",
+        "host_files_delete_cancel_and_stale_review_preserve_stream_without_mutation",
+        "host_files_delete_partial_unobserved_reply_keeps_counts_and_never_replays"
+      ],
+      "manual_scenarios": [
+        "MOB-13"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "Native iOS/Android saved Files reopen/edit/sign-out, independently granted reviewed Delete Cancel/Confirm, stale authority and unknown-result presentation remain pending. Source/framed/UI coverage is not native qualification.",
+        "Foreground Files authority is required. No background continuation, durable mobile recovery ledger, recursive/local Delete, rename/chmod/links or automatic replay is added."
+      ]
     }
   ]
 }

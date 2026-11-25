@@ -178,6 +178,18 @@ fn kind(value: rpc::Kind) -> SftpEntryType {
         rpc::Kind::Unsupported => SftpEntryType::Other,
     }
 }
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
+    /// Serialized access for existing bounded browsing/download operations.
+    /// Retained reviews and directory handles must be closed through this
+    /// endpoint first; the caller cannot bypass their ownership or authority.
+    pub fn client_without_reviews(&mut self) -> Result<&mut Client<S>, SftpSessionError> {
+        self.check_current()?;
+        if self.delete_review.is_some() || self.review.is_some() || self.directory.is_some() {
+            return Err(SftpSessionError::SessionClosed);
+        }
+        Ok(&mut self.client)
+    }
+}
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
     for FilesEndpoint<S>
 {
@@ -2102,6 +2114,11 @@ mod tests {
         let outcome = endpoint.commit_delete(id, &observer).await;
         assert_eq!((outcome.confirmed, outcome.total), (1, 3));
         assert!(outcome.failure.unwrap().0);
+        assert_eq!(observer.confirmed_before_interruption(), Some((1, 3)));
+        assert!(
+            observer.result_is_uncertain(),
+            "returned uncertainty survives in the snapshot"
+        );
         assert!(
             observer.interrupted().is_none(),
             "returned unknown clears the owner-drop marker"
@@ -2250,6 +2267,155 @@ mod tests {
         assert!(reason.contains("/folder/.festerm-transfer-delete-owned"));
         assert!(!endpoint.client.available());
         assert!(observer.interrupted().is_none());
+        joined(server).await;
+    }
+    #[tokio::test]
+    async fn files_raw_client_access_refuses_retained_delete_review_then_reopens_after_close() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            let call = request(&mut peer).await;
+            assert!(matches!(call.operation, rpc::Operation::ReviewEntry { .. }));
+            reviewed_reply(&mut peer, call.id, 17, false).await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 17 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        endpoint
+            .prepare_delete(&["/one".into()], CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(
+            endpoint.client_without_reviews().is_err(),
+            "raw operations must not bypass retained review"
+        );
+        endpoint.cancel_delete_review().await.unwrap();
+        endpoint
+            .client_without_reviews()
+            .unwrap()
+            .ping()
+            .await
+            .unwrap();
+        endpoint.lifetime.cancel();
+        assert!(
+            endpoint.client_without_reviews().is_err(),
+            "retired authority stays retired"
+        );
+        joined(server).await;
+    }
+    #[tokio::test]
+    async fn files_delete_cleanup_timeout_keeps_confirmed_prefix_without_unknown_mutation() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            for handle in 80..83 {
+                let call = request(&mut peer).await;
+                reviewed_reply(&mut peer, call.id, handle, false).await;
+            }
+            let first = request(&mut peer).await;
+            assert!(matches!(
+                first.operation,
+                rpc::Operation::Delete { review: 80 }
+            ));
+            reply(&mut peer, first.id, Some(rpc::Result::Deleted), None).await;
+            let second = request(&mut peer).await;
+            assert!(matches!(
+                second.operation,
+                rpc::Operation::Delete { review: 81 }
+            ));
+            reply(&mut peer, second.id, None, Some(rpc::ErrorCode::Denied)).await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 82 }
+            ));
+            // Cleanup reply is lost after a known refusal. No outstanding
+            // mutation exists, and the confirmed prefix must survive timeout.
+            let mut eof = [0];
+            assert_eq!(peer.read(&mut eof).await.unwrap(), 0);
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        let (id, _) = endpoint
+            .prepare_delete(
+                &["/one".into(), "/refused".into(), "/untouched".into()],
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let observation = DeleteObservation::default();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(20),
+            endpoint.commit_delete(id, &observation)
+        )
+        .await
+        .is_err());
+        assert_eq!(observation.confirmed_before_interruption(), Some((1, 3)));
+        assert!(!observation.result_is_uncertain());
+        assert!(
+            observation.interrupted().is_none(),
+            "closing an untouched review is not an unobserved delete"
+        );
+        endpoint.client.cancel();
+        joined(server).await;
+    }
+    #[tokio::test]
+    async fn files_delete_returned_uncertainty_keeps_prefix_and_retires_before_untouched_close() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_handshake(&mut peer).await;
+            for handle in 101..104 {
+                let call = request(&mut peer).await;
+                reviewed_reply(&mut peer, call.id, handle, false).await;
+            }
+            let first = request(&mut peer).await;
+            assert!(matches!(
+                first.operation,
+                rpc::Operation::Delete { review: 101 }
+            ));
+            reply(&mut peer, first.id, Some(rpc::Result::Deleted), None).await;
+            let second = request(&mut peer).await;
+            assert!(matches!(
+                second.operation,
+                rpc::Operation::Delete { review: 102 }
+            ));
+            reply(
+                &mut peer,
+                second.id,
+                None,
+                Some(rpc::ErrorCode::RecoveryRequired),
+            )
+            .await;
+            // A returned UncertainDelete cancels the client. Even an otherwise
+            // live peer gets EOF, never an untouched Close/Delete or replay.
+            let mut byte = [0];
+            assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+        });
+        let mut endpoint = reviewed_endpoint(stream).await;
+        let (id, _) = endpoint
+            .prepare_delete(
+                &["/one".into(), "/unknown".into(), "/untouched".into()],
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let observation = DeleteObservation::default();
+        let outcome = endpoint.commit_delete(id, &observation).await;
+        assert_eq!((outcome.confirmed, outcome.total), (1, 3));
+        assert!(outcome.failure.unwrap().0);
+        assert_eq!(observation.confirmed_before_interruption(), Some((1, 3)));
+        assert!(observation.result_is_uncertain());
+        assert!(
+            observation.interrupted().is_none(),
+            "returned result keeps existing Desktop marker semantics"
+        );
+        assert!(!endpoint.client.available());
         joined(server).await;
     }
 }

@@ -11,6 +11,7 @@ pub enum ProfileKind {
     Ssh,
     DevTunnel,
     Sftp,
+    DevTunnelFiles,
 }
 
 impl ProfileKind {
@@ -19,6 +20,7 @@ impl ProfileKind {
             Self::Ssh => "SSH",
             Self::DevTunnel => "Dev Tunnel",
             Self::Sftp => "SFTP",
+            Self::DevTunnelFiles => "Dev Tunnels Files",
         }
     }
 
@@ -27,6 +29,7 @@ impl ProfileKind {
             Self::Ssh => Icon::SshRemote,
             Self::DevTunnel => Icon::DevTunnel,
             Self::Sftp => Icon::FileTransfer,
+            Self::DevTunnelFiles => Icon::FileTransfer,
         }
     }
 }

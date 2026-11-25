@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "dc1f86e19ae02bb9352a78ce95cea7a74d63e6d1d40387524564599d40fc2dec"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "0467386069e5f7c88e93fc62097683e672a12bf3bcdd759f5dec8b9473fd3870"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,10 +12,10 @@ Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.m
 
 Use for: What owns app launch, lifecycle, auth lock, and suspend policy?
 
-- [`Lifecycle`](../../app/festerm-mobile/src/lib.rs) — Content-free lifecycle counters for app resume, suspend, and memory warnings.
+- [`Lifecycle`](../../app/festerm-mobile/src/lib.rs) — Counts native lifecycle transitions.
 - [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and session plumbing.
-- [`apply_native_input`](../../app/festerm-mobile/src/lib.rs) — Fences native field or terminal edits by focus, lifecycle, privacy and surface ownership.
-- [`TerminalInputBatch`](../../app/festerm-mobile/src/lib.rs) — Coalesces one terminal pump into bounded attachment-fenced transport chunks.
+- [`apply_native_input`](../../app/festerm-mobile/src/lib.rs) — Fences native edits by current focus and authority.
+- [`TerminalInputBatch`](../../app/festerm-mobile/src/lib.rs) — Bounds and fences one terminal input batch.
 
 Evidence:
 - [`content_stays_hidden_until_authentication_succeeds_and_lock_now_hides_it_again`](../../app/festerm-mobile/src/app_lock.rs)
@@ -29,7 +29,7 @@ Caveats:
 
 Use for: Which files handle host discovery, inventory, and save-before-connect?
 
-- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns host inventory, reviewed creation, and local profile metadata.
+- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns discovery, creation review and profile metadata.
 - [`begin_host_reconnect`](../../app/festerm-mobile/src/host_clients/reconnect.rs) — Refreshes exact ordinary account/host/session proof for same-tab Attach without creation or takeover.
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
 - [`show_tabs`](../../app/festerm-mobile/src/shell.rs) — Keeps the Profiles host-browser entry above tabs, outside the saved-profile scroller.
@@ -55,6 +55,7 @@ Use for: document authority and file browsing.
 - [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Owns Files and the shared upload queue adapter.
 
 - [`Root`](../../app/festerm-mobile/src/host_files/local_root.rs) — Pins Documents before canonicalization.
+- [`FilesHostIdentity`](../../app/festerm-mobile/src/host_files_profiles.rs) — Pins saved Files destinations; reopen uses fresh authority.
 
 Evidence:
 - [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs)

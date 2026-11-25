@@ -83,12 +83,10 @@ fn files_account_guard(
 }
 
 fn same_files_host(
-    expected: &festerm_tunnel_bridge::ordinary_auth::OrdinaryHostInfo,
+    expected: &super::host_files_profiles::FilesHostIdentity,
     current: &festerm_tunnel_bridge::ordinary_auth::OrdinaryHostInfo,
 ) -> bool {
-    expected.route.host == current.route.host
-        && expected.installation == current.installation
-        && expected.principal == current.principal
+    expected.matches(current)
 }
 
 // Called only by the existing foreground protected-original recovery job.
@@ -448,6 +446,8 @@ pub(super) struct HostUi {
     #[cfg(all(test, unix))]
     gallery_display: Option<GalleryDisplay>,
     pub(super) open: bool,
+    files_only: bool,
+    files_profile_name: Option<String>,
     discover_on_open: bool,
     discovery_attempt: Option<TunnelAccount>,
     #[cfg(test)]
@@ -1603,6 +1603,18 @@ impl MobileApp {
         self.hosts.open = true;
         self.hosts.discover_on_open = true;
         self.hosts.discovery_attempt = None;
+        self.hosts.files_only = false;
+        self.hosts.files_profile_name = None;
+    }
+
+    pub(super) fn open_files_hosts(&mut self) {
+        self.open_hosts();
+        self.hosts.files_only = true;
+    }
+
+    pub(super) fn open_files_hosts_named(&mut self, name: String) {
+        self.open_files_hosts();
+        self.hosts.files_profile_name = (!name.is_empty()).then_some(name);
     }
 
     pub(super) fn select_host_profile(&mut self, id: &str, edit: bool) -> bool {
@@ -1673,13 +1685,38 @@ impl MobileApp {
     }
 
     fn host_foreground(&self) -> bool {
+        self.foreground_in_epoch(self.hosts.epoch)
+    }
+
+    fn foreground_in_epoch(&self, epoch: u64) -> bool {
         self.lifecycle.get().active
             && self
                 .lock
                 .as_ref()
                 .is_none_or(|lock| lock.content_available())
-            && self.hosts.epoch == self.sink.live.host.epoch()
-            && self.hosts.epoch != u64::MAX
+            && epoch == self.sink.live.host.epoch()
+            && epoch != u64::MAX
+    }
+
+    fn files_admission_epoch(&self, ctx: &egui::Context) -> Result<u64, String> {
+        // poll_hosts acknowledges foreground/privacy transitions before GUI
+        // actions each frame, even when the host chooser is closed. Never mint
+        // a newer epoch after an asynchronous native privacy invalidation.
+        let epoch = self.hosts.epoch;
+        if !self.foreground_in_epoch(epoch) || !ctx.input(|input| input.focused) {
+            return Err("Files requires the active unlocked application.".into());
+        }
+        Ok(epoch)
+    }
+
+    fn files_admitted_token(&self, epoch: u64) -> Result<Arc<CancellationToken>, String> {
+        let token = self.sink.live.host.token(epoch);
+        if token.is_cancelled() {
+            return Err(
+                "Files connection cancelled. Return to the unlocked app and try again.".into(),
+            );
+        }
+        Ok(token)
     }
 
     fn host_recipe_current(&self) -> bool {
@@ -1862,9 +1899,9 @@ impl MobileApp {
         ctx: &egui::Context,
     ) -> Result<(), String> {
         use host_client::ordinary::OrdinaryKeyIndex;
-        if !self.host_foreground() || !ctx.input(|input| input.focused) {
-            return Err("Files requires the active unlocked application.".into());
-        }
+        let epoch = self.files_admission_epoch(ctx)?;
+        let token = self.files_admitted_token(epoch)?;
+        self.check_saved_host_files_target(&target)?;
         service::locator(&target.locator).map_err(|_| "Invalid Files host locator")?;
         let profiles = self
             .profiles
@@ -1885,7 +1922,6 @@ impl MobileApp {
         let identity_client = self
             .tunnel_client()
             .ok_or("Foreground account sign-in is not configured")?;
-        let token = self.sink.live.host.token(self.hosts.epoch);
         let guard = files_account_guard(store, target.account.clone(), token.clone());
         let publish = guard.clone();
         let publish_guard = Arc::new(move || {
@@ -1922,7 +1958,7 @@ impl MobileApp {
                 let index = OrdinaryKeyIndex::in_app_sandbox(&root)
                     .map_err(|_| "Protected sign-in storage is unavailable")?;
                 let mut files = runtime
-                    .block_on(host_client::ordinary::open_files(
+                    .block_on(host_client::ordinary::open_files_pinned_reviewed(
                         &identity,
                         &locator,
                         index.clone(),
@@ -1930,6 +1966,7 @@ impl MobileApp {
                         guard.clone(),
                         cancel,
                         None,
+                        &expected.as_expected_host(),
                     ))
                     .map_err(|_| "Could not connect to files".to_owned())?
                     .ok_or_else(|| "Files are disabled on this host".to_owned())?;
@@ -1940,7 +1977,7 @@ impl MobileApp {
                 let transfer = if files.client().capabilities().write {
                     let scope = files.scope().clone();
                     let mut transfer = runtime
-                        .block_on(host_client::ordinary::open_files(
+                        .block_on(host_client::ordinary::open_files_pinned(
                             &identity,
                             &locator,
                             index,
@@ -1948,6 +1985,7 @@ impl MobileApp {
                             guard.clone(),
                             cancel,
                             Some(&scope),
+                            &expected.as_expected_host(),
                         ))
                         .map_err(|_| "Could not open the Files transfer channel")?
                         .ok_or("Files are disabled on this host")?;
@@ -2826,6 +2864,32 @@ impl MobileApp {
     }
 
     fn host_action(&mut self, ctx: &egui::Context, action: Action) -> Result<(), String> {
+        if self.hosts.files_only
+            && matches!(
+                action,
+                Action::Create
+                    | Action::Attach(_)
+                    | Action::EnsureProfile(_)
+                    | Action::ReviewEnd(_)
+                    | Action::ReviewOriginalEnd(_)
+                    | Action::ConfirmEnd
+                    | Action::QuickNew
+                    | Action::QuickCreate
+                    | Action::SaveSession(_)
+                    | Action::ConfirmSessionSave
+                    | Action::AdvancedOwner
+                    | Action::Prepare
+                    | Action::Load
+                    | Action::Import
+                    | Action::RecoverOriginals
+                    | Action::ReviewOriginal(_)
+                    | Action::ReviewForgetCreation(_)
+                    | Action::ReviewForgetEnd(_)
+                    | Action::ConfirmForget
+            )
+        {
+            return Err("Choose Files for this host. Shell actions are unavailable here.".into());
+        }
         #[cfg(all(test, unix))]
         if self.hosts.gallery_display.is_some() {
             return Err("Synthetic HOST gallery actions are disabled.".into());
@@ -3104,6 +3168,8 @@ impl MobileApp {
             let account = self.host_account().ok_or("Account unavailable")?;
             let target = super::files_shell::HostFilesTarget {
                 account,
+                profile: None,
+                profile_name_hint: self.hosts.files_profile_name.clone(),
                 locator: self.hosts.locator.clone(),
                 expected: self
                     .hosts
@@ -3111,7 +3177,7 @@ impl MobileApp {
                     .as_ref()
                     .ok_or("Host connection expired")?
                     .host_info()
-                    .clone(),
+                    .into(),
                 label: self
                     .hosts
                     .selected

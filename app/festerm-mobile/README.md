@@ -345,8 +345,39 @@ provided. Closing/lock/suspension/account changes fence both streams. Inert targ
 supports explicit **Reconnect**, with fresh authority and an empty queue. Lost
 publication or unconfirmed cleanup remains uncertainty, never automatic retry.
 This slice has no durable mobile recovery ledger, crash-resume, recursive local
-upload, saved Files profiles, Delete, rename, chmod or links. Native iOS/Android
+upload, rename, chmod or links. Native iOS/Android
 Files qualification remains pending; source tests do not establish device use.
+
+### Saved Files destinations and reviewed deletion
+
+**Dev Tunnels Files** is a separate saved-profile kind. Save from the current
+Files view or choose Files and a host in the profile editor; Save alone performs
+no remote action. Profiles contain only an account reference, exact locator and
+stable host/key/installation/principal identity, never a policy epoch, credential,
+shell recipe or live stream. Open and Reconnect always acquire fresh Files
+authority for that same account and identity. Removing an account leaves an
+inert profile; it cannot silently use a different account. The version-2 profile
+store preserves version-1 metadata and makes older clients refuse the newer
+document instead of silently dropping Files profiles.
+
+Saving from an open Files view does not reconnect it. Name editing must still
+match the original destination; removing or changing that saved record makes
+Reconnect refuse rather than silently rebinding it. An explicit Save as new can
+create a new shortcut, while Cancel leaves the original association unchanged.
+The Files-only host picker hides shell creation/attachment, Advanced pairing,
+protected shell history and terminal-profile import. Fresh connection admission
+captures one acknowledged privacy epoch; a native lock/suspend callback cannot
+be bypassed by registering a token from a newer epoch.
+
+Remote **Delete selected** appears only with the separately negotiated Delete
+grant. Select up to eight regular files or folders (folders must be empty),
+review their names and explicitly confirm. The shared desktop Files endpoint
+retains the exact reviews on the browsing stream; UI state contains no handles.
+Selection, folder, listing, account or privacy changes retire the review.
+Cancel closes it without mutation. Confirmed removals, known refusals and
+unobserved results remain distinct, including after the connection closes;
+unknown deletion is never retried automatically. Local Delete, recursive Delete,
+rename and chmod/link operations are not added.
 
 ### Files and SFTP (ADR 0060)
 

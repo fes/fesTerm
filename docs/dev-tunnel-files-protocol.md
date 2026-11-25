@@ -586,6 +586,51 @@ and incomplete cleanup keep their separate meanings and never cause replay.
 New folder uses one validated name and an asynchronous result. Remote mkdir
 requires current write authority; local mkdir uses exclusive private creation
 relative to a trusted no-follow Documents parent. Closing the view does not
-claim rollback of an already admitted folder operation. There is no new remote
-Delete, rename, chmod/link, saved Files profile or durable mobile recovery flow.
-Native mobile write/conflict/lifecycle qualification remains pending.
+claim rollback of an already admitted folder operation. Rename, chmod/link and
+durable mobile recovery remain unavailable; saved destinations and separately
+reviewed Delete are described below. Native mobile write/conflict/lifecycle
+qualification remains pending.
+
+
+### Mobile saved destinations and reviewed deletion
+
+The version-2 mobile profile document adds a distinct Dev Tunnels Files kind.
+It stores public account ID, exact locator, pinned host/key fingerprint,
+installation and principal only. A metadata-preserving version-1 migration
+leaves existing entries intact; old version-1 loaders reject version 2 before
+per-entry parsing or autosave. Save requires a known account. Account removal
+retains the inert reference, without transferring authority to another account.
+Open checks the provider-resolved host/key before native index preparation.
+Installation/principal become known in the authenticated challenge and must
+match before device proof signing. Policy epochs and streams are neither stored
+nor restored. Browsing explicitly negotiates reviewed operations; a separate
+plain transfer stream is pinned to the browsing scope. Legacy unpinned APIs
+retain their behavior; there is no silent negotiation downgrade. Profile editing and
+removal do not create, attach or end a shell.
+
+Name edits compare the complete original destination, not only the profile
+kind. Saved-origin Reconnect first requires the same existing record and exact
+destination; a removed/replaced record is not adopted. Canceling Save as new
+leaves that stale origin unchanged. The ordinary Files-only picker excludes
+Advanced pairing, protected shell history and terminal import/actions. A fresh
+open captures the UI-acknowledged privacy epoch once and registers that same
+epoch; a concurrent native privacy callback cancels admission instead of minting
+new authority from the updated global epoch.
+
+Remote Delete uses the existing additional negotiated capability and the shared
+FilesEndpoint on the browsing stream. A bounded review retains up to eight
+exact file/empty-folder handles; only its ID and public entry names reach the
+confirmation sheet. Cancel or a stale selection/location/listing/authority
+prevents commit. Browsing and downloads close any old review before accessing
+the serialized client; keepalive may preserve a current review. Uploads remain
+on their separately admitted same-scope stream. No host grant or protocol is
+added, and write permission alone never implies Delete.
+
+A deletion outcome preserves its confirmed prefix and total. A dropped mutation
+reply is uncertain; a timeout while closing untouched handles after a known
+reply does not invent an unknown mutation. Returned uncertainty also remains
+in the numeric outcome snapshot, independently of the Desktop in-flight marker.
+The last deletion result stays visible across repeated connection-failure frames.
+Both remain explicit failures with
+no automatic retry or replay. These source/framed/UI tests do not qualify native
+mobile Files behavior, durable recovery, recursive Delete or background work.
