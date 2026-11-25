@@ -35,7 +35,10 @@ use windows_sys::Win32::System::Threading::{
 use std::cell::RefCell;
 
 use festerm_pty::default_local_profile;
-use festerm_sessiond::lifecycle::{self, Event as LifecycleEvent, FailureStage};
+use festerm_sessiond::lifecycle::{
+    self, Event as LifecycleEvent, FailureStage, RegistrationErrorKind, RegistrationFailure,
+    RegistrationOperation,
+};
 use festerm_sessiond::private_storage::UnlockOnDrop;
 use festerm_sessiond::AttachKind;
 use festerm_ssh::PersistentSessionName;
@@ -170,6 +173,7 @@ fn lifecycle_failure(stage: FailureStage, error: &(dyn std::error::Error + 'stat
             .downcast_ref::<io::Error>()
             .and_then(io::Error::raw_os_error),
         recovery: None,
+        registration: None,
     });
 }
 
@@ -178,6 +182,7 @@ fn recovery_failure_event(error: &festerm_sessiond::PersistentSessionError) -> L
         stage: FailureStage::Daemon,
         os_code: None,
         recovery: Some(error.recovery_failure_category()),
+        registration: None,
     }
 }
 // Kept separate from DAEMON_LOG: a starter has no NativeSessionIdentity.
@@ -187,6 +192,7 @@ struct StartupDiagnostic {
     generation: std::cell::Cell<Option<u128>>,
     stage: std::cell::Cell<FailureStage>,
     os_code: std::cell::Cell<Option<i32>>,
+    registration: std::cell::Cell<Option<(RegistrationFailure, Option<i32>)>>,
 }
 
 impl StartupDiagnostic {
@@ -201,6 +207,7 @@ impl StartupDiagnostic {
             ),
             stage: std::cell::Cell::new(FailureStage::Runtime),
             os_code: std::cell::Cell::new(None),
+            registration: std::cell::Cell::new(None),
         }
     }
 
@@ -212,33 +219,65 @@ impl StartupDiagnostic {
         let _ = lifecycle::record_actor(&self.root, &self.name, process::id(), generation, event);
     }
 
+    fn registration_result<T>(
+        &self,
+        operation: RegistrationOperation,
+        result: Result<T, Box<dyn std::error::Error>>,
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        result.inspect_err(|error| {
+            if self.registration.get().is_none() {
+                let (kind, os_code) = startup_io_cause(error.as_ref());
+                let kind = if operation == RegistrationOperation::Timeout {
+                    RegistrationErrorKind::TimedOut
+                } else {
+                    kind.map_or(
+                        RegistrationErrorKind::Unclassified,
+                        RegistrationErrorKind::from_io_kind,
+                    )
+                };
+                // Preserve the primary observation, including a missing errno,
+                // before failed-start cleanup can return a different error.
+                self.registration
+                    .set(Some((RegistrationFailure { operation, kind }, os_code)));
+            }
+        })
+    }
+
     fn finish<T>(
         &self,
         result: Result<T, Box<dyn std::error::Error>>,
     ) -> Result<T, Box<dyn std::error::Error>> {
         if let Err(error) = &result {
-            let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.as_ref());
-            let mut os_code = None;
-            for _ in 0..8 {
-                let Some(error) = source else {
-                    break;
-                };
-                os_code = error
-                    .downcast_ref::<io::Error>()
-                    .and_then(io::Error::raw_os_error);
-                if os_code.is_some() {
-                    break;
-                }
-                source = error.source();
-            }
+            let (_, os_code) = startup_io_cause(error.as_ref());
+            let captured = self.registration.get();
             self.event(LifecycleEvent::Failure {
                 stage: self.stage.get(),
-                os_code: os_code.or(self.os_code.get()),
+                os_code: captured.map_or_else(|| os_code.or(self.os_code.get()), |(_, code)| code),
                 recovery: None,
+                registration: captured.map(|(failure, _)| failure),
             });
         }
         result
     }
+}
+
+// Same bounded source walk as startup diagnostics; never formats an error.
+fn startup_io_cause(
+    error: &(dyn std::error::Error + 'static),
+) -> (Option<io::ErrorKind>, Option<i32>) {
+    let mut source = Some(error);
+    let mut kind = None;
+    for _ in 0..8 {
+        let Some(error) = source else { break };
+        if let Some(error) = error.downcast_ref::<io::Error>() {
+            kind.get_or_insert(error.kind());
+            if let Some(code) = error.raw_os_error() {
+                return (kind, Some(code));
+            }
+        }
+        source = error.source();
+    }
+    (kind, None)
 }
 
 #[cfg(windows)]
@@ -1297,26 +1336,39 @@ fn run_start_prepared(
         // Report address errors to the caller rather than losing them with
         // the detached daemon's stderr. The actual child PID determines length.
         #[cfg(unix)]
-        session_socket_path(&runtime_root, &format!("{daemon_pid}-{}", now_ms()))?;
+        diagnostic.registration_result(
+            RegistrationOperation::SocketPath,
+            session_socket_path(&runtime_root, &format!("{daemon_pid}-{}", now_ms())),
+        )?;
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
-            let registry = load_registry()?;
+            let registry = diagnostic
+                .registration_result(RegistrationOperation::RegistryRead, load_registry())?;
             if let Some(record) = registry.sessions.get(&name) {
                 if record.pid == daemon_pid {
                     return Ok(record.clone());
                 }
             }
-            if let Some(status) = daemon.try_wait()? {
+            if let Some(status) = diagnostic.registration_result(
+                RegistrationOperation::ChildPoll,
+                daemon.try_wait().map_err(Into::into),
+            )? {
                 diagnostic.event(LifecycleEvent::StartupChildExited {
                     code: status.code(),
                 });
-                return Err(format!(
-                    "session daemon for '{name}' exited during startup with {status}"
-                )
-                .into());
+                return diagnostic.registration_result(
+                    RegistrationOperation::ChildExited,
+                    Err(
+                        format!("session daemon for '{name}' exited during startup with {status}")
+                            .into(),
+                    ),
+                );
             }
             if std::time::Instant::now() >= deadline {
-                return Err(format!("timed out waiting for session '{name}' to register").into());
+                return diagnostic.registration_result(
+                    RegistrationOperation::Timeout,
+                    Err(format!("timed out waiting for session '{name}' to register").into()),
+                );
             }
             thread::sleep(Duration::from_millis(25));
         }
@@ -5539,6 +5591,7 @@ mod tests {
                 stage: super::FailureStage::IndependentSpawn,
                 os_code: Some(5),
                 recovery: None,
+                registration: None,
             }
         );
         // Error Display payloads are never serialized, even for non-OS errors.
@@ -5550,6 +5603,122 @@ mod tests {
         let bytes = std::fs::read(root.join("lifecycle/diagnostic.json")).unwrap();
         assert!(!String::from_utf8(bytes).unwrap().contains("PRIVATE"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registration_failure_keeps_operation_primary_errno_and_privacy_through_cleanup() {
+        use super::{RegistrationErrorKind as Kind, RegistrationOperation as Op};
+        for operation in [
+            Op::SocketPath,
+            Op::RegistryRead,
+            Op::ChildPoll,
+            Op::ChildExited,
+            Op::Timeout,
+        ] {
+            for code in [None, Some(5)] {
+                let root = festerm_sessiond::private_storage::private_test_directory();
+                let diagnostic = super::StartupDiagnostic::new(root.path(), "registration");
+                diagnostic.generation.set(Some(9));
+                diagnostic.stage.set(super::FailureStage::Registration);
+                let cause = code.map_or_else(
+                    || {
+                        super::io::Error::new(
+                            super::io::ErrorKind::PermissionDenied,
+                            "PRIVATE-ARGV-CWD-TOKEN",
+                        )
+                    },
+                    super::io::Error::from_raw_os_error,
+                );
+                let expected_kind = if operation == Op::Timeout {
+                    Kind::TimedOut
+                } else {
+                    Kind::from_io_kind(cause.kind())
+                };
+                let cause: Box<dyn std::error::Error> = Box::new(cause);
+                let original = cause.as_ref() as *const dyn std::error::Error;
+                let cause = diagnostic
+                    .registration_result::<()>(operation, Err(cause))
+                    .unwrap_err();
+                assert!(
+                    std::ptr::eq(original, cause.as_ref()),
+                    "no replacement of the original result"
+                );
+                // A subsequent error must never replace the original capture.
+                let _ = diagnostic.registration_result::<()>(
+                    Op::ChildPoll,
+                    Err(Box::new(super::io::Error::from_raw_os_error(6))),
+                );
+                let result = super::combine_cleanup_result(
+                    Err(cause),
+                    Err(Box::new(super::io::Error::from_raw_os_error(7))),
+                );
+                let original_message = result.as_ref().unwrap_err().to_string();
+                let result = diagnostic.finish(result).unwrap_err();
+                assert_eq!(
+                    result.to_string(),
+                    original_message,
+                    "cleanup outcome unchanged"
+                );
+                let bytes = std::fs::read(root.path().join("lifecycle/registration.json")).unwrap();
+                assert!(!String::from_utf8_lossy(&bytes).contains("PRIVATE"));
+                let entries: Vec<super::lifecycle::Entry> = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(entries.len(), 1);
+                assert_eq!(
+                    entries[0].event,
+                    super::LifecycleEvent::Failure {
+                        stage: super::FailureStage::Registration,
+                        os_code: code,
+                        recovery: None,
+                        registration: Some(super::RegistrationFailure {
+                            operation,
+                            kind: expected_kind
+                        }),
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn registration_success_and_opaque_failure_do_not_invent_error_evidence() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let diagnostic = super::StartupDiagnostic::new(root.path(), "registration");
+        diagnostic.generation.set(Some(9));
+        diagnostic.stage.set(super::FailureStage::Registration);
+        assert_eq!(
+            diagnostic
+                .registration_result(super::RegistrationOperation::RegistryRead, Ok(7))
+                .unwrap(),
+            7
+        );
+        assert!(diagnostic.registration.get().is_none());
+        assert_eq!(diagnostic.finish(Ok(7)).unwrap(), 7);
+        assert!(
+            !root.path().join("lifecycle").exists(),
+            "success adds no diagnostic I/O"
+        );
+        // No inspection or matching of arbitrary error Display/source text.
+        let error: Box<dyn std::error::Error> = "PRIVATE-TOKEN-path-deadline-register".into();
+        let error = diagnostic
+            .registration_result::<()>(super::RegistrationOperation::SocketPath, Err(error))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "PRIVATE-TOKEN-path-deadline-register");
+        diagnostic.finish::<()>(Err(error)).unwrap_err();
+        let bytes = std::fs::read(root.path().join("lifecycle/registration.json")).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("PRIVATE"));
+        let entries: Vec<super::lifecycle::Entry> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            entries[0].event,
+            super::LifecycleEvent::Failure {
+                stage: super::FailureStage::Registration,
+                os_code: None,
+                recovery: None,
+                registration: Some(super::RegistrationFailure {
+                    operation: super::RegistrationOperation::SocketPath,
+                    kind: super::RegistrationErrorKind::Unclassified,
+                }),
+            }
+        );
     }
 
     #[test]
@@ -5627,6 +5796,7 @@ mod tests {
                     stage,
                     os_code: Some(5),
                     recovery: None,
+                    registration: None,
                 }
             );
         }
