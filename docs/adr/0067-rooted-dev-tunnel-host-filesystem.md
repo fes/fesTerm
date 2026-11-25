@@ -566,3 +566,16 @@ or vault preparation, without closing an already active Files view. A new
 shortcut requires explicit Save as new; Cancel does not rebind. The Files-only
 picker excludes technical shell recovery/import/pairing actions as well as
 terminal creation and attachment.
+
+### Mobile Files form viewport correction
+
+Files forms use the existing cached native-field IME context and shared safe
+viewport. Modal bounds are captured before pane minimum sizes expand layout;
+retained terminal-keyboard geometry alone does not resize idle Files. Narrow
+selector labels, host/name headers, body padding and unknown-size footer copy
+are presentation only: account, stable destination identity, capabilities and
+reviewed operations remain unchanged.
+
+Validation impact: GUI:MOB-11, GUI:MOB-12, GUI:MOB-13, ADR-0067. Rendered tests
+cover 360/375-point controls, keyboard-visible folder typing/cancellation and
+idle geometry. Corrected native iOS/Android appearance remains pending.

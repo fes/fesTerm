@@ -1412,18 +1412,26 @@ impl MobileApp {
         self
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui) {
-        let occlusion = if self.surface == Surface::Terminal
+    fn layout_occlusion(&self, occlusion: f32) -> f32 {
+        if self.surface == Surface::Terminal
             && self.workspace != workspaces::Workspace::Terminal
             && !self.editor.open
+            && self.field_ime.is_none()
         {
+            // A retained terminal keyboard does not resize idle Files/Markdown;
+            // a focused form field still needs the shared IME-safe viewport.
             0.0
         } else {
-            self.keyboard
-                .as_ref()
-                .map_or(0.0, |keyboard| keyboard.occluded_height_fraction())
-        };
-        self.show_with_occlusion(ui, occlusion);
+            occlusion
+        }
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui) {
+        let occlusion = self
+            .keyboard
+            .as_ref()
+            .map_or(0.0, |keyboard| keyboard.occluded_height_fraction());
+        self.show_with_occlusion(ui, self.layout_occlusion(occlusion));
     }
 
     /// Queue shared with the native event loop (see [`HardwareKeys`]).
@@ -5245,62 +5253,124 @@ mod tests {
     #[cfg(feature = "live-ssh")]
     #[test]
     fn mobile_files_only_tab_returns_to_profiles_and_drops_its_session() {
-        use egui_kittest::{kittest::Queryable, Harness};
-        use files_fixture::{fixture_entry, FixtureFs, FixtureTransfers};
-        use std::sync::Arc;
+        for (width, height) in [(390.0, 844.0), (360.0, 800.0), (375.0, 844.0)] {
+            use egui_kittest::{kittest::Queryable, Harness};
+            use files_fixture::{fixture_entry, FixtureFs, FixtureTransfers};
+            use std::sync::Arc;
 
-        let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(
-            Lifecycle {
-                active: true,
-                ..Default::default()
-            },
-        )))));
-        let ctx = egui::Context::default();
-        let fs = |kind, home| {
-            Arc::new(FixtureFs {
-                kind,
-                home,
-                entries: vec![fixture_entry("a.txt", false, 5, 1)],
-            })
-        };
-        let session = files::FilesSession::ready(
-            "release-files".to_owned(),
-            "SFTP · ops@files.example.net".to_owned(),
-            files::Ready {
-                remote_write: true,
-                remote: fs(festerm_sftp::PaneKind::Remote, "/srv"),
-                local: fs(festerm_sftp::PaneKind::Local, ""),
-                local_root: std::path::PathBuf::from("/nonexistent-festerm-test"),
-                transfers: Arc::new(FixtureTransfers::new(Vec::new())),
-                start_dir: None,
-            },
-            &ctx,
-        );
-        {
-            let mut app = app.borrow_mut();
-            app.files = Some(Box::new(session));
-            app.files_ctx.only = true;
-            app.surface = Surface::Terminal;
-            app.workspace = workspaces::Workspace::Files;
-        }
-        let displayed = app.clone();
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(390.0, 844.0))
-            .build_ui_state(
-                move |ui, _: &mut ()| displayed.borrow_mut().show_with_occlusion(ui, 0.0),
-                (),
+            let app = Rc::new(RefCell::new(MobileApp::new(Rc::new(Cell::new(
+                Lifecycle {
+                    active: true,
+                    ..Default::default()
+                },
+            )))));
+            let ctx = egui::Context::default();
+            let fs = |kind, home| {
+                Arc::new(FixtureFs {
+                    kind,
+                    home,
+                    entries: vec![fixture_entry("a.txt", false, 5, 1)],
+                })
+            };
+            let session = files::FilesSession::ready(
+                "release-files".to_owned(),
+                "SFTP · ops@files.example.net".to_owned(),
+                files::Ready {
+                    remote_write: true,
+                    remote: fs(festerm_sftp::PaneKind::Remote, "/srv"),
+                    local: fs(festerm_sftp::PaneKind::Local, ""),
+                    local_root: std::path::PathBuf::from("/nonexistent-festerm-test"),
+                    transfers: Arc::new(FixtureTransfers::new(Vec::new())),
+                    start_dir: None,
+                },
+                &ctx,
             );
-        harness.run_steps(3);
-        assert!(
-            harness.query_by_label("Files").is_none(),
-            "no terminal Files button"
-        );
-        harness.get_by_label("Back").click();
-        harness.run_steps(3);
-        let app = app.borrow();
-        assert!(app.files.is_none());
-        assert_eq!(app.surface, Surface::Tabs);
-        assert_eq!(app.workspace, workspaces::Workspace::Terminal);
+            {
+                let mut app = app.borrow_mut();
+                app.files = Some(Box::new(session));
+                app.files_ctx.only = true;
+                app.surface = Surface::Terminal;
+                app.workspace = workspaces::Workspace::Files;
+            }
+            let displayed = app.clone();
+            let raw_occlusion = Rc::new(Cell::new(0.0_f32));
+            let keyboard = raw_occlusion.clone();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, height))
+                .build_ui_state(
+                    move |ui, _: &mut ()| {
+                        let mut app = displayed.borrow_mut();
+                        let occlusion = app.layout_occlusion(keyboard.get());
+                        app.show_with_occlusion(ui, occlusion);
+                    },
+                    (),
+                );
+            harness.run_steps(3);
+            assert!(
+                harness.query_by_label("Files").is_none(),
+                "no terminal Files button"
+            );
+            assert!(app.borrow().field_ime.is_none());
+            let idle_upload = harness.get_by_label("Upload").rect();
+            raw_occlusion.set(0.4);
+            harness.run_steps(3);
+            assert_eq!(
+                harness.get_by_label("Upload").rect(),
+                idle_upload,
+                "retained terminal keyboard must not resize idle Files"
+            );
+            raw_occlusion.set(0.0);
+            harness.get_by_label("New remote folder").click();
+            harness.run_steps(3);
+            harness.get_by_label("Folder name").click();
+            harness.run_steps(3);
+            assert!(
+                app.borrow().field_ime.is_some(),
+                "actual field focus must publish IME context"
+            );
+            harness.event(egui::Event::Text("Public folder".into()));
+            harness.run_steps(3);
+            raw_occlusion.set(0.4);
+            harness.run_steps(4);
+            let safe_bottom = height * 0.6;
+            for label in ["Folder name", "Create folder", "Cancel"] {
+                let rect = harness.get_by_label(label).rect();
+                assert!(
+                    rect.top() >= 0.0 && rect.bottom() <= safe_bottom + 1.0,
+                    "{label} covered by native IME at {width}x{height}: {rect:?}"
+                );
+                assert!(
+                    rect.height() >= 44.0,
+                    "{label} must retain its touch target"
+                );
+            }
+            assert_eq!(
+                app.borrow()
+                    .files
+                    .as_ref()
+                    .unwrap()
+                    .folder
+                    .as_ref()
+                    .unwrap()
+                    .name,
+                "Public folder"
+            );
+            assert_eq!(
+                app.borrow().sink.diagnostics.byte_count,
+                0,
+                "form typing is never terminal input"
+            );
+            harness.get_by_label("Cancel").click();
+            raw_occlusion.set(0.0);
+            harness.run_steps(3);
+            assert!(app.borrow().files.as_ref().unwrap().folder.is_none());
+            harness.get_by_label("Back").click();
+            harness.run_steps(3);
+            let app = app.borrow();
+            assert!(app.files.is_none());
+            assert_eq!(app.surface, Surface::Tabs);
+            assert_eq!(app.workspace, workspaces::Workspace::Terminal);
+        }
     }
 
     #[cfg(feature = "live-ssh")]
@@ -5354,6 +5424,8 @@ mod tests {
     fn mobile_editor_fits_measured_phone_tablet_space_and_releases_it() {
         use egui_kittest::{kittest::Queryable, Harness};
         for (width, height, occlusion) in [
+            (360.0, 800.0, 0.0),
+            (375.0, 844.0, 0.0),
             (390.0, 844.0, 0.35),
             (834.0, 1194.0, 0.30),
             (1194.0, 834.0, 0.35),
@@ -5380,6 +5452,32 @@ mod tests {
             for _ in 0..2 {
                 app.borrow_mut().editor.open_new();
                 harness.run();
+                #[cfg(feature = "host-clients")]
+                {
+                    let labels: Vec<_> = harness
+                        .output()
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text)
+                                if matches!(
+                                    text.galley.job.text.as_str(),
+                                    "Dev Tunnels Files" | "Tunnel Files" | "Files"
+                                ) =>
+                            {
+                                Some((shape.clip_rect, text))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(labels.len(), 1, "fourth type must actually be painted");
+                    let (clip, text) = labels[0];
+                    assert!(!text.galley.elided, "Files selector elided at {width}");
+                    assert_eq!(text.galley.rows.len(), 1);
+                    assert!(clip
+                        .expand(0.5)
+                        .contains_rect(text.galley.rect.translate(text.pos.to_vec2())));
+                }
                 let limit = height * (1.0 - occlusion) + 1.0;
                 for label in ["Save & Connect", "Save only", "Cancel"] {
                     let rect = harness.get_by_label(label).rect();

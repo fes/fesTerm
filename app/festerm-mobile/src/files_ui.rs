@@ -346,12 +346,14 @@ fn sort_header(ui: &mut Ui, pane: &mut Pane, ctx: &egui::Context) {
 fn footer_text(pane: &Pane) -> String {
     let count = pane.visible().len();
     let items = format!("{count} item{}", if count == 1 { "" } else { "s" });
-    let files = pane.selected_files().len();
+    let selected_files = pane.selected_files();
+    let files = selected_files.len();
+    let unknown_size = selected_files.iter().any(|entry| entry.size.is_none());
     let selected = pane.selected.len();
     if selected == 0 {
         format!("{items} · No selection")
-    } else if selected != files {
-        // Folder contents have not been enumerated; do not invent byte totals.
+    } else if selected != files || unknown_size {
+        // Folder contents and unreported file sizes do not establish a total.
         format!("{items} · {selected} selected")
     } else if selected == 1 {
         format!(
@@ -659,6 +661,9 @@ const FILES_MAX_WIDTH: f32 = 1100.0;
 pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     let mut outcome = FilesOutcome::default();
     let ctx = ui.ctx().clone();
+    // Pane minimum heights may expand max_rect; sheets belong to the original
+    // visible viewport, including its existing native-keyboard clip.
+    let modal_bounds = ui.max_rect().intersect(ui.clip_rect());
     #[cfg(feature = "host-clients")]
     let select_folders = session.deletion_available();
     #[cfg(not(feature = "host-clients"))]
@@ -814,7 +819,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     if session.folder.is_some() {
         let mut create = false;
         let mut cancel = false;
-        let result = bottom_sheet(&ctx, "files-new-folder", ui.max_rect(), |ui| {
+        let result = bottom_sheet(&ctx, "files-new-folder", modal_bounds, |ui| {
             let Some(draft) = session.folder.as_mut() else {
                 return;
             };
@@ -857,7 +862,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
         }
     }
     #[cfg(feature = "host-clients")]
-    delete_sheet(&ctx, ui.max_rect(), session);
+    delete_sheet(&ctx, modal_bounds, session);
     outcome
 }
 

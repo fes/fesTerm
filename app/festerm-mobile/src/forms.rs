@@ -509,7 +509,13 @@ pub fn show_editor(
                     {
                         let items: Vec<(Option<Icon>, &str)> = kinds
                             .iter()
-                            .map(|kind| (Some(kind.glyph()), kind.label()))
+                            .map(|kind| {
+                                let label = match kind {
+                                    ProfileKind::DevTunnelFiles => "Files",
+                                    _ => kind.label(),
+                                };
+                                (Some(kind.glyph()), label)
+                            })
                             .collect();
                         segmented(ui, &items, &mut state.kind_index, true);
                     }

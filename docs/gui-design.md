@@ -2007,6 +2007,18 @@ from an existing Files view does not reopen it. If a saved destination changed
 or was removed, Reconnect refuses; only an explicit Save as new can associate
 a new shortcut, and Cancel leaves the old association intact.
 
+At 360- and 375-point widths, the profile-type selector uses **Files**
+so the file workflow remains distinguishable from a terminal profile. The saved
+kind remains **Dev Tunnels Files**. A Files header uses the typed profile name
+or selected host name, never a shared-shell recipe label; its Save/Edit action
+keeps the standard 16-point body inset. Unknown selected-file sizes omit the
+byte total rather than displaying a false zero.
+
+A focused Files form uses the existing native-keyboard safe viewport. New Folder
+and Delete sheets are bounded by the visible viewport captured before pane
+layout can expand it. Folder name, Create and Cancel remain reachable above the
+keyboard; a retained terminal keyboard alone does not shrink an idle Files view.
+
 When the current Files stream separately advertises Delete, offer **Delete
 selected** for up to eight regular files or folders. A folder checkbox selects
 without navigating; its row still opens the folder. The confirmation lists the

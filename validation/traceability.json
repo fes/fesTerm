@@ -7858,6 +7858,7 @@
         "host_files_root_replacement_retires_ready_and_connection_before_disclosure",
         "host_files_preview_cleanup_preserves_preexisting_and_replaced_cache",
         "host_files_upload_inflight_source_cutover_settles_and_next_upload_is_usable",
+        "mobile_files_only_tab_returns_to_profiles_and_drops_its_session",
         "files_new_folder_uses_bounded_name_and_current_pane_without_remote_write_authority",
         "files_conflict_projects_only_supported_actions_and_no_cross_batch_remember",
         "files_read_only_capability_disables_upload_and_rejects_stale_dispatch"
@@ -7898,6 +7899,7 @@
         "files_host_picker_never_offers_editable_locator_or_manual_pairing",
         "saved_files_route_pin_refuses_changed_host_or_key_before_native_index_action",
         "saved_files_challenge_pin_refuses_changed_issuer_before_proof_but_allows_new_epoch",
+        "mobile_editor_fits_measured_phone_tablet_space_and_releases_it",
         "files_session_profile_form_saves_without_reconnecting_or_ssh_fields",
         "files_host_picker_refuses_terminal_mutation_and_attachment_actions",
         "files_raw_client_access_refuses_retained_delete_review_then_reopens_after_close",

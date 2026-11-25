@@ -82,18 +82,21 @@ impl MobileApp {
                 && !session.transfers_sheet
                 && session.conflict().is_none()
         });
-        if widgets::button(
-            ui,
-            widgets::ButtonKind::Secondary,
-            if existing {
-                "Edit Files profile"
-            } else {
-                "Save as profile"
-            },
-            ready,
-        )
-        .clicked()
-        {
+        let save = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(theme::space::LG as i8, 0))
+            .show(ui, |ui| {
+                widgets::button(
+                    ui,
+                    widgets::ButtonKind::Secondary,
+                    if existing {
+                        "Edit Files profile"
+                    } else {
+                        "Save as profile"
+                    },
+                    ready,
+                )
+            });
+        if save.inner.clicked() {
             self.begin_host_files_profile();
         }
         ui.add_space(theme::space::SM);
@@ -410,60 +413,76 @@ mod tests {
 
     #[test]
     fn saving_a_new_shortcut_rebinds_only_after_explicit_save_and_preserves_typed_name() {
-        use files_fixture::{FixtureFs, FixtureTransfers};
-        use std::sync::Arc;
-        let (mut app, id, _) = fixture();
-        let mut target = app.saved_host_files_target(&id).unwrap();
-        target.profile_name_hint = Some("Typed name".into());
-        let parsed = festerm_mobile_profiles::ProfileId::parse(&id).unwrap();
-        app.profiles
-            .as_ref()
-            .unwrap()
-            .store_handle()
-            .lock()
-            .unwrap()
-            .delete(&parsed)
-            .unwrap();
-        let fs = |kind| {
-            Arc::new(FixtureFs {
-                kind,
-                home: "/",
-                entries: vec![],
-            })
-        };
-        app.files = Some(Box::new(files::FilesSession::ready(
-            "Files".into(),
-            "Host".into(),
-            files::Ready {
-                remote_write: true,
-                remote: fs(festerm_sftp::PaneKind::Remote),
-                local: fs(festerm_sftp::PaneKind::Local),
-                local_root: "/nonexistent-festerm-test".into(),
-                transfers: Arc::new(FixtureTransfers::new(vec![])),
-                start_dir: None,
-            },
-            &egui::Context::default(),
-        )));
-        app.files_ctx.host = Some(target);
-        app.begin_host_files_profile();
-        assert_eq!(app.editor.name, "Typed name");
-        assert!(app.editor.editing.is_none());
-        app.close_editor();
-        assert_eq!(
-            app.files_ctx.host.as_ref().unwrap().profile.as_deref(),
-            Some(id.as_str())
-        );
-        assert!(app
-            .check_saved_host_files_target(app.files_ctx.host.as_ref().unwrap())
-            .is_err());
-        app.begin_host_files_profile();
-        let new_id = app.save_editor_profile().unwrap();
-        assert_ne!(new_id, id);
-        let target = app.files_ctx.host.as_ref().unwrap();
-        assert_eq!(target.profile.as_deref(), Some(new_id.as_str()));
-        assert_eq!(target.label, "Typed name");
-        app.check_saved_host_files_target(target).unwrap();
-        assert!(app.tabs.is_empty());
+        for width in [360.0, 375.0] {
+            use egui_kittest::{kittest::Queryable, Harness};
+            use files_fixture::{FixtureFs, FixtureTransfers};
+            use std::sync::Arc;
+            let (mut app, id, _) = fixture();
+            let mut target = app.saved_host_files_target(&id).unwrap();
+            target.profile_name_hint = Some("Typed name".into());
+            let parsed = festerm_mobile_profiles::ProfileId::parse(&id).unwrap();
+            app.profiles
+                .as_ref()
+                .unwrap()
+                .store_handle()
+                .lock()
+                .unwrap()
+                .delete(&parsed)
+                .unwrap();
+            let fs = |kind| {
+                Arc::new(FixtureFs {
+                    kind,
+                    home: "/",
+                    entries: vec![],
+                })
+            };
+            app.files = Some(Box::new(files::FilesSession::ready(
+                "Files".into(),
+                "Host".into(),
+                files::Ready {
+                    remote_write: true,
+                    remote: fs(festerm_sftp::PaneKind::Remote),
+                    local: fs(festerm_sftp::PaneKind::Local),
+                    local_root: "/nonexistent-festerm-test".into(),
+                    transfers: Arc::new(FixtureTransfers::new(vec![])),
+                    start_dir: None,
+                },
+                &egui::Context::default(),
+            )));
+            app.files_ctx.host = Some(target);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 844.0))
+                .build_ui_state(|ui, app: &mut MobileApp| app.show_files_body(ui), app);
+            harness.run_steps(3);
+            let save = harness.get_by_label("Save as profile");
+            let rect = save.rect();
+            assert!(
+                rect.left() >= 16.0 && rect.right() <= width - 16.0,
+                "Files action must keep body padding at {width}: {rect:?}"
+            );
+            assert!(rect.height() >= 44.0);
+            save.click();
+            harness.run_steps(3);
+            let app = harness.state_mut();
+            assert_eq!(app.editor.name, "Typed name");
+            assert!(app.editor.editing.is_none());
+            app.close_editor();
+            assert_eq!(
+                app.files_ctx.host.as_ref().unwrap().profile.as_deref(),
+                Some(id.as_str())
+            );
+            assert!(app
+                .check_saved_host_files_target(app.files_ctx.host.as_ref().unwrap())
+                .is_err());
+            app.begin_host_files_profile();
+            let new_id = app.save_editor_profile().unwrap();
+            assert_ne!(new_id, id);
+            let target = app.files_ctx.host.as_ref().unwrap();
+            assert_eq!(target.profile.as_deref(), Some(new_id.as_str()));
+            assert_eq!(target.label, "Typed name");
+            app.check_saved_host_files_target(target).unwrap();
+            assert!(app.tabs.is_empty());
+        }
     }
 
     #[test]
