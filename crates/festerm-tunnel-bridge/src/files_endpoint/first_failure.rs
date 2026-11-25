@@ -6,7 +6,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Channel {
+pub enum Channel {
     Browsing,
     Transfer,
 }
@@ -60,7 +60,7 @@ struct Fact {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct FirstFailure(Arc<OnceLock<Fact>>);
+pub struct FirstFailure(Arc<OnceLock<Fact>>);
 
 impl FirstFailure {
     pub(super) fn record(&self, channel: Channel, stage: &'static str, error: &file_client::Error) {
@@ -100,7 +100,7 @@ impl FirstFailure {
         }
     }
 
-    pub(crate) fn details_or(&self, fallback: String) -> String {
+    pub fn details_or(&self, fallback: String) -> String {
         let Some(fact) = self.0.get() else {
             return fallback;
         };

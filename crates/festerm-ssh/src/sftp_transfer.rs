@@ -1,6 +1,7 @@
 mod endpoint;
 pub use endpoint::{
-    RemoteDirectoryPage, RemoteReplacementReview, RemoteTransferEndpoint, RemoteTransferFuture,
+    LocalUploadSources, OpenedLocalUpload, RemoteDirectoryPage, RemoteReplacementReview,
+    RemoteTransferEndpoint, RemoteTransferFuture,
 };
 
 use std::{
@@ -564,6 +565,21 @@ impl SftpTransferManager {
         Self::with_backend(endpoint::EndpointBackend {
             remote,
             partial: None,
+            local_upload_sources: None,
+        })
+    }
+
+    /// Uses the same queue and publication engine with caller-admitted held
+    /// local files. Upload source reads have no pathname-open fallback; the
+    /// ordinary remote-to-local download behavior is otherwise unchanged.
+    pub fn from_remote_endpoint_with_upload_sources(
+        remote: impl RemoteTransferEndpoint,
+        sources: Arc<dyn LocalUploadSources>,
+    ) -> Self {
+        Self::with_backend(endpoint::EndpointBackend {
+            remote,
+            partial: None,
+            local_upload_sources: Some(sources),
         })
     }
 

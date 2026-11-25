@@ -1,4 +1,4 @@
-//! Read-only ordinary HOST Files composition. This never attaches a shell.
+//! Ordinary Files composition. This never attaches a shell.
 use super::files::{Connector, LinkEvent, Ready, RowState, TransferRow, Transfers};
 use super::model::HostDecision;
 use eframe::egui;
@@ -21,6 +21,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 mod local_download;
+mod local_root;
+mod local_upload;
+mod uploads;
 
 const QUEUE: usize = 8;
 const HISTORY: usize = 32;
@@ -33,6 +36,7 @@ enum Command {
     List(String, ListOptions, Reply<Listing>),
     Stat(String, Reply<Entry>),
     Download(u64, String, String, CancellationToken),
+    Mkdir(String, Reply<()>),
 }
 #[derive(Default)]
 struct State {
@@ -47,6 +51,9 @@ struct Lease {
     state: Arc<Mutex<State>>,
     wake: egui::Context,
     current: Arc<dyn Fn() -> Result<(), SftpError> + Send + Sync>,
+    write: std::sync::atomic::AtomicBool,
+    uploads: Mutex<Option<Arc<uploads::Uploads>>>,
+    root: Mutex<Option<Arc<local_root::Root>>>,
 }
 impl Drop for Lease {
     fn drop(&mut self) {
@@ -54,11 +61,23 @@ impl Drop for Lease {
     }
 }
 impl Lease {
-    fn send(&self, command: Command) -> Result<(), SftpError> {
-        if self.cancel.is_cancelled() || (self.current)().is_err() {
+    fn send_current(&self) -> Result<(), SftpError> {
+        if self.cancel.is_cancelled()
+            || (self.current)().is_err()
+            || self
+                .root
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|root| root.check().is_err())
+        {
             self.cancel.cancel();
             return Err(SftpError::Cancelled);
         }
+        Ok(())
+    }
+    fn send(&self, command: Command) -> Result<(), SftpError> {
+        self.send_current()?;
         self.commands
             .try_send(command)
             .map_err(|_| SftpError::Disconnected("Files worker unavailable or busy".into()))
@@ -73,7 +92,7 @@ impl Lease {
 }
 struct Remote(Arc<Lease>);
 fn denied() -> SftpError {
-    SftpError::Unsupported("Read-only: this operation is unavailable".into())
+    SftpError::Unsupported("This operation is unavailable".into())
 }
 impl PaneFs for Remote {
     fn kind(&self) -> PaneKind {
@@ -102,8 +121,12 @@ impl PaneFs for Remote {
             self.0.request(|reply| Command::Stat(p, reply))
         }
     }
-    fn mkdir(&self, _: &str) -> Result<(), SftpError> {
-        Err(denied())
+    fn mkdir(&self, value: &str) -> Result<(), SftpError> {
+        if !self.0.write.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(denied());
+        }
+        let value = rooted(value)?;
+        self.0.request(|reply| Command::Mkdir(value, reply))
     }
     fn rename(&self, _: &str, _: &str) -> Result<(), SftpError> {
         Err(denied())
@@ -231,12 +254,83 @@ async fn listing<S: AsyncRead + AsyncWrite + Unpin>(
 }
 struct HostTransfers(Arc<Lease>);
 impl Transfers for HostTransfers {
+    fn retains_preview_copies(&self) -> bool {
+        true
+    }
+    fn prepare_preview_cache(&self) -> Option<Result<String, SftpError>> {
+        Some(self.0.send_current().and_then(|()| {
+            self.0
+                .root
+                .lock()
+                .unwrap()
+                .as_ref()
+                .ok_or_else(denied)?
+                .prepare_preview()
+        }))
+    }
+    fn read_local_markdown(&self, path: &str, limit: usize) -> Option<Result<String, String>> {
+        Some(
+            self.0
+                .root
+                .lock()
+                .unwrap()
+                .as_ref()
+                .ok_or_else(|| "Local preview is unavailable".to_owned())
+                .and_then(|root| root.read_text(path, limit)),
+        )
+    }
     fn rows(&self) -> Vec<TransferRow> {
+        if let Some(uploads) = self.0.uploads.lock().unwrap().clone() {
+            uploads.poll();
+        }
         self.0.state.lock().unwrap().rows.clone()
     }
     fn enqueue(&self, d: Direction, source: &str, target: &str) -> Result<u64, String> {
-        if d != Direction::Download {
-            return Err("Read-only: uploads are unavailable".into());
+        if d == Direction::Upload {
+            self.0.send_current().map_err(|_| "Connection closed")?;
+            if !self.0.write.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Uploads are unavailable".into());
+            }
+            let uploads = self
+                .0
+                .uploads
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or("Uploads are unavailable")?;
+            let target = rooted(target).map_err(|_| "Invalid upload destination")?;
+            let name = path::local_components(source)
+                .map_err(|_| "Invalid local file")?
+                .last()
+                .ok_or("Invalid local file")?
+                .to_string();
+            let id = {
+                let mut state = self.0.state.lock().unwrap();
+                if state.failed || state.rows.len() >= HISTORY {
+                    return Err("Clear finished transfers or reconnect".into());
+                }
+                state.next = state.next.checked_add(1).ok_or("Files queue exhausted")?;
+                let id = state.next;
+                state.rows.push(TransferRow {
+                    id,
+                    name,
+                    direction: d,
+                    target: target.clone(),
+                    state: RowState::Queued,
+                    done: 0,
+                    total: None,
+                    rate: 0.0,
+                    conflict: None,
+                    error: None,
+                });
+                id
+            };
+            if let Err(message) = uploads.enqueue(id, source, &target) {
+                self.0.state.lock().unwrap().rows.retain(|row| row.id != id);
+                return Err(message);
+            }
+            self.0.wake.request_repaint();
+            return Ok(id);
         }
         let source = rooted(source).map_err(|_| "Invalid file path")?;
         let name = path::file_name_remote(&source).map_err(|_| "Invalid file name")?;
@@ -268,13 +362,30 @@ impl Transfers for HostTransfers {
         Ok(id)
     }
     fn cancel(&self, id: u64) {
+        if self
+            .0
+            .uploads
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|uploads| uploads.cancel(id))
+        {
+            return;
+        }
         if let Some(c) = self.0.state.lock().unwrap().cancels.get(&id) {
             c.cancel();
         }
         self.0.wake.request_repaint();
     }
-    fn resolve(&self, _: u64, _: ConflictPolicy, _: bool) {}
+    fn resolve(&self, id: u64, policy: ConflictPolicy, remember: bool) {
+        if let Some(uploads) = self.0.uploads.lock().unwrap().as_ref() {
+            uploads.resolve(id, policy, remember);
+        }
+    }
     fn clear_finished(&self) {
+        if let Some(uploads) = self.0.uploads.lock().unwrap().as_ref() {
+            uploads.clear_finished();
+        }
         self.0
             .state
             .lock()
@@ -283,7 +394,18 @@ impl Transfers for HostTransfers {
             .retain(|r| !r.state.finished());
     }
     fn connection_error(&self) -> Option<String> {
-        if (self.0.current)().is_err() {
+        if let Some(message) = self
+            .0
+            .uploads
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|uploads| uploads.failure())
+        {
+            self.0.cancel.cancel();
+            return Some(message);
+        }
+        if self.0.send_current().is_err() {
             self.0.cancel.cancel();
         }
         (self.0.cancel.is_cancelled() || self.0.state.lock().unwrap().failed)
@@ -350,7 +472,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for LimitedSink<'_, W> {
 fn download<S: AsyncRead + AsyncWrite + Unpin>(
     rt: &Runtime,
     client: &mut file_client::Client<S>,
-    destination: (&LocalFs, &str),
+    destination: (&Arc<local_root::Root>, &str),
     source: &str,
     cancel: &CancellationToken,
     publish_guard: &(dyn Fn() -> Result<(), SftpError> + Send + Sync),
@@ -452,7 +574,9 @@ impl HostConnector {
         cancel: CancellationToken,
         wake: &egui::Context,
         publish_guard: Arc<dyn Fn() -> Result<(), SftpError> + Send + Sync>,
-        prepare: impl FnOnce(&Runtime, &CancellationToken) -> Result<Files, String> + Send + 'static,
+        prepare: impl FnOnce(&Runtime, &CancellationToken) -> Result<(Files, Option<Files>), String>
+            + Send
+            + 'static,
     ) -> Self {
         let (events_send, events) = mpsc::sync_channel(1);
         let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);
@@ -463,6 +587,9 @@ impl HostConnector {
             state: state.clone(),
             wake: wake.clone(),
             current: publish_guard.clone(),
+            write: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(None),
         });
         let weak = Arc::downgrade(&lease);
         let wake = wake.clone();
@@ -474,24 +601,50 @@ impl HostConnector {
                         .enable_all()
                         .build()
                         .map_err(|_| "Files worker unavailable")?;
-                    let files = prepare(&rt, &cancel)?;
+                    let (files, transfer) = prepare(&rt, &cancel)?;
                     files
                         .scope()
                         .validate()
                         .map_err(|_| "Invalid Files scope")?;
                     let mut client = files.into_client();
-                    let local =
-                        LocalFs::new(&local_root).map_err(|_| "App Documents unavailable")?;
+                    let root = local_root::Root::open(&local_root)
+                        .map_err(|_| "App Documents unavailable or changed")?;
+                    let local = root
+                        .local_fs()
+                        .map_err(|_| "App Documents unavailable or changed")?;
+                    let write = client.capabilities().write;
                     let Some(lease) = weak.upgrade() else {
                         return Ok(());
                     };
+                    *lease.root.lock().unwrap() = Some(root.clone());
+                    lease
+                        .write
+                        .store(write, std::sync::atomic::Ordering::SeqCst);
+                    let sources = Arc::new(local_upload::Sources::new(
+                        root.clone(),
+                        publish_guard.clone(),
+                    ));
+                    if let Some(files) = transfer {
+                        let uploads = rt.block_on(async {
+                            uploads::Uploads::new(
+                                files,
+                                sources.clone(),
+                                state.clone(),
+                                cancel.child_token(),
+                            )
+                        });
+                        *lease.uploads.lock().unwrap() = Some(Arc::new(uploads));
+                    }
                     let ready = Ready {
                         remote: Arc::new(Remote(lease.clone())),
-                        local: Arc::new(local.clone()),
+                        local: Arc::new(local_upload::Documents {
+                            local: local.clone(),
+                            sources,
+                        }),
                         local_root,
                         transfers: Arc::new(HostTransfers(lease)),
                         start_dir: Some("/".into()),
-                        remote_write: false,
+                        remote_write: write,
                     };
                     if cancel.is_cancelled() {
                         return Ok(());
@@ -513,6 +666,19 @@ impl HostConnector {
                             break;
                         };
                         match command {
+                            Command::Mkdir(path, reply) => {
+                                let result = rt.block_on(async {
+                                    tokio::time::timeout(DEADLINE, client.mkdir(&path)).await
+                                });
+                                let result = match result {
+                                    Ok(result) => result.map_err(error),
+                                    Err(_) => {
+                                        client.cancel();
+                                        Err(SftpError::Timeout("Connection timed out".into()))
+                                    }
+                                };
+                                let _ = reply.send(result);
+                            }
                             Command::Ping => {
                                 let result = rt.block_on(async {
                                     tokio::time::timeout(DEADLINE, client.ping()).await
@@ -569,7 +735,7 @@ impl HostConnector {
                                 let result = download(
                                     &rt,
                                     &mut client,
-                                    (&local, &target),
+                                    (&root, &target),
                                     &source,
                                     &job_cancel,
                                     publish_guard.as_ref(),
@@ -602,6 +768,12 @@ impl HostConnector {
                         }
                     }
                     client.cancel();
+                    if let Some(lease) = weak.upgrade() {
+                        let uploads = lease.uploads.lock().unwrap().clone();
+                        if let Some(uploads) = uploads {
+                            rt.block_on(uploads.shutdown());
+                        }
+                    }
                     Ok(())
                 };
                 let result = run();
@@ -627,7 +799,7 @@ impl HostConnector {
 }
 impl Connector for HostConnector {
     fn poll(&mut self) -> Vec<LinkEvent> {
-        if (self.lease.current)().is_err() {
+        if self.lease.send_current().is_err() {
             self.lease.cancel.cancel();
         }
         if self.lease.cancel.is_cancelled() {
@@ -647,9 +819,17 @@ impl Connector for HostConnector {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+    #[derive(Default)]
+    struct WriteGate {
+        writes: std::sync::atomic::AtomicUsize,
+        entered: std::sync::atomic::AtomicBool,
+        open: std::sync::atomic::AtomicBool,
+        waker: Mutex<Option<std::task::Waker>>,
+    }
     struct CountedStream {
         stream: DuplexStream,
         written: Arc<std::sync::atomic::AtomicUsize>,
+        gate: Option<Arc<WriteGate>>,
     }
     impl AsyncRead for CountedStream {
         fn poll_read(
@@ -666,7 +846,24 @@ mod tests {
             cx: &mut Context<'_>,
             buf: &[u8],
         ) -> Poll<std::io::Result<usize>> {
+            if let Some(gate) = &self.gate {
+                if buf.len() >= 1024
+                    && gate.writes.load(std::sync::atomic::Ordering::SeqCst) >= rpc::CHUNK_LIMIT
+                    && !gate.open.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    *gate.waker.lock().unwrap() = Some(cx.waker().clone());
+                    gate.entered
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    return Poll::Pending;
+                }
+            }
             let n = std::task::ready!(Pin::new(&mut self.stream).poll_write(cx, buf))?;
+            if n > 0 && buf.len() >= 1024 {
+                if let Some(gate) = &self.gate {
+                    gate.writes
+                        .fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
             self.written
                 .fetch_add(n, std::sync::atomic::Ordering::SeqCst);
             Poll::Ready(Ok(n))
@@ -697,6 +894,29 @@ mod tests {
         file_client::Client<CountedStream>,
         Arc<std::sync::atomic::AtomicUsize>,
     ) {
+        policy_fixture(false)
+    }
+    fn policy_fixture(
+        write: bool,
+    ) -> (
+        Runtime,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        file_client::Client<CountedStream>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        gated_policy_fixture(write, None)
+    }
+    fn gated_policy_fixture(
+        write: bool,
+        gate: Option<Arc<WriteGate>>,
+    ) -> (
+        Runtime,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        file_client::Client<CountedStream>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -707,7 +927,7 @@ mod tests {
         std::fs::create_dir(remote.path().join("folder")).unwrap();
         let filesystem = festerm_tunnel_bridge::filesystem::Filesystem::open(&rpc::Policy {
             root: remote.path().canonicalize().unwrap(),
-            write: false,
+            write,
             delete: false,
         })
         .unwrap();
@@ -729,6 +949,7 @@ mod tests {
         let stream = CountedStream {
             stream,
             written: written.clone(),
+            gate,
         };
         let client = runtime
             .block_on(file_client::Client::open(
@@ -738,6 +959,294 @@ mod tests {
             ))
             .unwrap();
         (runtime, remote, local, client, written)
+    }
+    #[test]
+    fn host_files_mobile_upload_maps_skip_keep_both_and_reviewed_replace_through_shared_queue() {
+        use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
+        for policy in [
+            ConflictPolicy::Skip,
+            ConflictPolicy::KeepBoth,
+            ConflictPolicy::Replace,
+        ] {
+            let (rt, remote, local_root, client, _) = policy_fixture(true);
+            let local = LocalFs::new(local_root.path()).unwrap();
+            std::fs::write(local.root().join("public.md"), b"new public upload").unwrap();
+            let sources = Arc::new(local_upload::Sources::new(
+                local_root::Root::open(local.root()).unwrap(),
+                Arc::new(|| Ok(())),
+            ));
+            let mut row = transfer_row();
+            row.id = 1;
+            row.state = RowState::Queued;
+            row.direction = Direction::Upload;
+            let state = Arc::new(Mutex::new(State {
+                rows: vec![row],
+                ..State::default()
+            }));
+            rt.block_on(async {
+                let failure = FirstFailure::default();
+                let endpoint = FilesEndpoint::from_client(
+                    client,
+                    CancellationToken::new(),
+                    failure.clone(),
+                    FilesChannel::Transfer,
+                );
+                let uploads =
+                    uploads::Uploads::from_endpoint(endpoint, sources, state.clone(), failure);
+                uploads.enqueue(1, "public.md", "/").unwrap();
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        uploads.poll();
+                        {
+                            let state = state.lock().unwrap();
+                            let row = &state.rows[0];
+                            if row.state == RowState::Awaiting {
+                                break;
+                            }
+                            assert!(
+                                !row.state.finished(),
+                                "upload stopped before collision: {:?} {:?}",
+                                row.state,
+                                row.error
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                assert!(state.lock().unwrap().rows[0].conflict.is_some());
+                uploads.resolve(1, policy, false);
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        uploads.poll();
+                        if state.lock().unwrap().rows[0].state.finished() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "collision resolution stalled for {policy:?}: {:?}",
+                        state.lock().unwrap().rows
+                    )
+                });
+                {
+                    let locked = state.lock().unwrap();
+                    let row = &locked.rows[0];
+                    assert_eq!(
+                        row.state,
+                        if policy == ConflictPolicy::Skip {
+                            RowState::Skipped
+                        } else {
+                            RowState::Done
+                        }
+                    );
+                    if policy != ConflictPolicy::Skip {
+                        assert_eq!(row.done, 17);
+                        assert_eq!(row.total, Some(17));
+                    }
+                }
+                uploads.shutdown().await;
+            });
+            if policy == ConflictPolicy::Replace {
+                assert_eq!(
+                    std::fs::read(remote.path().join("public.md")).unwrap(),
+                    b"new public upload"
+                );
+            } else {
+                assert_eq!(
+                    std::fs::read(remote.path().join("public.md")).unwrap(),
+                    b"# public canary\n"
+                );
+            }
+            if policy == ConflictPolicy::KeepBoth {
+                let files = std::fs::read_dir(remote.path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_name() != "public.md" && entry.path().is_file())
+                    .collect::<Vec<_>>();
+                assert_eq!(files.len(), 1);
+                assert_eq!(
+                    std::fs::read(files[0].path()).unwrap(),
+                    b"new public upload"
+                );
+            }
+        }
+    }
+    #[test]
+    fn host_files_upload_queued_source_cutover_never_sends_begin_or_publishes_replacement() {
+        use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
+        let (rt, remote, local_root, client, written) = policy_fixture(true);
+        let before = written.load(std::sync::atomic::Ordering::SeqCst);
+        let local = LocalFs::new(local_root.path()).unwrap();
+        std::fs::write(local.root().join("new.txt"), b"public admitted source").unwrap();
+        let sources = Arc::new(local_upload::Sources::new(
+            local_root::Root::open(local.root()).unwrap(),
+            Arc::new(|| Ok(())),
+        ));
+        let mut row = transfer_row();
+        row.id = 1;
+        row.state = RowState::Queued;
+        row.direction = Direction::Upload;
+        let state = Arc::new(Mutex::new(State {
+            rows: vec![row],
+            ..State::default()
+        }));
+        rt.block_on(async {
+            let failure = FirstFailure::default();
+            let endpoint = FilesEndpoint::from_client(
+                client,
+                CancellationToken::new(),
+                failure.clone(),
+                FilesChannel::Transfer,
+            );
+            let uploads =
+                uploads::Uploads::from_endpoint(endpoint, sources, state.clone(), failure);
+            uploads.enqueue(1, "new.txt", "/").unwrap();
+            // No runtime yield: replace the admitted name before the queue runs.
+            std::fs::rename(
+                local.root().join("new.txt"),
+                local.root().join("retained.txt"),
+            )
+            .unwrap();
+            std::fs::write(local.root().join("new.txt"), b"unadmitted bytes").unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    uploads.poll();
+                    if state.lock().unwrap().rows[0].state.finished() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(state.lock().unwrap().rows[0].state, RowState::Failed);
+            assert_eq!(written.load(std::sync::atomic::Ordering::SeqCst), before);
+            uploads.shutdown().await;
+        });
+        assert!(!remote.path().join("new.txt").exists());
+        assert_eq!(
+            std::fs::read(local.root().join("new.txt")).unwrap(),
+            b"unadmitted bytes"
+        );
+        assert_eq!(
+            std::fs::read(local.root().join("retained.txt")).unwrap(),
+            b"public admitted source"
+        );
+    }
+    #[test]
+    fn host_files_upload_inflight_source_cutover_settles_and_next_upload_is_usable() {
+        use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
+        use std::sync::atomic::Ordering;
+        let gate = Arc::new(WriteGate::default());
+        let (rt, remote, local_dir, client, _) = gated_policy_fixture(true, Some(gate.clone()));
+        let root = local_root::Root::open(local_dir.path()).unwrap();
+        let local = root.local_fs().unwrap();
+        std::fs::write(local.root().join("large.txt"), vec![b'p'; 256 * 1024]).unwrap();
+        let sources = Arc::new(local_upload::Sources::new(root, Arc::new(|| Ok(()))));
+        let mut row = transfer_row();
+        row.id = 1;
+        row.direction = Direction::Upload;
+        row.state = RowState::Queued;
+        let state = Arc::new(Mutex::new(State {
+            rows: vec![row.clone()],
+            ..State::default()
+        }));
+        rt.block_on(async {
+            let failure = FirstFailure::default();
+            let lifetime = CancellationToken::new();
+            let endpoint = FilesEndpoint::from_client(
+                client,
+                lifetime.clone(),
+                failure.clone(),
+                FilesChannel::Transfer,
+            );
+            let uploads =
+                uploads::Uploads::from_endpoint(endpoint, sources, state.clone(), failure);
+            uploads.enqueue(1, "large.txt", "/").unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !gate.entered.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            for _ in 0..2 {
+                uploads.poll();
+                let state = state.lock().unwrap();
+                let row = &state.rows[0];
+                assert!(
+                    row.done > 0,
+                    "actual active source bytes must reach the existing progress row"
+                );
+                assert_eq!(
+                    row.state,
+                    RowState::Active,
+                    "stale snapshots must not downgrade known active progress"
+                );
+                assert_eq!(row.total, Some(256 * 1024));
+            }
+            std::fs::write(local.root().join("large.txt"), b"fresh selected source").unwrap();
+            gate.open.store(true, Ordering::SeqCst);
+            if let Some(waker) = gate.waker.lock().unwrap().take() {
+                waker.wake();
+            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    uploads.poll();
+                    if state.lock().unwrap().rows[0].state.finished() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(state.lock().unwrap().rows[0].state, RowState::Failed);
+            assert!(!remote.path().join("large.txt").exists());
+            assert!(
+                uploads.failure().is_none(),
+                "acknowledged abort leaves the transfer stream usable"
+            );
+            row.id = 2;
+            state.lock().unwrap().rows.push(row);
+            uploads.enqueue(2, "large.txt", "/").unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    uploads.poll();
+                    if state.lock().unwrap().rows[1].state.finished() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(state.lock().unwrap().rows[1].state, RowState::Done);
+            assert_eq!(
+                std::fs::read(remote.path().join("large.txt")).unwrap(),
+                b"fresh selected source"
+            );
+            // An actually closed worker must be observed after buffered events,
+            // unlike the nonterminal Empty state or an ordinary queued cancel.
+            lifetime.cancel();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    uploads.poll();
+                    if uploads.failure().is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            uploads.shutdown().await;
+        });
     }
     #[test]
     fn host_files_real_framed_read_only_listing_download_and_preview_bytes() {
@@ -756,7 +1265,7 @@ mod tests {
         let bytes = download(
             &rt,
             &mut client,
-            (&LocalFs::new(local.path()).unwrap(), ""),
+            (&local_root::Root::open(local.path()).unwrap(), ""),
             "/public.md",
             &CancellationToken::new(),
             &|| Ok(()),
@@ -776,7 +1285,7 @@ mod tests {
         let result = download(
             &rt,
             &mut client,
-            (&LocalFs::new(local.path()).unwrap(), ""),
+            (&local_root::Root::open(local.path()).unwrap(), ""),
             "/public.md",
             &CancellationToken::new(),
             &|| Err(SftpError::Cancelled),
@@ -804,7 +1313,7 @@ mod tests {
             started: std::time::Instant::now(),
             last_repaint: std::time::Instant::now(),
         };
-        let local = LocalFs::new(local.path()).unwrap();
+        let local = local_root::Root::open(local.path()).unwrap();
         assert!(matches!(
             download(
                 &rt,
@@ -912,6 +1421,9 @@ mod tests {
             cancel: CancellationToken::new(),
             state: Arc::new(Mutex::new(State::default())),
             wake: egui::Context::default(),
+            write: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(None),
             current: Arc::new(move || {
                 if check.load(Ordering::SeqCst) {
                     Ok(())
@@ -946,6 +1458,105 @@ mod tests {
     }
 
     #[test]
+    fn host_files_root_replacement_retires_ready_and_connection_before_disclosure() {
+        let owner = tempfile::tempdir().unwrap();
+        let selected = owner.path().join("Documents");
+        std::fs::create_dir(&selected).unwrap();
+        let root = local_root::Root::open(&selected).unwrap();
+        let (commands, _rx) = tokio::sync::mpsc::channel(QUEUE);
+        let lease = Arc::new(Lease {
+            commands,
+            cancel: CancellationToken::new(),
+            state: Arc::new(Mutex::new(State::default())),
+            wake: egui::Context::default(),
+            current: Arc::new(|| Ok(())),
+            write: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(Some(root)),
+        });
+        let (send, events) = mpsc::sync_channel(1);
+        send.send(LinkEvent::Status("prepared".into())).unwrap();
+        let mut connector = HostConnector {
+            events,
+            lease: lease.clone(),
+        };
+        std::fs::rename(&selected, owner.path().join("retained")).unwrap();
+        std::fs::create_dir(&selected).unwrap();
+        assert!(matches!(
+            connector.poll().as_slice(),
+            [LinkEvent::Failed(_)]
+        ));
+        assert!(HostTransfers(lease).connection_error().is_some());
+    }
+    #[test]
+    fn host_files_preview_cleanup_preserves_preexisting_and_replaced_cache() {
+        let owner = tempfile::tempdir().unwrap();
+        let selected = owner.path().join("Documents");
+        std::fs::create_dir(&selected).unwrap();
+        let root = local_root::Root::open(&selected).unwrap();
+        let local = root.local_fs().unwrap();
+        let sources = Arc::new(local_upload::Sources::new(
+            root.clone(),
+            Arc::new(|| Ok(())),
+        ));
+        let (commands, _rx) = tokio::sync::mpsc::channel(QUEUE);
+        let lease = Arc::new(Lease {
+            commands,
+            cancel: CancellationToken::new(),
+            state: Arc::new(Mutex::new(State::default())),
+            wake: egui::Context::default(),
+            current: Arc::new(|| Ok(())),
+            write: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(Some(root.clone())),
+        });
+        let mut session = super::super::files::FilesSession::ready(
+            "Files".into(),
+            "Read-only".into(),
+            Ready {
+                remote_write: false,
+                remote: Arc::new(local.clone()),
+                local: Arc::new(local_upload::Documents { local, sources }),
+                local_root: selected.clone(),
+                transfers: Arc::new(HostTransfers(lease)),
+                start_dir: None,
+            },
+            &egui::Context::default(),
+        );
+        let preexisting = selected.join(super::super::files::CACHE_DIR);
+        std::fs::create_dir(&preexisting).unwrap();
+        let prior = preexisting.join("prior.txt");
+        std::fs::write(&prior, b"preexisting public marker").unwrap();
+        // No preview was requested: close must not claim this existing folder.
+        session.cleanup();
+        assert_eq!(std::fs::read(&prior).unwrap(), b"preexisting public marker");
+        let owned = root.prepare_preview().unwrap();
+        let owned_path = selected.join(&owned);
+        std::fs::write(owned_path.join("owned.txt"), b"private preview copy").unwrap();
+        std::fs::rename(&owned_path, selected.join("retained-preview")).unwrap();
+        std::fs::create_dir(&owned_path).unwrap();
+        let replacement = owned_path.join("replacement.txt");
+        std::fs::write(&replacement, b"unowned cache replacement").unwrap();
+        assert!(root.prepare_preview().is_err());
+        session.cleanup();
+        assert_eq!(
+            std::fs::read(&replacement).unwrap(),
+            b"unowned cache replacement"
+        );
+        assert_eq!(
+            std::fs::read(selected.join("retained-preview/owned.txt")).unwrap(),
+            b"private preview copy"
+        );
+        std::fs::rename(&selected, owner.path().join("retained")).unwrap();
+        std::fs::create_dir_all(selected.join(super::super::files::CACHE_DIR)).unwrap();
+        let marker = selected
+            .join(super::super::files::CACHE_DIR)
+            .join("replacement.txt");
+        std::fs::write(&marker, b"replacement public marker").unwrap();
+        session.cleanup();
+        assert_eq!(std::fs::read(marker).unwrap(), b"replacement public marker");
+    }
+    #[test]
     fn host_files_mutations_and_invalid_paths_never_reach_worker() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);
         let lease = Arc::new(Lease {
@@ -953,6 +1564,9 @@ mod tests {
             cancel: CancellationToken::new(),
             state: Arc::new(Mutex::new(State::default())),
             wake: egui::Context::default(),
+            write: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(None),
             current: Arc::new(|| Ok(())),
         });
         let remote = Remote(lease.clone());

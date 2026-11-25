@@ -654,6 +654,21 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                 );
             });
         }
+        ui.horizontal_wrapped(|ui| {
+            if button(
+                ui,
+                ButtonKind::Secondary,
+                "New remote folder",
+                session.remote_write,
+            )
+            .clicked()
+            {
+                session.new_folder(true);
+            }
+            if button(ui, ButtonKind::Secondary, "New local folder", true).clicked() {
+                session.new_folder(false);
+            }
+        });
         let (mut open_remote, mut open_local) = (false, false);
         if wide {
             let fixed = 48.0 + 60.0 + 4.0 * space::SM + 48.0 + 52.0;
@@ -744,6 +759,51 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
             session.transfers_sheet = true;
         }
     });
+    if session.folder.is_some() {
+        let mut create = false;
+        let mut cancel = false;
+        let result = bottom_sheet(&ctx, "files-new-folder", ui.max_rect(), |ui| {
+            let Some(draft) = session.folder.as_mut() else {
+                return;
+            };
+            sheet_title(ui, "New folder", None);
+            footnote(
+                ui,
+                if draft.remote {
+                    "Create in the selected remote folder"
+                } else {
+                    "Create in the selected local folder"
+                },
+            );
+            ui.add_enabled_ui(!draft.busy(), |ui| {
+                let width = ui.available_width();
+                super::widgets::text_field(ui, "Folder name", &mut draft.name, "New folder", width);
+            });
+            if let Some(error) = &draft.error {
+                footnote(ui, error);
+            }
+            if draft.busy() {
+                ui.add(egui::Spinner::new());
+                footnote(ui, "Creating folder…");
+            }
+            create = button(
+                ui,
+                ButtonKind::Primary,
+                "Create folder",
+                !draft.busy() && !draft.name.is_empty(),
+            )
+            .clicked();
+            cancel = button(ui, ButtonKind::Secondary, "Cancel", !draft.busy()).clicked();
+        });
+        if create {
+            session.create_folder(&ctx);
+        }
+        if cancel
+            || (result.dismissed && !session.folder.as_ref().is_some_and(|draft| draft.busy()))
+        {
+            session.folder = None;
+        }
+    }
     outcome
 }
 
@@ -1062,6 +1122,8 @@ pub(crate) fn conflict_sheet_content(
     let incoming_remote = view.direction == Direction::Download;
     let text = if view.existing_is_directory {
         "A folder with this name exists. Keep both, or skip this file.".to_owned()
+    } else if !view.allowed.contains(&ConflictPolicy::Replace) {
+        "Choose an available action for this item.".to_owned()
     } else if view.likely_identical {
         "These look identical (same size and time).".to_owned()
     } else if incoming_remote {
@@ -1081,39 +1143,50 @@ pub(crate) fn conflict_sheet_content(
         )
         .wrap(),
     );
-    ui.horizontal(|ui| {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), Sense::CLICK);
-        let tint = if *remember {
-            color::PRIMARY
-        } else {
-            color::BORDER
-        };
-        ui.painter().rect_stroke(
-            rect.shrink(2.0),
-            CornerRadius::same(5),
-            Stroke::new(1.6, tint),
-            StrokeKind::Inside,
-        );
-        if *remember {
-            ui.painter()
-                .rect_filled(rect.shrink(2.0), CornerRadius::same(5), color::PRIMARY);
-            super::widgets::check_mark(ui.painter(), rect.center(), color::ON_PRIMARY);
-        }
-        let label = ui.add(
-            egui::Label::new(
-                egui::RichText::new("Use this choice for remaining conflicts")
-                    .size(type_scale::CAPTION + 0.5)
-                    .color(color::TEXT),
-            )
-            .sense(Sense::CLICK),
-        );
-        if labelled(response, "Use this choice for remaining conflicts", true).clicked()
-            || label.clicked()
-        {
-            *remember = !*remember;
-        }
-    });
-    if button(ui, ButtonKind::Primary, "Keep both", true).clicked() {
+    if view.can_remember {
+        ui.horizontal(|ui| {
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), Sense::CLICK);
+            let tint = if *remember {
+                color::PRIMARY
+            } else {
+                color::BORDER
+            };
+            ui.painter().rect_stroke(
+                rect.shrink(2.0),
+                CornerRadius::same(5),
+                Stroke::new(1.6, tint),
+                StrokeKind::Inside,
+            );
+            if *remember {
+                ui.painter()
+                    .rect_filled(rect.shrink(2.0), CornerRadius::same(5), color::PRIMARY);
+                super::widgets::check_mark(ui.painter(), rect.center(), color::ON_PRIMARY);
+            }
+            let label = ui.add(
+                egui::Label::new(
+                    egui::RichText::new("Use this choice for remaining conflicts")
+                        .size(type_scale::CAPTION + 0.5)
+                        .color(color::TEXT),
+                )
+                .sense(Sense::CLICK),
+            );
+            if labelled(response, "Use this choice for remaining conflicts", true).clicked()
+                || label.clicked()
+            {
+                *remember = !*remember;
+            }
+        });
+    } else {
+        *remember = false;
+    }
+    if button(
+        ui,
+        ButtonKind::Primary,
+        "Keep both",
+        view.allowed.contains(&ConflictPolicy::KeepBoth),
+    )
+    .clicked()
+    {
         choice = Some(ConflictPolicy::KeepBoth);
     }
     ui.label(
@@ -1129,7 +1202,14 @@ pub(crate) fn conflict_sheet_content(
         .size(type_scale::CAPTION)
         .color(color::TEXT_FAINT),
     );
-    if button(ui, ButtonKind::Secondary, "Skip file", true).clicked() {
+    if button(
+        ui,
+        ButtonKind::Secondary,
+        "Skip file",
+        view.allowed.contains(&ConflictPolicy::Skip),
+    )
+    .clicked()
+    {
         choice = Some(ConflictPolicy::Skip);
     }
     if button(
@@ -1140,7 +1220,7 @@ pub(crate) fn conflict_sheet_content(
         } else {
             "Replace remote file"
         },
-        !view.existing_is_directory,
+        !view.existing_is_directory && view.allowed.contains(&ConflictPolicy::Replace),
     )
     .clicked()
     {

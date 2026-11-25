@@ -7831,6 +7831,45 @@
         "Native iOS/Android ordinary Files browse/download/preview, cancellation/progress, account/lock/suspend and explicit reconnect checks remain required. Framed-service and rendered controls are source evidence only.",
         "Mobile upload/mkdir/reviewed Delete/rename/chmod/link parity and destination replacement/Keep Both are outside this read-only tranche."
       ]
+    },
+    {
+      "id": "mobile-host-files-upload-mkdir",
+      "edges": [
+        "MOB-12"
+      ],
+      "requirements": [
+        "docs/dev-tunnel-files-protocol.md#mobile-upload-and-folder-creation"
+      ],
+      "decisions": [
+        "ADR-0067",
+        "ADR-0086"
+      ],
+      "automated_tests": [
+        "host_files_upload_source_replacement_and_size_change_refuse_held_authority",
+        "host_files_upload_source_refuses_alias_before_admission_and_parent_cutover",
+        "host_files_upload_refuses_documents_root_alias_before_admission",
+        "host_files_upload_refuses_hardlinks_and_writable_source_or_parent",
+        "host_files_upload_held_reader_fences_account_and_content_each_chunk",
+        "host_files_mobile_upload_maps_skip_keep_both_and_reviewed_replace_through_shared_queue",
+        "host_files_upload_queued_source_cutover_never_sends_begin_or_publishes_replacement",
+        "host_files_documents_startup_rejects_existing_alias_before_canonicalization",
+        "host_files_local_preview_requires_regular_nofollow_leaf_and_bounded_bytes",
+        "host_files_documents_startup_pin_refuses_regular_root_replacement_before_use",
+        "host_files_root_replacement_retires_ready_and_connection_before_disclosure",
+        "host_files_preview_cleanup_preserves_preexisting_and_replaced_cache",
+        "host_files_upload_inflight_source_cutover_settles_and_next_upload_is_usable",
+        "files_new_folder_uses_bounded_name_and_current_pane_without_remote_write_authority",
+        "files_conflict_projects_only_supported_actions_and_no_cross_batch_remember",
+        "files_read_only_capability_disables_upload_and_rejects_stale_dispatch"
+      ],
+      "manual_scenarios": [
+        "MOB-12"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "Native iOS/Android Files upload/mkdir, progress/conflict decisions, account/lock retirement and truthful uncertainty remain required; source/framed/UI tests are not native acceptance.",
+        "Saved Files profiles, mobile reviewed Delete, recursive local upload and durable mobile recovery are outside this tranche."
+      ]
     }
   ]
 }

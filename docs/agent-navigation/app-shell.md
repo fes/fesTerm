@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "27ab4f8be55d6de23f312141d6bdb0a3f7975c461637fa6c1d5dc3c718e619f3"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "06ab2d3dd1984b283d11232375e4bbe48ae6aea1d090f1e44411ae27e0bc88de"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

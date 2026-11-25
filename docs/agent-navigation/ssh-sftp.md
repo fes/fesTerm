@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9ece5422d5a879374e1651cdbff57103eb47b915541366a8807adab9d899fe4c"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "7a7d7ff2c0a80ede45f3eb4c2c27313c2d29b2e69ec6a1c8345e8aec1f63a3f0"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -47,6 +47,8 @@ Use for: When a bounded copy queue needs collision decisions, retries, or public
 - [`SftpTransferManager`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Owns queued transfers, events, batches, and commit logic.
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
 - [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Remote endpoint contract for review, metadata, and bounded publication.
+
+- [`from_remote_endpoint_with_upload_sources`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Uses admitted held upload sources; ordinary SFTP keeps its path semantics.
 
 Evidence:
 - [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs) — Lost open reply preserves uncertainty instead of claiming success.
