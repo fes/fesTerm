@@ -314,6 +314,51 @@ mod native_routes {
     use festerm_tunnel_client::host_control::ControlClient;
     use std::time::Instant;
 
+    fn final_registry_empty(root: &std::path::Path) -> bool {
+        match festerm_sessiond::list_running_sessions_in(root) {
+            Ok(sessions) => sessions.is_empty(),
+            Err(error)
+                if error.to_string()
+                    == format!(
+                        "session registry unavailable (lock deadline 500 ms): {}",
+                        fs2::lock_contended_error()
+                    ) =>
+            {
+                false
+            } // Unavailable is not absence; keep the original poll budget.
+            Err(error) => panic!("native registry observation failed: {error}"),
+        }
+    }
+
+    #[test]
+    fn final_registry_observation_requires_empty_and_refuses_corruption() {
+        use festerm_sessiond::private_storage as storage;
+        let root = storage::private_test_directory();
+        let directory = storage::private_directory(root.path(), false).unwrap();
+        storage::write_new_private(
+            &directory,
+            std::path::Path::new("registry.json"),
+            br#"{"sessions":{}}"#,
+        )
+        .unwrap();
+        let held =
+            storage::open_private_file(&directory, std::path::Path::new("registry.lock"), true)
+                .unwrap();
+        fs2::FileExt::try_lock_exclusive(&held).unwrap();
+        assert!(
+            !final_registry_empty(root.path()),
+            "unavailable observation is not authoritative absence"
+        );
+        drop(held);
+        assert!(final_registry_empty(root.path()));
+        storage::replace_private(&directory, std::path::Path::new("registry.json"), b"broken")
+            .unwrap();
+        assert!(
+            std::panic::catch_unwind(|| final_registry_empty(root.path())).is_err(),
+            "non-contention errors must fail immediately rather than poll"
+        );
+    }
+
     async fn create(
         fixture: &NativeFixture,
         control: &mut ControlClient<tokio::io::DuplexStream>,
@@ -927,10 +972,7 @@ mod native_routes {
         detached(&mut terminal).await;
         assert!(server.await.unwrap().is_ok());
         tokio::time::timeout(Duration::from_secs(5), async {
-            while !festerm_sessiond::list_running_sessions_in(&fixture.root)
-                .unwrap()
-                .is_empty()
-            {
+            while !final_registry_empty(&fixture.root) {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         })

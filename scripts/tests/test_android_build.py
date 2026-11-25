@@ -1,3 +1,4 @@
+from email.utils import formatdate
 import hashlib
 import importlib.util
 import io
@@ -226,6 +227,12 @@ class AndroidBuildTests(unittest.TestCase):
             with patch.object(android, "ROOT", root), patch.object(android, "APP", root), \
                     patch.object(android.urllib.request, "urlopen") as download:
                 self.assertEqual(android.native_dependencies(), [artifact])
+                for bad in [b"wrong digest", b"x" * (8 * 1024 * 1024 + 1)]:
+                    artifact.unlink()
+                    with patch.object(android, "download", return_value=bad), self.assertRaises(ValueError):
+                        android.native_dependencies()
+                    self.assertFalse(artifact.exists(), "rejected download must not poison cache")
+                    artifact.write_bytes(b"expected")
                 artifact.write_bytes(b"tampered")
                 with self.assertRaisesRegex(ValueError, "checksum"):
                     android.native_dependencies()
@@ -234,6 +241,142 @@ class AndroidBuildTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Cargo.lock"):
                     android.native_dependencies()
                 download.assert_not_called()
+                (root / "Cargo.lock").write_text(
+                    '[[package]]\nname="rustls-platform-verifier-android"\nversion="0.2.0"\n')
+                target = root / "expected-public-bytes"
+                target.write_bytes(b"expected")
+                kinds = ["oversize", "directory"] + (["symlink", "dangling", "fifo"] if os.name == "posix" else [])
+                original_open = Path.open
+                def refuse_cache_open(path, *args, **kwargs):
+                    if path == artifact:
+                        raise AssertionError("unsafe cache reached open/hash")
+                    return original_open(path, *args, **kwargs)
+                for kind in kinds:
+                    artifact.unlink()
+                    if kind == "oversize":
+                        with artifact.open("wb") as file:
+                            file.truncate(8 * 1024 * 1024 + 1)
+                    elif kind == "directory":
+                        artifact.mkdir()
+                    elif kind in ("symlink", "dangling"):
+                        artifact.symlink_to(target if kind == "symlink" else root / "absent")
+                    else:
+                        os.mkfifo(artifact)
+                    with self.subTest(cache=kind), patch.object(Path, "open", new=refuse_cache_open), \
+                            patch.object(android.hashlib, "file_digest") as hashing, \
+                            self.assertRaisesRegex(ValueError, "cache"):
+                        android.native_dependencies()
+                    hashing.assert_not_called()
+                    download.assert_not_called()
+                    if kind == "directory":
+                        artifact.rmdir()
+                        artifact.write_bytes(b"expected")
+                artifact.unlink()
+
+    def test_rate_limit_retry_honors_delay_and_keeps_pinned_bytes(self):
+        limited = android.urllib.error.HTTPError(
+            "https://example.invalid/public-pin", 429, "sensitive-status", {"Retry-After": "9"}, None)
+        with patch.object(android.time, "sleep") as sleep, \
+                patch.object(android.urllib.request, "urlopen", side_effect=[limited, io.BytesIO(b"jar")]) as opener:
+            self.assertEqual(android.download("https://example.invalid/public-pin", 10), b"jar")
+        self.assertEqual(opener.call_count, 2)
+        sleep.assert_called_once_with(9)
+
+    def test_rate_limit_date_malformed_and_missing_headers_use_bounded_delays(self):
+        now = 1_700_000_000
+        for header, delay in [(formatdate(now + 17, usegmt=True), 17),
+                              (formatdate(now - 17, usegmt=True), 5),
+                              ("0000000009", 9), ("0" * 1000 + "9", 9),
+                              ("malformed-sensitive-header", 5), ("-1", 5), (None, 5)]:
+            headers = {} if header is None else {"Retry-After": header}
+            limited = android.urllib.error.HTTPError("https://private-url", 429, "private-reason", headers, None)
+            with self.subTest(header=header), patch.object(android.time, "time", return_value=now), \
+                    patch.object(android.time, "sleep") as sleep, \
+                    patch.object(android.urllib.request, "urlopen", side_effect=[limited, io.BytesIO(b"jar")]), \
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertEqual(android.download("https://private-url", 10), b"jar")
+                sleep.assert_called_once_with(delay)
+                self.assertNotIn("private", stderr.getvalue())
+                self.assertNotIn("sensitive", stderr.getvalue())
+
+    def test_rate_limit_cannot_retry_earlier_than_hint_or_outside_total_budget(self):
+        for hint, elapsed in [("301", 0), ("9" * 1000, 0), ("9", 299),
+                              (formatdate(1_700_000_600, usegmt=True), 0)]:
+            clock = [0]
+            limited = android.urllib.error.HTTPError("https://x", 429, "err", {"Retry-After": hint}, None)
+            def open_limited(*_args, **_kwargs):
+                clock[0] = elapsed
+                raise limited
+            with self.subTest(hint=hint[:30], elapsed=elapsed), \
+                    patch.object(android.time, "time", return_value=1_700_000_000), \
+                    patch.object(android.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(android.time, "sleep") as sleep, \
+                    patch.object(android.urllib.request, "urlopen", side_effect=open_limited) as opener, \
+                    self.assertRaises(android.urllib.error.HTTPError) as result:
+                android.download("https://x", 10)
+            self.assertIs(result.exception, limited)
+            self.assertEqual(opener.call_count, 1)
+            sleep.assert_not_called()
+
+        clock = [0]
+        limited = android.urllib.error.HTTPError("https://x", 429, "err", {"Retry-After": "299"}, None)
+        def sleep(seconds):
+            clock[0] += seconds
+        with patch.object(android.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(android.time, "sleep", side_effect=sleep), \
+                patch.object(android.urllib.request, "urlopen", side_effect=[limited, io.BytesIO(b"jar")]) as opener:
+            self.assertEqual(android.download("https://x", 10), b"jar")
+        self.assertEqual([call.kwargs["timeout"] for call in opener.call_args_list], [60, 1])
+
+    def test_rate_limit_attempt_cap_and_late_body_refuse_without_extra_request(self):
+        failures = [android.urllib.error.HTTPError("https://x", 429, "err", {}, None) for _ in range(4)]
+        with patch.object(android.time, "sleep") as sleep, \
+                patch.object(android.urllib.request, "urlopen", side_effect=failures) as opener, \
+                self.assertRaises(android.urllib.error.HTTPError) as result:
+            android.download("https://x", 10)
+        self.assertIs(result.exception, failures[-1])
+        self.assertEqual(opener.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 10, 20])
+        clock = [0]
+        class LateBody(io.BytesIO):
+            def read(self, bound):
+                clock[0] = 301
+                return super().read(bound)
+        with patch.object(android.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(android.time, "sleep") as sleep, \
+                patch.object(android.urllib.request, "urlopen", return_value=LateBody(b"jar")) as opener, \
+                self.assertRaises(TimeoutError):
+            android.download("https://x", 10)
+        self.assertEqual(opener.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_dependency_cli_errors_never_print_provider_reason_or_url(self):
+        for error in [android.urllib.error.HTTPError("https://private-url", 429, "private-reason", {}, None),
+                      android.urllib.error.URLError("private-url-private-reason"),
+                      TimeoutError("private-url-private-reason")]:
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(android, "build", side_effect=error), \
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr, \
+                    self.assertRaises(SystemExit) as result:
+                android.main([])
+            self.assertEqual(result.exception.code, 1)
+            self.assertNotIn("private", stderr.getvalue())
+
+    def test_workflow_jvm_cache_is_manifest_scoped_and_public_only(self):
+        workflow = (android.ROOT / ".github/workflows/android.yml").read_text()
+        jobs = [workflow.split("  apk:\n", 1)[1].split("  play-bundle:\n", 1)[0],
+                workflow.split("  play-bundle:\n", 1)[1]]
+        for job in jobs:
+            caches = [step for step in job.split("      - ") if "uses: actions/cache@v4" in step]
+            self.assertEqual(len(caches), 1)
+            values = dict(line.strip().split(": ", 1) for line in caches[0].splitlines()
+                          if line.startswith("          ") and ": " in line)
+            self.assertEqual(values, {
+                "path": "target/android-dependencies",
+                "key": "${{ runner.os }}-android-jvm-v1-${{ hashFiles('app/festerm-android/dependencies.json') }}",
+            })
+            self.assertNotIn("restore-keys", caches[0])
+            self.assertLess(job.index("uses: actions/cache@v4"), job.index("      - name: Build"))
 
     def test_pinned_download_retries_transient_server_errors_only(self):
         def failure(code):
@@ -243,11 +386,13 @@ class AndroidBuildTests(unittest.TestCase):
                 patch.object(android.urllib.request, "urlopen", side_effect=[failure(504), ok]):
             self.assertEqual(android.download("https://x", 10), b"jar")
             sleep.assert_called_once()
-        with patch.object(android.time, "sleep"), \
-                patch.object(android.urllib.request, "urlopen", side_effect=[failure(404)]) as opener, \
-                self.assertRaises(android.urllib.error.HTTPError):
-            android.download("https://x", 10)
-        self.assertEqual(opener.call_count, 1)
+        for code in [401, 403, 404]:
+            with self.subTest(code=code), patch.object(android.time, "sleep") as sleep, \
+                    patch.object(android.urllib.request, "urlopen", side_effect=[failure(code)]) as opener, \
+                    self.assertRaises(android.urllib.error.HTTPError):
+                android.download("https://x", 10)
+            self.assertEqual(opener.call_count, 1)
+            sleep.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

@@ -2184,7 +2184,10 @@ personal devices. Run it only with an explicitly selected isolated emulator:
 The optional POSIX runner aggregates it when
 `FESTERM_ANDROID_EMULATOR_SERIAL` is set. Android CI cross-builds both ABIs and
 publishes development APKs; emulator execution and owner visual acceptance
-remain separate gates. Required desktop CI is unchanged.
+remain separate gates. Required desktop CI is unchanged. Pinned JVM dependency
+cache integrity, HTTP 429 Retry-After/backoff, attempt/budget refusal and finite
+error summaries have mocked packaging tests. These do not identify an actual
+provider's historical 429 response headers or qualify native application behavior.
 
 ## iOS Phase 1 feasibility (ADR 0042)
 
@@ -6944,6 +6947,23 @@ Start replay. Require a fresh first result and preserved existing sessions,
 settings, registration and Files policy. Mac parent/child behavior and its
 separate ambiguous warning are unchanged. Owned source fixtures are automated
 evidence only; corrected managed native qualification remains pending.
+
+The positive real-lock/full-Snapshot fixture uses a fixed logical clock with the
+same one-second budget, retaining actual Busy-before-release and two fresh reads.
+A logical-expiry regression refuses another read even after that lock is released;
+the existing real-clock cancellation/deadline/fatal-read cases remain unchanged.
+Production supplies the real monotonic clock and original operation deadline.
+This stabilizes test scheduling, not a native backend failure or a timeout policy.
+The separate revoked-generation fixture forces actual local-End lease contention
+before releasing it and uses the existing bounded Busy retry for the same exact
+owner/target, requiring StopRequested and retaining revocation/reconsent checks.
+The observed CI Busy is preserved; this adds no production stop/retry behavior.
+The native temporary-terminal fixture's final post-Detach poll treats only the
+exact native 500-ms registry-lock contention result as unavailable, never absent.
+Its original five-second wait and 25-ms tick remain; an authoritative empty read
+completes it and corrupt/other errors still fail immediately. A real held-lock,
+release and corrupt-checkpoint regression covers that distinction. Earlier Stale
+cleanup messages in the first CI failure are retained without a causal claim.
 
 
 ### First confirmed remote Terminate completion

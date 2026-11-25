@@ -2,12 +2,14 @@
 """Build a development APK using the Android SDK/NDK and the shared Rust host."""
 
 import argparse
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -55,22 +57,58 @@ def check_dependency_tree(tree):
             raise ValueError("Missing shared Android dependency: " + required)
 
 
+def retry_after_delay(value):
+    """Delay or over-budget sentinel; never retain or print the header."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if value.isascii() and value.isdigit():
+        value = value.lstrip("0") or "0"
+        # Any larger delay exceeds the download budget without parsing huge ints.
+        return float(value) if len(value) <= 9 else float("inf")
+    if len(value) > 256:
+        return None
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            return None
+        return max(0.0, date.timestamp() - time.time())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def download(url, limit, attempts=4):
+    deadline = time.monotonic() + 300
     for attempt in range(1, attempts + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Android dependency download budget exhausted")
+        retry_after = None
         try:
-            with urllib.request.urlopen(url, timeout=60) as response:
-                return response.read(limit + 1)
+            with urllib.request.urlopen(url, timeout=min(60, remaining)) as response:
+                data = response.read(limit + 1)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Android dependency download budget exhausted")
+                return data
         except urllib.error.HTTPError as error:
+            if error.code == 429:
+                retry_after = retry_after_delay(error.headers.get("Retry-After")) if error.headers else None
             error.close()
-            if error.code < 500 or attempt == attempts:
+            if (error.code != 429 and error.code < 500) or attempt == attempts:
+                raise
+            delay = max(5 * 2 ** (attempt - 1), retry_after or 0)
+            # Never truncate a server delay and retry earlier than requested.
+            if delay >= deadline - time.monotonic():
                 raise
             reason = f"HTTP {error.code}"
         except (urllib.error.URLError, TimeoutError) as error:
-            if attempt == attempts:
+            if attempt == attempts or time.monotonic() >= deadline:
                 raise
-            reason = str(error)
-        delay = 5 * 2 ** (attempt - 1)
-        print(f"Android dependency download failed ({reason}); retrying in {delay}s",
+            reason = "network timeout" if isinstance(error, TimeoutError) else "network error"
+            delay = 5 * 2 ** (attempt - 1)
+            if delay >= deadline - time.monotonic():
+                raise
+        print(f"Android dependency download failed ({reason}); retrying in {delay:g}s",
               file=sys.stderr, flush=True)
         time.sleep(delay)
 
@@ -84,15 +122,19 @@ def native_dependencies():
     directory = ROOT / "target" / "android-dependencies"
     directory.mkdir(parents=True, exist_ok=True)
     paths = []
+    limit = 8 * 1024 * 1024
     for artifact in manifest["artifacts"]:
         path = directory / artifact["name"]
-        if not path.exists():
-            data = download(artifact["url"], 8 * 1024 * 1024)
-            if len(data) > 8 * 1024 * 1024:
+        if not os.path.lexists(path):
+            data = download(artifact["url"], limit)
+            if len(data) > limit:
                 raise ValueError("Android dependency exceeds the download bound")
             if hashlib.sha256(data).hexdigest() != artifact["sha256"]:
                 raise ValueError("Android dependency checksum mismatch: " + artifact["name"])
             path.write_bytes(data)
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise ValueError("Android dependency cache entry is not a bounded regular file: " + artifact["name"])
         with path.open("rb") as source:
             if hashlib.file_digest(source, "sha256").hexdigest() != artifact["sha256"]:
                 raise ValueError("Android dependency checksum mismatch: " + artifact["name"])
@@ -289,6 +331,12 @@ def main(argv=None):
     parser.add_argument("--serial")
     try:
         build(parser.parse_args(argv))
+    except urllib.error.HTTPError as error:
+        parser.exit(1, f"Android dependency download failed (HTTP {error.code})\n")
+    except TimeoutError:
+        parser.exit(1, "Android dependency download failed (timeout)\n")
+    except urllib.error.URLError:
+        parser.exit(1, "Android dependency download failed (network error)\n")
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Android build failed: {error}\n")
 

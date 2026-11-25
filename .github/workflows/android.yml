@@ -59,6 +59,11 @@ jobs:
         with:
           key: android-${{ matrix.abi }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Cache pinned public JVM dependencies
+        uses: actions/cache@v4
+        with:
+          path: target/android-dependencies
+          key: ${{ runner.os }}-android-jvm-v1-${{ hashFiles('app/festerm-android/dependencies.json') }}
       - name: Select Java 17
         run: |
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
@@ -107,6 +112,11 @@ jobs:
         with:
           key: android-play-bundle
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Cache pinned public JVM dependencies
+        uses: actions/cache@v4
+        with:
+          path: target/android-dependencies
+          key: ${{ runner.os }}-android-jvm-v1-${{ hashFiles('app/festerm-android/dependencies.json') }}
       - name: Select Java 17
         run: |
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
