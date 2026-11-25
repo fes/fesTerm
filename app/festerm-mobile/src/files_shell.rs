@@ -24,7 +24,9 @@ pub(super) struct HostFilesTarget {
     pub(super) account: festerm_mobile_profiles::TunnelAccount,
     pub(super) locator: String,
     pub(super) label: String,
-    pub(super) expected: festerm_tunnel_bridge::ordinary_auth::OrdinaryHostInfo,
+    pub(super) expected: super::host_files_profiles::FilesHostIdentity,
+    pub(super) profile: Option<String>,
+    pub(super) profile_name_hint: Option<String>,
 }
 
 impl MobileApp {
@@ -167,6 +169,8 @@ impl MobileApp {
     }
 
     pub(super) fn show_files_body(&mut self, ui: &mut egui::Ui) {
+        #[cfg(feature = "host-clients")]
+        self.show_host_files_profile_control(ui);
         let Some(session) = self.files.as_mut() else {
             ui.add_space(theme::space::XL);
             ui.vertical_centered(|ui| ui.weak("No file session is open"));
@@ -198,6 +202,10 @@ impl MobileApp {
         let Some(session) = self.files.as_mut() else {
             return;
         };
+        #[cfg(feature = "host-clients")]
+        if session.deletion.is_some() {
+            return;
+        }
         match session.link.clone() {
             Link::HostKey(model) => {
                 if let Some(decision) = forms::host_verification_sheet(ctx, bounds, &model) {

@@ -4,7 +4,7 @@
 //! iOS app, independent of any UI.
 //!
 //! * [`ProfileStore`] keeps secret-free, versioned JSON profile documents
-//!   (SSH, Dev Tunnel, SFTP) and Dev Tunnel accounts in a directory the host
+//!   (SSH, Dev Tunnel, Dev Tunnels Files, SFTP) and Dev Tunnel accounts in a directory the host
 //!   app provides. Passwords, private keys and tunnel tokens live only in a
 //!   [`festerm_secret_store::SecretStore`] (the iOS Keychain in production),
 //!   referenced by opaque per-profile ids and deleted with the profile.
@@ -37,9 +37,9 @@ pub use hosts::{
 };
 pub use keys::{KeyImportError, ParsedPrivateKey};
 pub use model::{
-    AccountProvider, DevTunnelProfile, KeyInfo, Profile, ProfileId, ProfileKind, Recovery,
-    RemoteSession, SecretRef, SftpProfile, SshAuth, SshProfile, TrustedTunnelHost, TunnelAccount,
-    TunnelSource, DEFAULT_SSH_PORT, MAX_NAME_CHARS,
+    AccountProvider, DevTunnelFilesProfile, DevTunnelProfile, KeyInfo, Profile, ProfileId,
+    ProfileKind, Recovery, RemoteSession, SecretRef, SftpProfile, SshAuth, SshProfile,
+    TrustedTunnelHost, TunnelAccount, TunnelSource, DEFAULT_SSH_PORT, MAX_NAME_CHARS,
 };
 pub use store::{
     CredentialStatus, LoadReport, ProfileStore, CURRENT_VERSION, MAX_ACCOUNTS, MAX_FILE_BYTES,

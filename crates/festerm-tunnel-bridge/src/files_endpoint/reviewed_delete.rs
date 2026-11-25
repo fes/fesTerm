@@ -15,10 +15,29 @@ struct DeleteProgress {
     path: String,
     confirmed: usize,
     total: usize,
+    awaiting_result: bool,
+    uncertain_result: bool,
 }
 impl DeleteObservation {
+    /// Numeric/outcome snapshot for a caller whose outer deadline also bounds
+    /// cleanup. Unlike interrupted(), this retains returned uncertainty.
+    pub fn result_is_uncertain(&self) -> bool {
+        self.0
+            .lock()
+            .expect("Files delete observation lock")
+            .as_ref()
+            .is_some_and(|value| value.awaiting_result || value.uncertain_result)
+    }
+    /// Confirmed prefix retained while a mutation reply is outstanding.
+    pub fn confirmed_before_interruption(&self) -> Option<(usize, usize)> {
+        self.0
+            .lock()
+            .expect("Files delete observation lock")
+            .as_ref()
+            .map(|value| (value.confirmed, value.total))
+    }
     pub fn interrupted(&self) -> Option<SftpSessionError> {
-        self.0.lock().expect("Files delete observation lock").take().map(|value| {
+        self.0.lock().expect("Files delete observation lock").take().filter(|value| value.awaiting_result).map(|value| {
             SftpSessionError::PublicationUncertain {
                 path: value.path,
                 reason: format!("The deletion result was not observed. {} of {} removals were confirmed; inspect the current target and refresh before reviewing untouched entries. Do not retry the unobserved deletion automatically.", value.confirmed, value.total),
@@ -156,6 +175,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
             total: review.entries.len(),
             failure: None,
         };
+        *observation.0.lock().expect("Files delete observation lock") = Some(DeleteProgress {
+            path: String::new(),
+            confirmed: 0,
+            total: outcome.total,
+            awaiting_result: false,
+            uncertain_result: false,
+        });
         let mut entries = review.entries.into_iter();
         while let Some((handle, path)) = entries.next() {
             if review.stop.is_cancelled() || self.check_current().is_err() {
@@ -172,15 +198,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
                 path: path.clone(),
                 confirmed: outcome.confirmed,
                 total: outcome.total,
+                awaiting_result: true,
+                uncertain_result: false,
             });
             let result = self.client.delete_reviewed(&handle).await;
             // Every returned result clears the owner-drop marker, including
             // known refusals and cancellation. Only a dropped future leaves it.
-            observation
+            if let Some(progress) = observation
                 .0
                 .lock()
                 .expect("Files delete observation lock")
-                .take();
+                .as_mut()
+            {
+                progress.awaiting_result = false;
+                progress.uncertain_result =
+                    matches!(&result, Err(file_client::Error::UncertainDelete(_)));
+                if result.is_ok() {
+                    progress.confirmed += 1;
+                }
+            }
             match result {
                 Ok(()) => outcome.confirmed += 1,
                 Err(error) => {

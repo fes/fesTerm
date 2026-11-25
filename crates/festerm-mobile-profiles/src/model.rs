@@ -514,12 +514,64 @@ impl DevTunnelProfile {
     }
 }
 
+/// Public destination metadata only. Opening always needs fresh ordinary Files
+/// authority for the original account and the same pinned host identity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevTunnelFilesProfile {
+    pub account: String,
+    pub locator: String,
+    pub host_id: String,
+    pub host_key_fingerprint: String,
+    pub installation: String,
+    pub principal: String,
+}
+
+impl DevTunnelFilesProfile {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if !is_identifier(&self.account, 64) {
+            return Err(ValidationError::new("files.account", "is invalid"));
+        }
+        validate_tunnel_name(&self.locator)?;
+        for (field, value) in [
+            ("files.host_id", &self.host_id),
+            ("files.installation", &self.installation),
+            ("files.principal", &self.principal),
+        ] {
+            let valid = Uuid::parse_str(value).is_ok_and(|id| {
+                id.get_version_num() == 4
+                    && id.get_variant() == uuid::Variant::RFC4122
+                    && id.hyphenated().to_string() == *value
+            });
+            if !valid {
+                return Err(ValidationError::new(field, "is not a canonical random id"));
+            }
+        }
+        // Match ordinary PinnedHost validation, not the looser legacy SSH
+        // display validator: 43 standard unpadded Base64 characters.
+        let fingerprint = &self.host_key_fingerprint;
+        if fingerprint.len() != 50
+            || !fingerprint.starts_with("SHA256:")
+            || !fingerprint.as_bytes()[7..]
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        {
+            return Err(ValidationError::new(
+                "files.host_key_fingerprint",
+                "is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProfileKind {
     Ssh(SshProfile),
     DevTunnel(DevTunnelProfile),
     Sftp(SftpProfile),
+    DevTunnelFiles(DevTunnelFilesProfile),
 }
 
 impl ProfileKind {
@@ -528,6 +580,7 @@ impl ProfileKind {
             Self::Ssh(profile) => profile.validate(),
             Self::DevTunnel(profile) => profile.validate(),
             Self::Sftp(profile) => profile.validate(),
+            Self::DevTunnelFiles(profile) => profile.validate(),
         }
     }
 
@@ -544,7 +597,7 @@ impl ProfileKind {
                     },
                 ..
             }) => connect_credential.iter().collect(),
-            Self::DevTunnel(_) => Vec::new(),
+            Self::DevTunnel(_) | Self::DevTunnelFiles(_) => Vec::new(),
         }
     }
 }

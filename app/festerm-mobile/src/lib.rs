@@ -18,6 +18,8 @@ mod forms;
 mod host_clients;
 #[cfg(feature = "host-clients")]
 mod host_files;
+#[cfg(feature = "host-clients")]
+mod host_files_profiles;
 mod host_setup;
 mod key_press;
 #[cfg(feature = "live-ssh")]
@@ -2937,6 +2939,22 @@ impl MobileApp {
     }
 
     fn edit_profile(&mut self, id: &str) {
+        if let Some(spec) = self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.host_files_spec(id))
+        {
+            if !cfg!(feature = "host-clients")
+                || !self.caps.dev_tunnel_profiles
+                || !self.caps.sftp_profiles
+            {
+                self.notice = Some("Dev Tunnels Files is unavailable in this build".into());
+                return;
+            }
+            self.notice = None;
+            self.editor.open_edit_host_files(&spec, self.caps);
+            return;
+        }
         #[cfg(feature = "host-clients")]
         if self.select_host_profile(id, true) {
             return;
@@ -2973,6 +2991,22 @@ impl MobileApp {
     }
 
     fn connect_profile(&mut self, ctx: &egui::Context, id: &str) {
+        if self
+            .profiles
+            .as_ref()
+            .and_then(|profiles| profiles.host_files_spec(id))
+            .is_some()
+        {
+            #[cfg(feature = "host-clients")]
+            if let Err(error) = self.open_saved_host_files(ctx, id) {
+                self.notice = Some(error);
+            }
+            #[cfg(not(feature = "host-clients"))]
+            {
+                self.notice = Some("Dev Tunnels Files is unavailable in this build".into());
+            }
+            return;
+        }
         #[cfg(feature = "host-clients")]
         if self.connect_saved_host_profile(ctx, id) {
             return;
@@ -3174,8 +3208,14 @@ impl MobileApp {
             }
             #[cfg(feature = "host-clients")]
             forms::EditorAction::OpenHosts => {
-                self.editor.open = false;
-                self.open_hosts();
+                let files = self.editor.kind(self.caps) == model::ProfileKind::DevTunnelFiles;
+                let name = self.editor.name.trim().to_owned();
+                self.close_editor();
+                if files {
+                    self.open_files_hosts_named(name);
+                } else {
+                    self.open_hosts();
+                }
             }
             forms::EditorAction::SaveOnly => {
                 if self.save_editor_profile().is_some() {
@@ -3326,6 +3366,37 @@ impl MobileApp {
     /// Validates the editor and saves it; returns the profile id.
     fn save_editor_profile(&mut self) -> Option<String> {
         use festerm_mobile_profiles::{Recovery, SshAuth, SshProfile};
+        if self.editor.kind(self.caps) == model::ProfileKind::DevTunnelFiles {
+            let Some(destination) = self.editor.files_destination.clone() else {
+                self.editor.error = Some("Choose a Dev Tunnel host first".into());
+                return None;
+            };
+            let Some(profiles) = self.profiles.as_mut() else {
+                self.editor.error = Some("Saved profiles are unavailable".into());
+                return None;
+            };
+            let name = if self.editor.name.trim().is_empty() {
+                profiles.suggest_name("Host files")
+            } else {
+                self.editor.name.trim().to_owned()
+            };
+            return match profiles.save_host_files(
+                self.editor.editing.as_deref(),
+                &name,
+                destination,
+            ) {
+                Ok(id) => {
+                    self.editor.error = None;
+                    #[cfg(feature = "host-clients")]
+                    self.bind_saved_host_files(&id, &name);
+                    Some(id)
+                }
+                Err(error) => {
+                    self.editor.error = Some(error);
+                    None
+                }
+            };
+        }
         #[cfg(feature = "live-ssh")]
         if self.editor.kind(self.caps) == model::ProfileKind::DevTunnel {
             return self.save_tunnel_editor();

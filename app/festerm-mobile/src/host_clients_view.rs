@@ -482,6 +482,19 @@ impl MobileApp {
                                         if let Some(error) = &self.hosts.error {
                                             ui.label(error);
                                         }
+                                        if self.hosts.files_only {
+                                            if !self.hosts.locator.is_empty() {
+                                                ui.label(&self.hosts.locator);
+                                            }
+                                            if secondary(
+                                                ui,
+                                                "Review another host",
+                                                !self.hosts.busy(),
+                                            ) {
+                                                action = Some(Action::NewReview);
+                                            }
+                                            return;
+                                        }
                                         ui.label("Host locator");
                                         host_field(
                                             ui,
@@ -583,6 +596,10 @@ impl MobileApp {
         action: &mut Option<Action>,
     ) {
         let busy = self.hosts.busy();
+        if self.hosts.files_only && !self.hosts.ordinary_selected {
+            ui.label("Choose a host from your account.");
+            return;
+        }
         if self.hosts.saved_connect.is_some() {
             ui.label("Connecting saved profile…");
             return;
@@ -593,7 +610,7 @@ impl MobileApp {
             } else if primary(ui, "Retry host connection", true) {
                 *action = Some(Action::Ordinary);
             }
-            if secondary(ui, "Advanced owner connection…", !busy) {
+            if !self.hosts.files_only && secondary(ui, "Advanced owner connection…", !busy) {
                 *action = Some(Action::AdvancedOwner);
             }
             return;
@@ -666,6 +683,9 @@ impl MobileApp {
         }
         if self.hosts.ordinary.is_some() && secondary(ui, "Files", !busy) {
             *action = Some(Action::Files);
+        }
+        if self.hosts.files_only {
+            return;
         }
         let inventory = self.hosts.inventory.as_ref().expect("checked inventory");
         ui.horizontal(|ui| {

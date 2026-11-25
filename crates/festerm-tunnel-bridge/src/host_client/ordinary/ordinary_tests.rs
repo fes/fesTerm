@@ -482,3 +482,99 @@ async fn ordinary_end_default_off_sends_no_end_and_cancelled_account_cannot_star
     assert!(context.account_guard().check().is_err());
     assert!(!intent.is_issued());
 }
+
+#[test]
+fn saved_files_route_pin_refuses_changed_host_or_key_before_native_index_action() {
+    let (_context_root, context) = fixture();
+    let expected = ExpectedHost {
+        host: context.host_info().route.host.clone(),
+        installation: context.host_info().installation.clone(),
+        principal: context.host_info().principal.clone(),
+    };
+    let root = private_test_directory();
+    let index = OrdinaryKeyIndex::in_app_sandbox(root.path()).unwrap();
+    let vault = Arc::new(festerm_secret_store::MemorySecretStore::new());
+    let guard = OrdinaryAccountGuard::new(CancellationToken::new(), Arc::new(|| Ok(())));
+    let before = std::fs::read_dir(root.path()).unwrap().count();
+    let calls = std::cell::Cell::new(0);
+    for change in ["host", "key"] {
+        let mut route = context.host_info().route.clone();
+        if change == "host" {
+            route.host.host = festerm_host_protocol::HostId::new();
+        } else {
+            route.host.host_key_fingerprint = format!("SHA256:{}", "B".repeat(43));
+        }
+        assert!(after_expected_route_check(Some(&expected), &route, || {
+            calls.set(calls.get() + 1);
+            let binding = KeyBinding::new(42, route.clone()).map_err(|_| ContractError::Denied)?;
+            index
+                .prepare_with(vault.clone(), &binding, &guard)
+                .map_err(|_| ContractError::Denied)
+        })
+        .is_err());
+        assert_eq!(
+            calls.get(),
+            0,
+            "{change}: native index action was not admitted"
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), before);
+    }
+    let route = &context.host_info().route;
+    assert!(after_expected_route_check(Some(&expected), route, || {
+        calls.set(calls.get() + 1);
+        let binding = KeyBinding::new(42, route.clone()).map_err(|_| ContractError::Denied)?;
+        index
+            .prepare_with(vault, &binding, &guard)
+            .map_err(|_| ContractError::Denied)
+    })
+    .is_ok());
+    assert_eq!(
+        calls.get(),
+        1,
+        "matching route still permits ordinary key preparation"
+    );
+}
+
+#[test]
+fn saved_files_challenge_pin_refuses_changed_issuer_before_proof_but_allows_new_epoch() {
+    let (_root, context) = fixture();
+    let expected = ExpectedHost {
+        host: context.host_info().route.host.clone(),
+        installation: context.host_info().installation.clone(),
+        principal: context.host_info().principal.clone(),
+    };
+    for change in ["host", "key", "installation", "principal"] {
+        let mut info = context.host_info().clone();
+        match change {
+            "host" => info.route.host.host = festerm_host_protocol::HostId::new(),
+            "key" => info.route.host.host_key_fingerprint = format!("SHA256:{}", "B".repeat(43)),
+            "installation" => info.installation = festerm_host_protocol::HostId::new(),
+            "principal" => info.principal = festerm_host_protocol::PrincipalId::new(),
+            _ => unreachable!(),
+        }
+        let proofs = std::cell::Cell::new(0);
+        assert!(after_expected_host_check(Some(&expected), &info, || {
+            proofs.set(proofs.get() + 1);
+            Ok(())
+        })
+        .is_err());
+        assert_eq!(
+            proofs.get(),
+            0,
+            "{change}: proof side effect must not occur"
+        );
+        assert!(after_expected_host_check(None, &info, || {
+            proofs.set(proofs.get() + 1);
+            Ok(())
+        })
+        .is_ok());
+        assert_eq!(
+            proofs.get(),
+            1,
+            "unpinned discovery keeps its existing behavior"
+        );
+    }
+    let mut current = context.host_info().clone();
+    current.policy_epoch = Epoch::new(99).unwrap();
+    assert!(after_expected_host_check(Some(&expected), &current, || Ok(())).is_ok());
+}

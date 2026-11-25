@@ -39,8 +39,10 @@ folders requires an additional default-off host permission; old write grants
 never authorize it. Rename/chmod/link parity remains separate work. Mobile
 `host-clients` Files supports rooted browse/download/Markdown preview and,
 with a current write grant, regular-file upload and folder creation through the
-shared transfer queue. Saved Files profiles, mobile Delete and device-native
-qualification remain pending. The grant is off by default and can be changed/revoked on
+shared transfer queue. Saved Files destinations reopen with fresh account-bound
+Files authority; separately granted remote Delete reviews up to eight files or
+empty folders before confirmation. Mobile device-native Files qualification
+remains pending. The grant is off by default and can be changed/revoked on
 an existing host. A [pinned Mac-to-Linux native check](validation/dev-tunnels/linux-files-native-readwrite.json)
 qualifies a reviewed read/write grant, small upload/download, preview and mkdir
 with Delete off. The [signed 0.17.24 component record](validation/dev-tunnels/files-native-0.17.24.json)

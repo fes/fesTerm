@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 pub(crate) mod files;
 mod ordinary_keys;
-pub use files::{open_files, open_files_reviewed, Files, FilesError, FilesStream};
+pub use files::{
+    open_files, open_files_pinned, open_files_pinned_reviewed, open_files_reviewed, Files,
+    FilesError, FilesStream,
+};
 #[cfg(all(test, feature = "testing"))]
 #[path = "ordinary/ordinary_tests.rs"]
 mod tests;
@@ -196,29 +199,43 @@ struct Authenticated {
 
 // Both fresh Control discovery and Files opening use this exact provider/key/
 // channel proof path. No inventory, daemon or session grant is prepared here.
-async fn authenticate_fresh(
-    identity: &Identity,
-    locator: &str,
-    index: OrdinaryKeyIndex,
-    budgets: &Budgets,
-    account_guard: &OrdinaryAccountGuard,
-    request_cancel: &CancellationToken,
-    role: StreamRole,
-) -> Result<Authenticated, Failure> {
-    authenticate_fresh_mode(
-        identity,
-        locator,
-        KeySource::Bootstrap(index),
-        budgets,
-        account_guard,
-        request_cancel,
-        role,
-    )
-    .await
+/// Public saved-destination constraints, never provider or Files authority.
+/// Installation/principal are checked after the challenge arrives, before proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpectedHost {
+    pub host: crate::owner_auth::PinnedHost,
+    pub installation: festerm_host_protocol::HostId,
+    pub principal: festerm_host_protocol::PrincipalId,
+}
+
+fn after_expected_route_check<T>(
+    expected: Option<&ExpectedHost>,
+    route: &OrdinaryRoute,
+    action: impl FnOnce() -> Result<T, ContractError>,
+) -> Result<T, ContractError> {
+    if expected.is_some_and(|expected| expected.host != route.host) {
+        return Err(ContractError::Stale);
+    }
+    action()
+}
+fn after_expected_host_check<T>(
+    expected: Option<&ExpectedHost>,
+    actual: &OrdinaryHostInfo,
+    action: impl FnOnce() -> Result<T, ContractError>,
+) -> Result<T, ContractError> {
+    after_expected_route_check(expected, &actual.route, || {
+        if expected.is_some_and(|expected| {
+            expected.installation != actual.installation || expected.principal != actual.principal
+        }) {
+            return Err(ContractError::Stale);
+        }
+        action()
+    })
 }
 
 enum KeySource {
     Bootstrap(OrdinaryKeyIndex),
+    PinnedBootstrap(OrdinaryKeyIndex, ExpectedHost),
     Existing(OrdinaryContext),
 }
 
@@ -269,8 +286,15 @@ async fn authenticate_fresh_mode(
     }
     let expected_info = match &source {
         KeySource::Existing(prior) => Some(prior.host_info().clone()),
-        KeySource::Bootstrap(_) => None,
+        KeySource::Bootstrap(_) | KeySource::PinnedBootstrap(_, _) => None,
     };
+    let expected_host = match &source {
+        KeySource::PinnedBootstrap(_, expected) => Some(expected.clone()),
+        _ => None,
+    };
+    // Provider-resolved host/key mismatch refuses before the native key worker
+    // can load or initialize a device key. Issuer identity is not known yet.
+    after_expected_route_check(expected_host.as_ref(), &route, || Ok(()))?;
     let key_binding = KeyBinding::new(identity.account.id, route.clone())?;
     let key_guard = key_guard_for_request(account_guard, request_cancel);
     let (key, permit) = tokio::select! {
@@ -278,7 +302,7 @@ async fn authenticate_fresh_mode(
         _ = account_guard.cancel.cancelled() => return Err(Error::Cancelled.into()),
         value = open_native_owner_key(permit, request_cancel, move || match source {
             KeySource::Existing(prior) => prior.key_index().existing(&key_binding, &prior.reference(), prior.0.key.key.public_key(), &key_guard),
-            KeySource::Bootstrap(index) => index.prepare(&key_binding, &key_guard),
+            KeySource::Bootstrap(index) | KeySource::PinnedBootstrap(index, _) => index.prepare(&key_binding, &key_guard),
         }) => value?,
     };
     account_guard.check()?;
@@ -295,6 +319,7 @@ async fn authenticate_fresh_mode(
     let proof_guard = account_guard.clone();
     let publish_guard = account_guard.clone();
     let proof_expected = expected_info.clone();
+    let proof_host = expected_host.clone();
     let authenticated = crate::host_runtime::authenticate_ordinary_client_using_guard(
         stream,
         permit,
@@ -304,7 +329,9 @@ async fn authenticate_fresh_mode(
         move |connection, challenge| {
             proof_guard.check()?;
             after_existing_host_check(proof_expected.as_ref(), &challenge.host_info, || {
-                signing.prove(connection, &proof_route, challenge, role)
+                after_expected_host_check(proof_host.as_ref(), &challenge.host_info, || {
+                    signing.prove(connection, &proof_route, challenge, role)
+                })
             })
         },
         move || publish_guard.check(),
@@ -316,6 +343,7 @@ async fn authenticate_fresh_mode(
     };
     account_guard.check()?;
     after_existing_host_check(expected_info.as_ref(), &info, || Ok(()))?;
+    after_expected_host_check(expected_host.as_ref(), &info, || Ok(()))?;
     Ok(Authenticated {
         stream,
         permit,

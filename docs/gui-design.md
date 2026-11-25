@@ -1994,6 +1994,27 @@ label. Keep the friendly-name disclosure touch target at least 44 points and
 unique-name rows unchanged. Provider metadata does not establish online status
 or trust; only explicit selection starts the existing single-host workflow.
 
+Mobile **Dev Tunnels Files** profiles are distinct from terminal profiles.
+Save only public destination metadata; editing the friendly name or removing
+the shortcut has no remote effect. Open/Reconnect uses the original account
+and stable host/key/installation/principal, acquiring fresh Files authority.
+A missing account remains inert with Settings guidance, never an account swap.
+From a Files view, Save profile opens the ordinary name editor; a new Files
+profile instead chooses an ordinary host without creating or attaching a shell.
+This picker uses the ordinary account directory only, hiding manual pairing,
+Advanced controls, shell history and terminal import. Save
+from an existing Files view does not reopen it. If a saved destination changed
+or was removed, Reconnect refuses; only an explicit Save as new can associate
+a new shortcut, and Cancel leaves the old association intact.
+
+When the current Files stream separately advertises Delete, offer **Delete
+selected** for up to eight regular files or folders. A folder checkbox selects
+without navigating; its row still opens the folder. The confirmation lists the
+reviewed names and requires a separate explicit action. Cancel, navigation or
+retirement invalidates that review. Show confirmed counts and uncertainty even
+when connection failure replaces the panes. Do not offer recursive/local Delete
+or replay an unknown removal.
+
 Account selection and **Refresh hosts** belong to the directory. The selected
 host owns **Refresh sessions** and the capability-gated **New host shell** action.
 Use consistent section padding and gaps between controls; narrow Desktop layouts

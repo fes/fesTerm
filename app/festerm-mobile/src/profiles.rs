@@ -90,6 +90,15 @@ pub struct SftpSpec {
     pub start_dir: Option<String>,
 }
 
+/// Saved public Files destination. It contains no live scope or credentials.
+#[derive(Clone, Debug)]
+pub struct HostFilesSpec {
+    pub profile: ProfileId,
+    pub name: String,
+    pub destination: festerm_mobile_profiles::DevTunnelFilesProfile,
+    pub account_label: String,
+}
+
 impl SftpSpec {
     pub fn detail(&self) -> String {
         model::profile_detail(model::ProfileKind::Sftp, &self.host, &self.username)
@@ -342,6 +351,11 @@ impl Profiles {
                 sftp.host.as_str(),
                 sftp.username.as_str(),
             ),
+            StoredKind::DevTunnelFiles(files) => (
+                model::ProfileKind::DevTunnelFiles,
+                files.locator.as_str(),
+                "",
+            ),
             StoredKind::DevTunnel(tunnel) => (
                 model::ProfileKind::DevTunnel,
                 match &tunnel.source {
@@ -369,6 +383,9 @@ impl Profiles {
             model::ProfileKind::Ssh => true,
             model::ProfileKind::Sftp => caps.sftp_profiles,
             model::ProfileKind::DevTunnel => caps.dev_tunnel_profiles,
+            model::ProfileKind::DevTunnelFiles => {
+                cfg!(feature = "host-clients") && caps.dev_tunnel_profiles && caps.sftp_profiles
+            }
         }
     }
 
@@ -542,6 +559,53 @@ impl Profiles {
 
     pub fn is_sftp(&self, id: &str) -> bool {
         self.sftp_spec(id).is_some()
+    }
+
+    pub fn host_files_spec(&self, id: &str) -> Option<HostFilesSpec> {
+        let id = Self::id(id)?;
+        let store = self.store();
+        let profile = store.get(&id)?;
+        let StoredKind::DevTunnelFiles(destination) = &profile.kind else {
+            return None;
+        };
+        Some(HostFilesSpec {
+            profile: id,
+            name: profile.name.clone(),
+            destination: destination.clone(),
+            account_label: store
+                .accounts()
+                .iter()
+                .find(|account| account.id == destination.account)
+                .map(|account| format!("@{}", account.login))
+                .unwrap_or_else(|| "Sign-in required".into()),
+        })
+    }
+
+    pub fn save_host_files(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        destination: festerm_mobile_profiles::DevTunnelFilesProfile,
+    ) -> Result<String, String> {
+        let kind = StoredKind::DevTunnelFiles(destination);
+        match id {
+            Some(id) => {
+                let id = Self::id(id).ok_or("The Files profile is no longer available")?;
+                let mut store = self.store();
+                if !store.get(&id).is_some_and(|profile| profile.kind == kind) {
+                    return Err("The Files profile changed. Open it again.".into());
+                }
+                store
+                    .update(&id, name, kind)
+                    .map_err(|error| describe(&error))?;
+                Ok(id.as_str().to_owned())
+            }
+            None => self
+                .store()
+                .create(name, kind)
+                .map(|id| id.as_str().to_owned())
+                .map_err(|error| describe(&error)),
+        }
     }
 
     pub fn save_sftp(

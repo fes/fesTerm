@@ -142,3 +142,30 @@ pub(crate) fn load_document(
         migrated_from,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v2_files_document_is_refused_before_a_v1_reader_collects_unknown_entries() {
+        let directory =
+            std::env::temp_dir().join(format!("festerm-profile-version-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("profiles.json");
+        let original =
+            br#"{"version":2,"profiles":[{"kind":{"type":"dev_tunnel_files"}}],"accounts":[]}"#;
+        fs::write(&path, original).unwrap();
+        assert!(matches!(
+            load_document(&path, 1024, 1, &[]),
+            Err(StorageError::UnsupportedVersion { found: 2 })
+        ));
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(
+            fs::read_dir(&directory).unwrap().count(),
+            1,
+            "no quarantine or rewrite"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+}

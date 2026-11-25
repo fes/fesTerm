@@ -18,12 +18,18 @@ use crate::model::{
 use crate::tunnel_import::PublicProfileImport;
 
 pub const PROFILES_FILE: &str = "profiles.json";
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 pub const MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const MAX_PROFILES: usize = 200;
 pub const MAX_ACCOUNTS: usize = 8;
 pub const MAX_PASSWORD_BYTES: usize = 1024;
-const MIGRATIONS: &[Migration] = &[];
+const MIGRATIONS: &[Migration] = &[migrate_v1_to_v2];
+
+// Only the document version changes. Existing metadata and secret references
+// retain their values; older readers refuse v2 before collecting unknown kinds.
+fn migrate_v1_to_v2(_: &mut Value) -> Result<(), StorageError> {
+    Ok(())
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 struct Document {
@@ -547,8 +553,10 @@ impl ProfileStore {
         Ok((account.id, replaced))
     }
 
-    /// Signs an account out: deletes its credential and, from every profile
-    /// that used it, the selection, pinned host and connect credential.
+    /// Signs an account out and deletes its credential. Legacy Dev Tunnel
+    /// profiles lose their account selection, pinned host and connect credential.
+    /// Files profiles retain inert public destination metadata; reopening still
+    /// requires the same signed-in account and fresh Files authority.
     pub fn remove_account(&mut self, id: &str) -> Result<(), ProfileError> {
         let mut next = self.document.clone();
         let index = next
@@ -695,6 +703,15 @@ impl ProfileStore {
                 if !document.accounts.iter().any(|other| other.id == *account) {
                     return Err(ProfileError::UnknownAccount);
                 }
+            }
+        }
+        if let ProfileKind::DevTunnelFiles(files) = kind {
+            if !document
+                .accounts
+                .iter()
+                .any(|account| account.id == files.account)
+            {
+                return Err(ProfileError::UnknownAccount);
             }
         }
         Ok(())

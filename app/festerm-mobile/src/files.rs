@@ -90,7 +90,28 @@ impl TransferRow {
 }
 
 /// The transfer engine behind the Files screen.
+#[cfg(feature = "host-clients")]
+pub(crate) mod deletion;
+
 pub(crate) trait Transfers: Send + Sync {
+    #[cfg(feature = "host-clients")]
+    fn delete_available(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "host-clients")]
+    fn review_delete(
+        &self,
+        _: Vec<String>,
+        _: tokio_util::sync::CancellationToken,
+    ) -> Result<deletion::Reply<deletion::Review>, String> {
+        Err("Deletion is unavailable".into())
+    }
+    #[cfg(feature = "host-clients")]
+    fn commit_delete(&self, _: u64) -> Result<deletion::Reply<deletion::Outcome>, String> {
+        Err("Deletion is unavailable".into())
+    }
+    #[cfg(feature = "host-clients")]
+    fn cancel_delete(&self) {}
     /// Ordinary Files keeps private preview copies; SSH retains its historical
     /// preparation, read and cleanup path through these default hooks.
     fn retains_preview_copies(&self) -> bool {
@@ -518,6 +539,10 @@ impl FolderDraft {
 }
 
 pub(crate) struct FilesSession {
+    #[cfg(feature = "host-clients")]
+    pub(crate) deletion: Option<deletion::Draft>,
+    #[cfg(feature = "host-clients")]
+    delete_result: Option<String>,
     pub(crate) remote_write: bool,
     pub(crate) folder: Option<FolderDraft>,
     pub(crate) title: String,
@@ -549,6 +574,10 @@ impl FilesSession {
             title,
             subtitle,
             link: Link::Connecting("Connecting".to_owned()),
+            #[cfg(feature = "host-clients")]
+            deletion: None,
+            #[cfg(feature = "host-clients")]
+            delete_result: None,
             remote_write: false,
             folder: None,
             remote: None,
@@ -680,6 +709,8 @@ impl FilesSession {
                 self.notice = None;
             }
         }
+        #[cfg(feature = "host-clients")]
+        self.poll_delete(ctx);
         if self.is_ready() {
             self.poll_folder(ctx);
         } else {
@@ -992,6 +1023,8 @@ impl FilesSession {
 
     /// Removes opened-document copies; called when the session closes.
     pub(crate) fn cleanup(&mut self) {
+        #[cfg(feature = "host-clients")]
+        self.cancel_delete();
         if self
             .transfers
             .as_ref()

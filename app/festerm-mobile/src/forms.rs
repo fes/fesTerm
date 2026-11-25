@@ -4,7 +4,7 @@
 //! structs and returned actions so callers own all connection side effects.
 
 use super::model::{Capabilities, DevTunnelChoices, HostDecision, HostVerification, ProfileKind};
-use super::profiles::{SftpSpec, TunnelSpec};
+use super::profiles::{HostFilesSpec, SftpSpec, TunnelSpec};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     bottom_sheet, button, button_sized, caption_label, card, field_caption, footnote, form_field,
@@ -80,6 +80,12 @@ pub struct EditorState {
     pub tunnel_account: Option<String>,
     pub take_over: bool,
     pub auto_reconnect: bool,
+    /// Files destination comes only from authenticated host selection or a saved profile.
+    pub files_destination: Option<festerm_mobile_profiles::DevTunnelFilesProfile>,
+    pub files_account_label: String,
+    pub files_from_session: bool,
+    #[cfg(feature = "host-clients")]
+    pub files_origin_profile: Option<String>,
 }
 
 /// The remote session name used when the field is left empty.
@@ -174,6 +180,18 @@ impl EditorState {
         };
     }
 
+    pub fn open_edit_host_files(&mut self, spec: &HostFilesSpec, caps: Capabilities) {
+        self.open_new();
+        self.editing = Some(spec.profile.as_str().to_owned());
+        self.name = spec.name.clone();
+        self.files_destination = Some(spec.destination.clone());
+        self.files_account_label = spec.account_label.clone();
+        self.kind_index = Self::kinds(caps)
+            .iter()
+            .position(|kind| *kind == ProfileKind::DevTunnelFiles)
+            .unwrap_or(0);
+    }
+
     pub fn close(&mut self) {
         self.wipe_secrets();
         self.open = false;
@@ -207,6 +225,9 @@ impl EditorState {
         }
         if caps.sftp_profiles {
             kinds.push(ProfileKind::Sftp);
+        }
+        if cfg!(feature = "host-clients") && caps.dev_tunnel_profiles && caps.sftp_profiles {
+            kinds.push(ProfileKind::DevTunnelFiles);
         }
         kinds
     }
@@ -363,8 +384,9 @@ pub fn show_editor(
     let mut action = EditorAction::None;
     let kinds = EditorState::kinds(caps);
     let kind = state.kind(caps);
-    let host_picker =
-        cfg!(feature = "host-clients") && kind == ProfileKind::DevTunnel && state.editing.is_none();
+    let host_picker = cfg!(feature = "host-clients")
+        && ((kind == ProfileKind::DevTunnel && state.editing.is_none())
+            || (kind == ProfileKind::DevTunnelFiles && state.files_destination.is_none()));
     egui::Panel::top("editor-top")
         .frame(
             egui::Frame::new()
@@ -411,6 +433,7 @@ pub fn show_editor(
     let connect_label = match kind {
         ProfileKind::DevTunnel => "Save & Attach",
         ProfileKind::Sftp => "Save & Open",
+        ProfileKind::DevTunnelFiles => "Save & Open",
         ProfileKind::Ssh => "Save & Connect",
     };
     if !host_picker {
@@ -425,6 +448,20 @@ pub fn show_editor(
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let width = ui.available_width();
+                    if kind == ProfileKind::DevTunnelFiles && state.files_from_session {
+                        if button_sized(
+                            ui,
+                            ButtonKind::Primary,
+                            "Save profile",
+                            true,
+                            egui::vec2(width, space::BUTTON_HEIGHT),
+                        )
+                        .clicked()
+                        {
+                            action = EditorAction::SaveOnly;
+                        }
+                        return;
+                    }
                     let gap = ui.spacing().item_spacing.x;
                     let secondary = (width - gap) * 0.38;
                     if button_sized(
@@ -442,7 +479,9 @@ pub fn show_editor(
                         ui,
                         ButtonKind::Primary,
                         connect_label,
-                        can_connect,
+                        can_connect
+                            && (kind != ProfileKind::DevTunnelFiles
+                                || cfg!(feature = "host-clients")),
                         egui::vec2(width - secondary - gap, space::BUTTON_HEIGHT),
                     )
                     .clicked()
@@ -464,18 +503,38 @@ pub fn show_editor(
                 ui.vertical(|ui| {
                     ui.set_width(inner_width);
                     ui.spacing_mut().item_spacing.y = space::MD;
-                    if kinds.len() > 1 && state.editing.is_none() {
+                    if kinds.len() > 1
+                        && state.editing.is_none()
+                        && state.files_destination.is_none()
+                    {
                         let items: Vec<(Option<Icon>, &str)> = kinds
                             .iter()
                             .map(|kind| (Some(kind.glyph()), kind.label()))
                             .collect();
                         segmented(ui, &items, &mut state.kind_index, true);
                     }
-                    if !host_picker {
+                    if !host_picker || kind == ProfileKind::DevTunnelFiles {
                         text_field(ui, "Profile name", &mut state.name, "prod-web", inner_width);
                     }
                     match kind {
                         ProfileKind::DevTunnel => dev_tunnel_fields(ui, state, &mut action),
+                        ProfileKind::DevTunnelFiles => {
+                            if let Some(destination) = &state.files_destination {
+                                caption_label(ui, "Host");
+                                ui.label(&destination.locator);
+                                caption_label(ui, "GitHub account");
+                                ui.label(&state.files_account_label);
+                            } else {
+                                #[cfg(feature = "host-clients")]
+                                if button(ui, ButtonKind::Primary, "Choose Dev Tunnel host", true)
+                                    .clicked()
+                                {
+                                    action = EditorAction::OpenHosts;
+                                }
+                                #[cfg(not(feature = "host-clients"))]
+                                footnote(ui, "Dev Tunnels Files is unavailable in this build.");
+                            }
+                        }
                         _ => {
                             if ssh_fields(ui, state, caps, inner_width, kind) {
                                 action = EditorAction::OpenAuthentication;

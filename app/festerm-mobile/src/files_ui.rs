@@ -141,7 +141,7 @@ fn tint_for(entry: &Entry) -> egui::Color32 {
 }
 
 /// Returns `(tapped, checked_zone)` for one directory row.
-fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool) -> egui::Response {
+fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::CLICK);
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -185,6 +185,9 @@ fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool) -> egui::Response {
             Stroke::new(1.5, color::BORDER),
         );
         right -= 28.0;
+    }
+    if select_folder {
+        right -= 56.0;
     }
     let name = if entry.name_safe {
         entry.display_name.as_str()
@@ -343,10 +346,14 @@ fn sort_header(ui: &mut Ui, pane: &mut Pane, ctx: &egui::Context) {
 fn footer_text(pane: &Pane) -> String {
     let count = pane.visible().len();
     let items = format!("{count} item{}", if count == 1 { "" } else { "s" });
-    let selected = pane.selected_files().len();
+    let files = pane.selected_files().len();
+    let selected = pane.selected.len();
     if selected == 0 {
         format!("{items} · No selection")
-    } else if selected == 1 && pane.selected.len() == 1 {
+    } else if selected != files {
+        // Folder contents have not been enumerated; do not invent byte totals.
+        format!("{items} · {selected} selected")
+    } else if selected == 1 {
         format!(
             "{items} · 1 selected · {}",
             format_size(pane.selected_bytes())
@@ -367,6 +374,7 @@ fn pane_card(
     root_label: &str,
     height: f32,
     ctx: &egui::Context,
+    select_folders: bool,
 ) -> bool {
     let mut open = false;
     let size = egui::vec2(ui.available_width(), height);
@@ -512,8 +520,27 @@ fn pane_card(
                         }
                         for entry in entries {
                             let selected = pane.selected.contains(&entry.name);
-                            if entry_row(ui, entry, selected).clicked() && entry.name_safe {
-                                tapped = Some((entry.name.clone(), entry.is_dir()));
+                            let select_folder = select_folders
+                                && entry.is_dir()
+                                && entry.name_safe
+                                && entry.symlink.is_none();
+                            let row = entry_row(ui, entry, selected, select_folder);
+                            let mut select = false;
+                            if select_folder {
+                                let rect = Rect::from_center_size(
+                                    egui::pos2(row.rect.right() - 48.0, row.rect.center().y),
+                                    egui::vec2(44.0, 44.0),
+                                );
+                                let mut checked = selected;
+                                select = labelled(
+                                    ui.put(rect, egui::Checkbox::without_text(&mut checked)),
+                                    &format!("Select folder {}", entry.display_name),
+                                    true,
+                                )
+                                .clicked();
+                            }
+                            if (select || row.clicked()) && entry.name_safe {
+                                tapped = Some((entry.name.clone(), entry.is_dir() && !select));
                             }
                         }
                     });
@@ -632,6 +659,10 @@ const FILES_MAX_WIDTH: f32 = 1100.0;
 pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     let mut outcome = FilesOutcome::default();
     let ctx = ui.ctx().clone();
+    #[cfg(feature = "host-clients")]
+    let select_folders = session.deletion_available();
+    #[cfg(not(feature = "host-clients"))]
+    let select_folders = false;
     if !session.is_ready() {
         connecting_body(ui, session, &mut outcome);
         return outcome;
@@ -668,6 +699,18 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
             if button(ui, ButtonKind::Secondary, "New local folder", true).clicked() {
                 session.new_folder(false);
             }
+            #[cfg(feature = "host-clients")]
+            if select_folders
+                && button(
+                    ui,
+                    ButtonKind::Secondary,
+                    "Delete selected",
+                    session.can_review_delete(),
+                )
+                .clicked()
+            {
+                session.review_delete();
+            }
         });
         let (mut open_remote, mut open_local) = (false, false);
         if wide {
@@ -680,14 +723,22 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                 ui.vertical(|ui| {
                     ui.set_width(half);
                     if let Some(pane) = session.remote.as_mut() {
-                        open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx);
+                        open_remote =
+                            pane_card(ui, pane, "Remote", "/", pane_height, &ctx, select_folders);
                     }
                 });
                 ui.vertical(|ui| {
                     ui.set_width(half);
                     if let Some(pane) = session.local.as_mut() {
-                        open_local =
-                            pane_card(ui, pane, "This device", "Documents", pane_height, &ctx);
+                        open_local = pane_card(
+                            ui,
+                            pane,
+                            "This device",
+                            "Documents",
+                            pane_height,
+                            &ctx,
+                            false,
+                        );
                     }
                 });
             });
@@ -696,7 +747,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
             let fixed = 48.0 + 60.0 + 3.0 * space::SM + 44.0;
             let pane_height = ((ui.available_height() - fixed) / 2.0).clamp(190.0, 520.0);
             if let Some(pane) = session.remote.as_mut() {
-                open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx);
+                open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx, select_folders);
             }
             transfer_buttons(ui, session);
             if let Some(pane) = session.local.as_mut() {
@@ -707,6 +758,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                     "Documents",
                     pane_height,
                     &ctx,
+                    false,
                 );
             }
         }
@@ -804,7 +856,62 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
             session.folder = None;
         }
     }
+    #[cfg(feature = "host-clients")]
+    delete_sheet(&ctx, ui.max_rect(), session);
     outcome
+}
+
+#[cfg(feature = "host-clients")]
+fn delete_sheet(ctx: &egui::Context, bounds: Rect, session: &mut FilesSession) {
+    if session.deletion.is_none() {
+        return;
+    }
+    let mut confirm = false;
+    let mut cancel = false;
+    let result = bottom_sheet(ctx, "files-reviewed-delete", bounds, |ui| {
+        let draft = session.deletion.as_ref().expect("open review");
+        sheet_title(ui, "Delete selected entries?", None);
+        footnote(ui, &format!("Remote folder: {}", draft.path()));
+        footnote(
+            ui,
+            "Only the reviewed files or empty folders will be removed. This cannot be undone.",
+        );
+        if let Some(review) = &draft.review {
+            egui::ScrollArea::vertical()
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    for name in &review.names {
+                        ui.label(name);
+                    }
+                });
+        } else {
+            ui.add(egui::Spinner::new());
+            footnote(ui, "Reviewing selected entries…");
+        }
+        if draft.committing() {
+            footnote(ui, "Deleting…");
+        }
+        confirm = button(
+            ui,
+            ButtonKind::Primary,
+            "Delete reviewed entries",
+            draft.ready(),
+        )
+        .clicked();
+        cancel = button(ui, ButtonKind::Secondary, "Cancel", !draft.committing()).clicked();
+    });
+    if confirm {
+        session.commit_delete();
+    }
+    if cancel
+        || (result.dismissed
+            && !session
+                .deletion
+                .as_ref()
+                .is_some_and(|draft| draft.committing()))
+    {
+        session.cancel_delete();
+    }
 }
 
 fn connecting_body(ui: &mut Ui, session: &mut FilesSession, outcome: &mut FilesOutcome) {
@@ -826,6 +933,13 @@ fn connecting_body(ui: &mut Ui, session: &mut FilesSession, outcome: &mut FilesO
                 )
                 .wrap(),
             );
+            #[cfg(feature = "host-clients")]
+            if let Some(result) = session
+                .deletion_result()
+                .filter(|result| !message.contains(result))
+            {
+                footnote(ui, &format!("Last deletion: {result}"));
+            }
             ui.add_space(space::LG);
             ui.allocate_ui(egui::vec2(220.0, 48.0), |ui| {
                 if button(ui, ButtonKind::Primary, "Reconnect", true).clicked() {
