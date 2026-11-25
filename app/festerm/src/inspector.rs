@@ -321,10 +321,14 @@ pub fn show(
                                             action = Some(InspectorAction::CopyInputRecording);
                                         }
                                     });
-                                    if content.startup_diagnostics_available
-                                        && ui.button("Copy startup diagnostics").clicked()
-                                    {
-                                        action = Some(InspectorAction::CopyStartupDiagnostics);
+                                    if content.startup_diagnostics_available {
+                                        let copy = ui.button("Copy startup diagnostics");
+                                        if copy.gained_focus() {
+                                            copy.scroll_to_me(None);
+                                        }
+                                        if copy.clicked() {
+                                            action = Some(InspectorAction::CopyStartupDiagnostics);
+                                        }
                                     }
                                     ui.add(Label::new(RichText::new(content.input_report).monospace().size(10.0)).wrap());
                                     ui.add(
@@ -424,6 +428,70 @@ pub(crate) mod tests {
                 let content_rect = ui.max_rect();
                 show(ui.ctx(), content_rect, content.clone(), false);
             })
+    }
+
+    #[test]
+    fn tab_reveals_startup_diagnostics_copy_in_short_inspector() {
+        let failure = festerm_sessiond::PersistentSessionError::startup_diagnostics_fixture();
+        let diagnostics = failure.startup_diagnostics().unwrap().to_string();
+        let mut harness = Harness::builder()
+            .with_size(vec2(375.0, 378.0))
+            .build_ui_state(
+                move |ui, actions: &mut Vec<InspectorAction>| {
+                    ui.style_mut().animation_time = 0.0;
+                    let mut content = base_content(1);
+                    content.type_label = "Local";
+                    content.transport = TransportFacts::Local;
+                    content.state = "Failed";
+                    content.state_message = Some("Persistent local shell startup failed.");
+                    content.startup_attempt = Some(1);
+                    content.startup_diagnostics_available = true;
+                    content.diagnostics = &diagnostics;
+                    content.reconnect_available = false;
+                    content.open_sftp_available = false;
+                    if let Some(action) = show(ui.ctx(), ui.max_rect(), content, false) {
+                        actions.push(action);
+                    }
+                },
+                Vec::new(),
+            );
+        harness.run();
+        assert!(harness.get_by_label("Close Session Inspector").is_focused());
+        for _ in 0..32 {
+            harness.key_press(egui::Key::Tab);
+            harness.run();
+            if harness
+                .get_by_label("Copy startup diagnostics")
+                .is_focused()
+            {
+                let button = harness.get_by_label("Copy startup diagnostics").rect();
+                let viewport =
+                    overlay_rect(Rect::from_min_size(egui::Pos2::ZERO, vec2(375.0, 378.0)))
+                        .shrink(20.0);
+                assert!(
+                    viewport.contains_rect(button),
+                    "keyboard-focused Copy must be visible: {button:?} in {viewport:?}"
+                );
+                harness.key_press(egui::Key::Enter);
+                harness.run();
+                assert_eq!(harness.state(), &[InspectorAction::CopyStartupDiagnostics]);
+                // Keeping keyboard focus must not trap ordinary pointer scrolling.
+                harness.event(egui::Event::PointerMoved(egui::pos2(180.0, 140.0)));
+                harness.event(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, 300.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                });
+                harness.run();
+                let copy = harness.get_by_label("Copy startup diagnostics");
+                assert!(copy.is_focused());
+                assert!(copy.rect().bottom() > viewport.bottom());
+                assert_eq!(harness.state(), &[InspectorAction::CopyStartupDiagnostics]);
+                return;
+            }
+        }
+        panic!("ordinary Tab navigation must reach Copy startup diagnostics");
     }
 
     #[test]

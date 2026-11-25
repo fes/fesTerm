@@ -3983,6 +3983,7 @@
         "startup_snapshot_restore_opens_only_the_initial_selected_failure",
         "startup_diagnostics_disclosure_is_once_per_controller_attempt",
         "inspector_copies_only_current_typed_local_startup_diagnostics",
+        "tab_reveals_startup_diagnostics_copy_in_short_inspector",
         "startup_diagnostics_copy_refuses_sibling_closed_and_replacement_tabs"
       ],
       "manual_scenarios": [
@@ -4036,6 +4037,7 @@
         "startup_snapshot_cannot_cross_connected_or_replacement_generation",
         "startup_diagnostics_disclosure_is_once_per_controller_attempt",
         "inspector_copies_only_current_typed_local_startup_diagnostics",
+        "tab_reveals_startup_diagnostics_copy_in_short_inspector",
         "startup_diagnostics_copy_refuses_sibling_closed_and_replacement_tabs"
       ],
       "manual_scenarios": [
