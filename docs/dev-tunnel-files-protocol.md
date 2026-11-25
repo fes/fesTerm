@@ -522,3 +522,33 @@ Disable necessarily stops HOST and its transport: this qualifies retirement
 through the supported owner cycle, not isolated hot-policy enforcement, a
 particular remote error cause or rollback of already admitted work. Lost-Finish,
 opened-write-handle cutover and uncertain publication remain separate gates.
+
+## Mobile read-only client
+
+The existing `host-clients` mobile build can open Files from an authenticated
+host inventory without creating or attaching a terminal. It reuses the mobile
+Files panes with a separate ordinary Files channel and the same native account,
+host/installation/principal, privacy and connection-budget checks. Files-off or
+unsupported hosts refuse this operation without a terminal/SFTP fallback.
+
+This initial client lists and inspects rooted entries, downloads regular files
+up to 16 MiB into app Documents, and reuses the existing 4 MiB Markdown-preview
+limit. It disables Upload and refuses every remote mutation locally; an advertised
+host write grant does not imply mobile support. New destinations are published
+without replacement after retained-directory/file checks and a final account
+check. Replaced parents/partials are not accepted as the original objects;
+uncertain cleanup is reported. These are the existing negative identity fences,
+not a guarantee against hostile same-user/root races.
+
+Progress counts actual successful writes. Closing, cancellation, lock,
+suspension or account retirement stops the owned connection. A queued download
+cancelled before its Active claim sends no request and leaves later work on the
+same stream; in-flight cancellation may retire that Files connection. Explicit Reconnect
+uses only retained public target metadata to request fresh Files authority;
+it never replays transfers. Retirement discards pending automatic preview
+disclosure, including completed downloads, while preserving local files and
+explicit local preview. Existing files are preserved on destination
+conflicts; replacement/Keep Both UI and mobile remote writes remain pending.
+No wire format or host grant changes are introduced.
+There is no crash-resume or durable partial-file recovery ledger in this slice. Device-native qualification
+is still required; framed-service and UI tests are source evidence only.

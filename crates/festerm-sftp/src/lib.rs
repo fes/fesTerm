@@ -36,8 +36,8 @@ pub use error::{Result, SftpError};
 pub use fs::{PaneFs, PaneKind, MAX_DELETE_DEPTH, MAX_DELETE_ENTRIES};
 pub use local::{LocalFs, LocalWriteAdmission};
 pub use model::{
-    Entry, EntryKind, ListOptions, Listing, SortKey, SortOrder, SymlinkInfo, ABSOLUTE_MAX_SCAN,
-    DEFAULT_MAX_ENTRIES, DEFAULT_MAX_SCAN,
+    finish_listing, Entry, EntryKind, ListOptions, Listing, SortKey, SortOrder, SymlinkInfo,
+    ABSOLUTE_MAX_SCAN, DEFAULT_MAX_ENTRIES, DEFAULT_MAX_SCAN,
 };
 pub use remote::{ClientConfig, SftpClient, MAX_SYMLINK_RESOLVES};
 pub use transfer::{

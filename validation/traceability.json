@@ -7791,6 +7791,46 @@
       "prerequisites": [
         "Packaged crash/restart, same-key inspection followed by separately confirmed manual deletion, server failure, changed-key/path behavior, multiwindow interaction and accessibility remain pending; no safe automatic remote cleanup or resume claim."
       ]
+    },
+    {
+      "id": "mobile-host-files-readonly",
+      "edges": [
+        "MOB-11"
+      ],
+      "requirements": [
+        "docs/dev-tunnel-files-protocol.md#mobile-read-only-client"
+      ],
+      "decisions": [
+        "ADR-0067",
+        "ADR-0086"
+      ],
+      "automated_tests": [
+        "host_files_real_framed_read_only_listing_download_and_preview_bytes",
+        "host_files_download_publication_guard_cutover_keeps_original_and_no_final",
+        "host_files_queued_cancel_sends_no_request_and_next_download_uses_same_client",
+        "host_files_actual_partial_writes_update_progress_and_cancel_preserves_count",
+        "host_files_mutations_and_invalid_paths_never_reach_worker",
+        "download_stage_never_removes_a_replacement_partial",
+        "download_stage_parent_replacement_refuses_publication_and_cleans_only_retained_file",
+        "download_stage_no_clobber_and_authority_cutover_preserve_originals",
+        "download_stage_rejects_canonical_root_replaced_with_symlink_before_create",
+        "download_stage_refuses_parent_that_becomes_foreign_writable_before_publish",
+        "absolute_directory_walk_rejects_aliases_and_preserves_search_only_ancestors",
+        "mobile_files_account_guard_retires_exact_account_and_lock_without_a_frame",
+        "mobile_files_retirement_preserves_target_metadata_and_fences_host_replacement",
+        "mobile_files_entry_uses_authenticated_inventory_independently_of_shell_creation",
+        "files_read_only_capability_disables_upload_and_rejects_stale_dispatch",
+        "host_files_late_ready_after_account_retirement_is_not_disclosed",
+        "files_retired_connection_never_opens_completed_remote_preview_but_keeps_local_file"
+      ],
+      "manual_scenarios": [
+        "MOB-11"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "Native iOS/Android ordinary Files browse/download/preview, cancellation/progress, account/lock/suspend and explicit reconnect checks remain required. Framed-service and rendered controls are source evidence only.",
+        "Mobile upload/mkdir/reviewed Delete/rename/chmod/link parity and destination replacement/Keep Both are outside this read-only tranche."
+      ]
     }
   ]
 }

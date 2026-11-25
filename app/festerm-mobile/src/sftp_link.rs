@@ -252,6 +252,7 @@ fn run(
     let remote: Arc<dyn PaneFs> = Arc::new(client);
     let local: Arc<dyn PaneFs> = Arc::new(local);
     Ok(Ready {
+        remote_write: true,
         remote,
         local,
         local_root,
