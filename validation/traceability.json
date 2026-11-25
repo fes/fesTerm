@@ -125,6 +125,7 @@
       "automated_tests": [
         "recording_settings_ui_saves_a_valid_device_local_draft",
         "recording_is_opt_in_and_unlocks_settings_only_after_saving",
+        "settings_recording_toggle_fits_and_dispatches_in_a_narrow_viewport",
         "disabling_session_recording_stops_capture_and_retains_the_source",
         "desktop_disabling_session_recording_stops_capture_and_retains_the_source",
         "opting_out_stops_other_window_output_before_requests_are_settled",
@@ -4672,6 +4673,7 @@
         "scroll_speed_preference_round_trips_through_toml_and_defaults_to_normal",
         "scroll_speed_multiplier_scales_rows_moved_per_wheel_step",
         "settings_controls_stay_inside_their_card_at_the_default_window_width",
+        "settings_recording_toggle_fits_and_dispatches_in_a_narrow_viewport",
         "a_settings_slider_rail_is_visible_against_the_card_it_sits_in",
         "settings_automatic_update_check_control_returns_the_toggle_command",
         "turning_off_automatic_update_checks_persists_and_silences_the_poll",

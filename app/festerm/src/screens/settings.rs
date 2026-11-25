@@ -729,33 +729,30 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         );
 
                         settings_card(ui, "Files & documents", |ui| {
+                            const CONTROL_WIDTH: f32 = 180.0;
+
                             let mut selected_order =
                                 *state.sftp_pane_order.get_or_insert(sftp_pane_order);
                             let order_labels = [
                                 (SftpPaneOrderPreference::LocalLeft, "Local left · Remote right"),
                                 (SftpPaneOrderPreference::RemoteLeft, "Remote left · Local right"),
                             ];
-                            egui::Sides::new().show(
+                            settings_control_row(
                                 ui,
+                                CONTROL_WIDTH,
                                 |ui| {
-                                    ui.set_max_width(
-                                        (ui.available_width() - 190.0)
-                                            .max(SETTINGS_MIN_DESCRIPTION_WIDTH),
+                                    ui.label(
+                                        egui::RichText::new("SFTP pane order")
+                                            .color(theme::TEXT_PRIMARY),
                                     );
-                                    ui.vertical(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("SFTP pane order")
-                                                .color(theme::TEXT_PRIMARY),
-                                        );
-                                        ssh_paragraph(
-                                            ui,
-                                            "Visual order for the GUI SFTP file manager. Commands and accessibility labels still refer to Local and Remote, never Left and Right.",
-                                        );
-                                    });
+                                    ssh_paragraph(
+                                        ui,
+                                        "Visual order for the GUI SFTP file manager. Commands and accessibility labels still refer to Local and Remote, never Left and Right.",
+                                    );
                                 },
                                 |ui| {
                                     ui.allocate_ui_with_layout(
-                                        egui::vec2(180.0, ui.spacing().interact_size.y * 2.0),
+                                        egui::vec2(CONTROL_WIDTH, ui.spacing().interact_size.y * 2.0),
                                         egui::Layout::top_down(egui::Align::Min),
                                         |ui| {
                                             for (value, label) in order_labels {
@@ -774,26 +771,21 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             state.sftp_pane_order = Some(selected_order);
                             settings_row_separator(ui);
                             let label_id = std::cell::Cell::new(None);
-                            egui::Sides::new().show(
+                            settings_control_row(
                                 ui,
+                                CONTROL_WIDTH,
                                 |ui| {
-                                    ui.set_max_width(
-                                        (ui.available_width() - 190.0)
-                                            .max(SETTINGS_MIN_DESCRIPTION_WIDTH),
+                                    let label = ui.label(
+                                        egui::RichText::new("Default local SFTP directory")
+                                            .color(theme::TEXT_PRIMARY),
                                     );
-                                    ui.vertical(|ui| {
-                                        let label = ui.label(
-                                            egui::RichText::new("Default local SFTP directory")
-                                                .color(theme::TEXT_PRIMARY),
-                                        );
-                                        label_id.set(Some(label.id));
-                                        ssh_paragraph(
-                                            ui,
-                                            "Starting local directory for new SFTP tabs. \
-                                             Changing it updates only future sessions; `lcd` \
-                                             affects the live session only.",
-                                        );
-                                    });
+                                    label_id.set(Some(label.id));
+                                    ssh_paragraph(
+                                        ui,
+                                        "Starting local directory for new SFTP tabs. \
+                                         Changing it updates only future sessions; `lcd` \
+                                         affects the live session only.",
+                                    );
                                 },
                                 |ui| {
                                     let response = ui.add(
@@ -802,7 +794,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                         )
                                         .id(field_id)
                                         .hint_text("Path to local directory")
-                                        .desired_width(180.0),
+                                        .desired_width(CONTROL_WIDTH),
                                     );
                                     let response = response
                                         .labelled_by(
@@ -840,16 +832,14 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             }
                             settings_row_separator(ui);
                             let mut selected = image_memory_budget;
-                            egui::Sides::new().show(
+                            settings_control_row(
                                 ui,
+                                CONTROL_WIDTH,
                                 |ui| {
-                                    ui.set_max_width((ui.available_width() - 190.0).max(SETTINGS_MIN_DESCRIPTION_WIDTH));
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new("Markdown image memory budget").color(theme::TEXT_PRIMARY));
-                                        ssh_paragraph(ui, "Shared image storage and load reservations across all windows. \
-                                            Lowering the limit keeps existing images but blocks new loads \
-                                            until space is available. Decoder-private and renderer memory are not capped.");
-                                    });
+                                    ui.label(egui::RichText::new("Markdown image memory budget").color(theme::TEXT_PRIMARY));
+                                    ssh_paragraph(ui, "Shared image storage and load reservations across all windows. \
+                                        Lowering the limit keeps existing images but blocks new loads \
+                                        until space is available. Decoder-private and renderer memory are not capped.");
                                 },
                                 |ui| {
                                     egui::ComboBox::from_id_salt("image-memory-budget")
@@ -3224,10 +3214,33 @@ fn segmented_control_width(ui: &Ui, options: &[(&str, bool)]) -> f32 {
     labels + ui.spacing().item_spacing.x * options.len().saturating_sub(1) as f32
 }
 
-/// The narrowest a settings row's description column is allowed to become
-/// while making room for its control, so a wide control cannot squeeze the
-/// prose into a one-word-per-line ribbon.
 const SETTINGS_MIN_DESCRIPTION_WIDTH: f32 = 180.0;
+
+/// Keep wide controls beside their descriptions when both fit. Stacking
+/// avoids letting an overwide row enlarge its card and every card after it.
+fn settings_control_row(
+    ui: &mut Ui,
+    control_width: f32,
+    description: impl FnOnce(&mut Ui),
+    control: impl FnOnce(&mut Ui),
+) {
+    let description_width = ui.available_width() - control_width - ui.spacing().item_spacing.x;
+    if description_width < SETTINGS_MIN_DESCRIPTION_WIDTH {
+        ui.vertical(|ui| {
+            description(ui);
+            control(ui);
+        });
+    } else {
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                ui.set_max_width(description_width);
+                ui.vertical(description);
+            },
+            control,
+        );
+    }
+}
 
 fn settings_segmented_row(
     ui: &mut Ui,
@@ -3236,33 +3249,32 @@ fn settings_segmented_row(
     options: &[(&str, bool)],
 ) -> Option<usize> {
     let mut clicked = None;
-    // Measured before the row is laid out, because the left closure runs
-    // first and has to know how much to leave behind.
     let control_width = segmented_control_width(ui, options);
-    egui::Sides::new().show(
+    settings_control_row(
         ui,
+        control_width,
         |ui| {
-            // Reserve exactly what the buttons need (plus the `Sides` gap) so
-            // the description wraps at measurement time instead of laying out
-            // as one long unwrapped line that pushes the segmented buttons
-            // off the right edge of the card and out of click range.
-            let reserved = control_width + ui.spacing().item_spacing.x;
-            ui.set_max_width((ui.available_width() - reserved).max(SETTINGS_MIN_DESCRIPTION_WIDTH));
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
-                ssh_paragraph(ui, description);
-            });
+            ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
+            ssh_paragraph(ui, description);
         },
         |ui| {
             // `Sides` lays its right closure out right-to-left; a plain
             // `ui.horizontal` would inherit that and show (and Tab through)
-            // the options backwards. Anchor a left-to-right block instead.
+            // the options backwards. Allow wrapping below the description
+            // when the full group does not fit the card.
             ui.allocate_ui_with_layout(
-                egui::vec2(control_width, ui.spacing().interact_size.y),
-                egui::Layout::left_to_right(egui::Align::Center),
+                egui::vec2(
+                    control_width.min(ui.available_width()),
+                    ui.spacing().interact_size.y,
+                ),
+                egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
                 |ui| {
                     for (index, (label, selected)) in options.iter().enumerate() {
-                        let response = ui.selectable_label(*selected, *label);
+                        // Wrap whole choices, keeping each label on one line.
+                        let response = ui.add(
+                            egui::Button::selectable(*selected, *label)
+                                .wrap_mode(egui::TextWrapMode::Extend),
+                        );
                         if !*selected {
                             // Give unselected segments a visible boundary;
                             // only the selected one is filled.
@@ -5378,19 +5390,36 @@ mod tests {
 
     #[test]
     fn settings_segmented_options_read_and_tab_left_to_right() {
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(800.0, 200.0))
-            .build_ui(|ui| {
-                let _ = settings_segmented_row(
-                    ui,
-                    "Order",
-                    "Options must read left to right.",
-                    &[("First", true), ("Second", false), ("Third", false)],
+        for width in [800.0, 110.0] {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 200.0))
+                .build_ui(|ui| {
+                    let _ = settings_segmented_row(
+                        ui,
+                        "Order",
+                        "Options must read left to right.",
+                        &[("First", true), ("Second", false), ("Third", false)],
+                    );
+                });
+            harness.run();
+
+            let options =
+                ["First", "Second", "Third"].map(|label| harness.get_by_label(label).rect());
+            assert!(options
+                .iter()
+                .all(|rect| rect.left() >= 0.0 && rect.right() <= width));
+            for pair in options.windows(2) {
+                let row_delta = pair[1].center().y - pair[0].center().y;
+                assert!(
+                    row_delta > 1.0 || (row_delta.abs() <= 1.0 && pair[0].left() < pair[1].left())
                 );
-            });
-        harness.run();
-        let x = |label| harness.get_by_label(label).rect().left();
-        assert!(x("First") < x("Second") && x("Second") < x("Third"));
+            }
+            if width == 800.0 {
+                assert!((options[0].center().y - options[2].center().y).abs() <= 1.0);
+            } else {
+                assert!(options[2].top() >= options[0].bottom());
+            }
+        }
     }
 
     #[test]
@@ -5837,6 +5866,36 @@ mod tests {
                  toggle rows line up on, so its card is wider than the window"
             );
         }
+    }
+
+    #[test]
+    fn settings_recording_toggle_fits_and_dispatches_in_a_narrow_viewport() {
+        let size = egui::vec2(375.0, 461.0);
+        let mut harness = settings_harness_with_width(size.x);
+        harness.set_size(size);
+        harness.run();
+
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let label = "Allow session recording";
+        let switch = harness.get_by_role_and_label(accesskit::Role::CheckBox, label);
+        assert!(switch.rect().top() > viewport.bottom());
+        switch.scroll_to_me();
+        harness.run();
+
+        let content = viewport.with_max_x(viewport.right() - CONTENT_SCROLLBAR_LANE);
+        let switch = harness.get_by_role_and_label(accesskit::Role::CheckBox, label);
+        assert!(
+            content.contains_rect(switch.rect()),
+            "the Recording switch at {:?} must fit the narrow Settings viewport {content:?}",
+            switch.rect(),
+        );
+        assert!(harness.state().command.is_none());
+        switch.click();
+        harness.run();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SetSessionRecordingAllowed(true))
+        ));
     }
 
     /// Regression test for the scroll-speed slider rendering as a small empty

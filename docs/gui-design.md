@@ -2285,7 +2285,9 @@ Settings is a singleton application surface represented by its own chip;
 invoking Settings again focuses it. It uses one scrolling page of compact,
 uniformly widthed cards rather than a category sidebar, ordered by how often a
 user reaches for each group, with the two tallest or most specialised groups
-moved onto drill-in sub-pages:
+moved onto drill-in sub-pages. Wide controls sit beside their descriptions
+when space permits. In narrow windows, they stack below their descriptions and
+segmented choices wrap in order so the cards stay inside the viewport.
 
 1. **Terminal** — Font (family, retry, ligatures, emoji presentation),
    History & scrolling (scrollback limit, scroll speed) and Mouse & selection.
