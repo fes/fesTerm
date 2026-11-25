@@ -3383,3 +3383,25 @@ pre-publication refusal and tests historical-result success plus running,
 queued, unknown, foreign XML/security, absent and held-runtime negatives. It
 proves a source-consistent explanation for #904, not the exact captured native
 error; corrected native first-result qualification remains required.
+
+### Finite starter registration failure detail
+
+The existing private lifecycle Failure payload may include an optional
+registration operation and finite I/O-kind classification. Socket-path derivation,
+registry read, child poll, observed child exit and registration timeout remain
+distinct, without adding FailureStage or wire-protocol variants. The original
+registration errno, including an unavailable errno, is captured before failed-start
+cleanup and cannot be replaced by a cleanup error. The returned error, cleanup,
+deadlines, reserved generation and no-replay rules remain unchanged.
+
+The nested optional field follows the recovery-category compatibility rule:
+old readers may ignore/drop it, missing detail stays unclassified, and future
+operation/kind values map to Unclassified. No error strings, paths, argv, cwd,
+terminal content or credentials enter the bounded journal. Diagnostic storage
+failure cannot change startup success or failure. This is observability only;
+the historical PR928 replacement-registration failure remains unexplained.
+
+Validation impact: GUI:DT-02, GUI:DIAG-01, ADR-0084. Focused lifecycle/startup
+regressions cover old/new/future decoding, original errno and kind through cleanup,
+opaque-error privacy and success without extra journal I/O. Corrected native
+startup evidence remains separate from these source tests.

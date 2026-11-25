@@ -6530,6 +6530,15 @@ after monitor drain is operator-owned. This was lab preparation, not a product
 workaround or instruction to enable Remote Desktop. A generic monitor failure
 must not claim this exact service cause without separate evidence.
 
+Starter registration failures may additionally carry a finite operation
+(socket path, registry read, child poll, child exit or timeout) and I/O kind in
+the existing private lifecycle ring. Missing detail stays unclassified; old
+records are not reclassified. The original registration errno, including None,
+is retained before cleanup. This diagnostic addition does not establish the
+cause of PR928's macOS replacement-registration refusal or change startup,
+retry, timeout or authority. Native evidence from a corrected producer remains
+pending; retain first failures rather than treating a later test pass as a fix.
+
 DT-02 / HOST-02 / DIAG-01 startup diagnostics: on the next signed Windows
 local-profile and remote-created session attempts, retain the existing bounded
 sessiond lifecycle ring before any retry. Correlate exact generation and actor
