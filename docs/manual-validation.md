@@ -2184,7 +2184,10 @@ personal devices. Run it only with an explicitly selected isolated emulator:
 The optional POSIX runner aggregates it when
 `FESTERM_ANDROID_EMULATOR_SERIAL` is set. Android CI cross-builds both ABIs and
 publishes development APKs; emulator execution and owner visual acceptance
-remain separate gates. Required desktop CI is unchanged.
+remain separate gates. Required desktop CI is unchanged. Pinned JVM dependency
+cache integrity, HTTP 429 Retry-After/backoff, attempt/budget refusal and finite
+error summaries have mocked packaging tests. These do not identify an actual
+provider's historical 429 response headers or qualify native application behavior.
 
 ## iOS Phase 1 feasibility (ADR 0042)
 

@@ -35,6 +35,23 @@ Both ABIs target Android 10/API 29 or later, target API 36, and use 16-KiB
 native alignment. The SDK-only packager needs neither Gradle nor cargo-apk.
 JVM TLS dependencies are version-pinned and checksum-verified, including
 cached downloads; no host system CA file is copied into the application.
+CI shares only `target/android-dependencies`, keyed by the exact public pin
+manifest. Restored entries must be regular non-symlink files within the existing 8-MiB
+bound before opening. Every reuse still checks the pinned checksum and Cargo verifier version;
+a mismatched cache fails rather than being trusted or silently replaced.
+
+Dependency HTTP 429 responses follow the
+[Retry-After guidance](https://www.rfc-editor.org/rfc/rfc6585#section-4), including
+[seconds or HTTP dates](https://www.rfc-editor.org/rfc/rfc9110#section-10.2.3).
+Four attempts share a 300-second monotonic admission/result budget. Server delays
+that cannot fit are refused, never shortened; missing or malformed hints use
+the existing 5/10/20-second backoff. Requests use a socket timeout of at most
+60 seconds, narrowed to the remaining budget, and late bodies are rejected.
+This is not a preemptive wall-clock timer for a continuously trickling response.
+Authentication/missing-artifact errors still fail immediately. Retry/CLI summaries
+retain only status or a finite network class, never URLs, headers or provider text.
+Mock tests establish this policy, not the provider or Retry-After behind a
+historical CI failure.
 For the separately signed Play App Bundle and console submission process, see
 [mobile signing and release](../../docs/mobile-signing-and-release.md#play-internal-testing-bundle-preparation).
 
