@@ -1,0 +1,235 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional iOS-to-Mac creation-OFF case24",
+  "case_number": 24,
+  "direction": {
+    "client": "iOS Simulator",
+    "server": "macOS ARM VM"
+  },
+  "creation_policy": "OFF",
+  "functional_case_accepted": true,
+  "pinned_24_case_functional_matrix_complete": true,
+  "uniform_current_release_qualified": false,
+  "global_TUI_identity_qualified": false,
+  "sources": {
+    "iOS": {
+      "version": "0.17.26",
+      "binary_sha256": "8389c03c5c94200f88a4d09fc02148d7d1523f29bafb6a52bcc17698500312e1",
+      "producer_base": "0e86be3040f5ce82c3b7c56a452951318ccf317a",
+      "producer_tree": "22dad36b212d66e3de24781f8c60677e6724d829"
+    },
+    "Mac_HOST_and_local_GUI": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "kind": "Genuine signed GUI/HOST and retained version26 daemon; not the separate production27 upgrade or TestFlight build."
+    },
+    "supporting_SDK": "Previously accepted OFF45 service-policy negatives are separately attributed and were not replayed.",
+    "CLI": "Copilot1.0.112, a fresh unauthenticated initial screen for each capture; no login/model request."
+  },
+  "workflow": {
+    "OFF49": "Ordinary discovery and disabled-creation UI; existing c0f39c63 AttachOnly profile reopens exact5e40 generation1795562989602610768 from ON case23. System/app-owned touch input and foreground reconnect passed. No Create, Ensure, End, new profile or SDK replay.",
+    "restoration": "Original ON51 first Enable reached Listening, preserving terminationOFF and original Files read/write/delete/root; initial transitional projections naturally settled without repeating input.",
+    "at_closed_case_boundary": {
+      "Mac": {
+        "epoch": 51,
+        "runtime": "Listening",
+        "pid": 28305,
+        "run": "79c35a42-b578-4676-973b-233bc78daa23",
+        "creation": true,
+        "termination": false,
+        "Files": "original read/write/delete plus root",
+        "actors": 18,
+        "profiles": 5,
+        "sessions": 10,
+        "operations": 27,
+        "catalog_sha256": "7ec3ae63da01f614961939a1c2ff692273247f7580d44dd602d9ea106da1c5bd"
+      },
+      "detached_writer": 11,
+      "all_seven_iOS_public_metadata_unchanged": true,
+      "all13_Simulators_Shutdown": true,
+      "Windows82": "Running again with the same worker/task, all33 actors/catalogc265/29 operations/writer15 preserved.",
+      "local": "Normal GUI/CLI/zsh exit, independently verified mode10 restoration and stopped registrations removed once."
+    },
+    "later_memory_booking": "A subsequent TestFlight build-resource Windows save is outside this closed-case boundary and has its own restoration obligation; this record does not claim it remained Running during that later phase."
+  },
+  "comparisons": [
+    {
+      "grid": [
+        44,
+        34
+      ],
+      "reports": [
+        {
+          "path": "ios-client-mac-native/ios-mac-off-44x34-remote-query.json",
+          "bytes": 1368,
+          "sha256": "885a3396267bb1ca8f3eb39b0aada9cae98648313f236b9977eebb996d046875"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-off-44x34-local-query.json",
+          "bytes": 1374,
+          "sha256": "aa330a3d4528160c6f1854f5f0465c4fb98342ae1dd8a848284b3e07294237fa"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-mac-native/ios-mac-off-44x34-remote-copilot.png",
+          "bytes": 234978,
+          "sha256": "7e95332155042f6c6ac3b03d0d1823818b9c7eb7d4fbcb4d79fc9c7c77947665"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-off-44x34-local-copilot.png",
+          "bytes": 46472,
+          "sha256": "a774e3671d3ead67ca2e509315bd948c99490f791a1202f69b51cd060252806f"
+        }
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true,
+      "PENDIN_changed_both": true,
+      "descriptor_states_restored_both": true,
+      "local_font_points": 14,
+      "remote_font_preset": "Large14",
+      "fresh_local_OFF_capture_provenance": {
+        "phase": "Mac OFF49 reference after original ON51 restoration",
+        "CLI_PID": 30108,
+        "CLI_birth": "Tue Nov 24 16:41:12 2026",
+        "owned_shell_PID": 29350,
+        "private_identity_proof_basename": "LC-11-EXACT-FOREGROUND-LOCAL-CLI.stdout",
+        "private_identity_proof_sha256": "01e67ff36c4b7b20f81268dfcd20139d1e7d87ee18b58dc7313c2062178cc1db",
+        "availability": "Original phase identity proof retained privately, not included in repository.",
+        "local_PNG_byte_identical_to_case23": true
+      }
+    },
+    {
+      "grid": [
+        53,
+        42
+      ],
+      "reports": [
+        {
+          "path": "ios-client-mac-native/ios-mac-off-53x42-remote-query.json",
+          "bytes": 1368,
+          "sha256": "55da2a6a4383a66904033de6b8d88e7fb70afe3e4131e04595a962c8b45fb56b"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-off-53x42-local-query.json",
+          "bytes": 1374,
+          "sha256": "2aeb01ae0f04542da5ba19a34af8d68db74df6a4c134d52379550ce1b981384b"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-mac-native/ios-mac-off-53x42-remote-copilot.png",
+          "bytes": 215066,
+          "sha256": "4e666369ceeb5427758b9545ec27e4a022339b1f4740bd49f417cc577ac108ad"
+        },
+        {
+          "path": "ios-client-mac-native/ios-mac-off-53x42-local-copilot.png",
+          "bytes": 51721,
+          "sha256": "dda9a8a8a48df80ca37ab823acd1944b08003e02e18b3e571d6c39e8c3e82ad4"
+        }
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms"
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "six_environment_fields_equal": true,
+      "PENDIN_changed_both": true,
+      "descriptor_states_restored_both": true,
+      "local_font_points": 14,
+      "remote_font_preset": "Normal11.5",
+      "fresh_local_OFF_capture_provenance": {
+        "phase": "Mac OFF49 reference after original ON51 restoration",
+        "CLI_PID": 32053,
+        "CLI_birth": "Tue Nov 24 16:46:00 2026",
+        "owned_shell_PID": 31182,
+        "private_identity_proof_basename": "LC-11-EXACT-FOREGROUND-LOCAL-CLI.stdout",
+        "private_identity_proof_sha256": "2386205d5ab46059a361e0ae916ecf1da312438a08f6c859ec9347094434b9d7",
+        "availability": "Original phase identity proof retained privately, not included in repository.",
+        "local_PNG_byte_identical_to_case23": true
+      }
+    }
+  ],
+  "visual_observations": {
+    "current_OFF": "At both grids the body, full CWD, MCP wording, navigation, wrapping and palette agree; both tall images show Pull requests. Physical scale/chrome/rasterization differ.",
+    "historical_ON23": "The earlier ON tall remote frame omitted Pull requests; that navigation variance remains unexplained and is not relabeled fixed.",
+    "historical_Android11pt": "Earlier CWD-label/MCP differences remain historical with unknown cause. Current matching OFF frames do not establish a product fix or identical overall TUI output."
+  },
+  "assets": {
+    "ios-mac-off-44x34-remote-query.json": {
+      "path": "ios-client-mac-native/ios-mac-off-44x34-remote-query.json",
+      "bytes": 1368,
+      "sha256": "885a3396267bb1ca8f3eb39b0aada9cae98648313f236b9977eebb996d046875"
+    },
+    "ios-mac-off-44x34-local-query.json": {
+      "path": "ios-client-mac-native/ios-mac-off-44x34-local-query.json",
+      "bytes": 1374,
+      "sha256": "aa330a3d4528160c6f1854f5f0465c4fb98342ae1dd8a848284b3e07294237fa"
+    },
+    "ios-mac-off-44x34-remote-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-off-44x34-remote-copilot.png",
+      "bytes": 234978,
+      "sha256": "7e95332155042f6c6ac3b03d0d1823818b9c7eb7d4fbcb4d79fc9c7c77947665"
+    },
+    "ios-mac-off-44x34-local-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-off-44x34-local-copilot.png",
+      "bytes": 46472,
+      "sha256": "a774e3671d3ead67ca2e509315bd948c99490f791a1202f69b51cd060252806f"
+    },
+    "ios-mac-off-53x42-remote-query.json": {
+      "path": "ios-client-mac-native/ios-mac-off-53x42-remote-query.json",
+      "bytes": 1368,
+      "sha256": "55da2a6a4383a66904033de6b8d88e7fb70afe3e4131e04595a962c8b45fb56b"
+    },
+    "ios-mac-off-53x42-local-query.json": {
+      "path": "ios-client-mac-native/ios-mac-off-53x42-local-query.json",
+      "bytes": 1374,
+      "sha256": "2aeb01ae0f04542da5ba19a34af8d68db74df6a4c134d52379550ce1b981384b"
+    },
+    "ios-mac-off-53x42-remote-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-off-53x42-remote-copilot.png",
+      "bytes": 215066,
+      "sha256": "4e666369ceeb5427758b9545ec27e4a022339b1f4740bd49f417cc577ac108ad"
+    },
+    "ios-mac-off-53x42-local-copilot.png": {
+      "path": "ios-client-mac-native/ios-mac-off-53x42-local-copilot.png",
+      "bytes": 51721,
+      "sha256": "dda9a8a8a48df80ca37ab823acd1944b08003e02e18b3e571d6c39e8c3e82ad4"
+    }
+  },
+  "limits": [
+    "The tall display carrier exited1 on its own running-GUI PID/executable assertion at ordinary close. Its finally transaction restored mode10, independently confirmed by CoreGraphics; actual GUI, CLI and local PTY cleanup passed. The first strict all-zero drain refusal is retained.",
+    "A post-owner observation hit a test-local TypeError after carriers closed. Read-only verification supplied final preservation facts without repeating owner input.",
+    "The two fresh local OFF PNGs are byte-identical to the corresponding case23 local PNGs. Separate OFF source captures, CLI identities, raw reports and phase proofs are retained; equality is not a capture-reuse claim.",
+    "Default14 local references used the same owned shell PID with zsh-l from real HOME, no environment normalization, temporary mode20 at1x and positive mode10 restore after each. Remote Large/Normal and physical chrome/rasterization differ.",
+    "Simulator System input and visible app-owned key touch passed; built-in UIKit software-keyboard visibility and physical-device input remain unqualified.",
+    "No private production captures/data or cropped control screenshots are included. No current combined-release or pixel-identity qualification follows from this pinned matrix."
+  ],
+  "root_acceptance_sha256": "82c737710272d5d95e7c6aed19f68878f8dbb6ea619c870d9de0655b61397007",
+  "candidate_sha256": "fa3b2c448c836c7e7a7c4aec62bf59779b432a7f6ccde44eccc49b50e00e6157",
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 24,
+    "desktop_accepted": 12,
+    "mobile_accepted": 12,
+    "Android_accepted": 6,
+    "iOS_accepted": 6,
+    "partial": 0,
+    "unstarted": 0,
+    "global_visual_identity": false,
+    "single_current_release_qualification": false
+  }
+}

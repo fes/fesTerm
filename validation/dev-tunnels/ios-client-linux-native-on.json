@@ -1,0 +1,208 @@
+{
+  "record_version": 1,
+  "status": "accepted pinned functional iOS-to-Linux creation-ON case22",
+  "case_number": 22,
+  "direction": {
+    "client": "iOS Simulator",
+    "server": "LinuxARM VM"
+  },
+  "creation_policy": "ON",
+  "functional_case_accepted": true,
+  "full_24_case_matrix_complete": false,
+  "global_TUI_identity_qualified": false,
+  "sources": {
+    "iOS": {
+      "version": "0.17.26",
+      "binary_sha256": "8389c03c5c94200f88a4d09fc02148d7d1523f29bafb6a52bcc17698500312e1",
+      "producer_base": "0e86be3040f5ce82c3b7c56a452951318ccf317a",
+      "producer_tree": "22dad36b212d66e3de24781f8c60677e6724d829"
+    },
+    "Linux_HOST_and_local_GUI": {
+      "version": "0.17.24",
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "kind": "genuine signed HOST24/sessiond/Bash-l and signed localGUI24/default14 reference"
+    },
+    "supporting_SDK": "Separately accepted Linux89 ON creation-policy/authorization evidence, not replayed in this case.",
+    "CLI": "Copilot1.0.112 fresh unauthenticated initial screen/no paid-model request"
+  },
+  "workflow": {
+    "ON93": "One ordinary persistent shell Create, one Created/no Recreated, exact new7ec generation1795557643168952202, Bash-l atHOME; System and visible app-owned touch echo+Return, same-generationforeground, two fresh query/CLI captures and ordinary exit.",
+    "OFF95_saved_retention": "After normal originalOFF95 restore, separately save one new3a94557e generation-bound AttachOnly with actual public name Lab sharedLab shared; saved reopen+echo/HOME/detach writer7. This explicitly composes two policy epochs, not one uniform snapshot.",
+    "original_profiles_and_metadata": "Original three profiles and other public metadata exact; original preferences restored.",
+    "service_component": "Separately accepted Linux89 SDK ON creation-policy and authorization evidence. No SDK replay in this case.",
+    "closure": {
+      "linux_original_OFF95_listening": true,
+      "Linux_worker": {
+        "pid": 2563742,
+        "birth": "61205484",
+        "run": "e41ed1e9-c0ae-4027-a5bb-5cb3e2544f9e"
+      },
+      "all_original24_and_owned2_preserved": true,
+      "exact_catalog": "a62d066875b483586678932ab700ab21335de1efa56d11bfa8d87580dd3d7cb4",
+      "operations": 50,
+      "same_case_detached_writer": 7,
+      "iOS_normal_drains_all_simulators_shutdown": true,
+      "local_CLI_Bash_GUI_and_carrier_normal_drains": true,
+      "original_1024x768_and_timer_drain": true,
+      "no_VM_resume_or_policy_debt": true
+    }
+  },
+  "comparisons": [
+    {
+      "grid": [
+        44,
+        34
+      ],
+      "reports": [
+        {
+          "path": "ios-client-linux-native/ios-linux-on-44x34-remote-query.json",
+          "bytes": 1374,
+          "sha256": "2dfd39daca89ca55b93d730b5c052ee7aba38acdfc4672ba74e86460f714fffd"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-on-44x34-local-query.json",
+          "bytes": 1388,
+          "sha256": "0dee72e1d34a5f79916bdd091e0f39adacdc4a2c2b7653d9d9fbe3c3e70509b5"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-linux-native/ios-linux-on-44x34-remote-copilot.png",
+          "bytes": 232258,
+          "sha256": "082078b51cc53391d7c06948936bbfb14436772b0929b45df66a608a62e66bb9"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-on-44x34-local-copilot.png",
+          "bytes": 42033,
+          "sha256": "bdfc0b9cf1aedb7d91df9fe3add2787ff44ec873e0c2946dddf984bc546acf28"
+        }
+      ],
+      "font_points_remote_local": [
+        14,
+        14
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms",
+        "environment.LC_ALL"
+      ]
+    },
+    {
+      "grid": [
+        53,
+        42
+      ],
+      "reports": [
+        {
+          "path": "ios-client-linux-native/ios-linux-on-53x42-remote-query.json",
+          "bytes": 1374,
+          "sha256": "8d9f92c21c90d70bce67b9295486b3bb0cb04a3fcc5f07424b488a902c203ef8"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-on-53x42-local-query.json",
+          "bytes": 1388,
+          "sha256": "ff11c465ca9a922720fbb178476cb5bec57310047551dc4b62c49ae604a02700"
+        }
+      ],
+      "screenshots": [
+        {
+          "path": "ios-client-linux-native/ios-linux-on-53x42-remote-copilot.png",
+          "bytes": 211475,
+          "sha256": "8faea510bd47700d81a3bcce003027c60fa16e481fde9f1f2cf8ec6f3859012b"
+        },
+        {
+          "path": "ios-client-linux-native/ios-linux-on-53x42-local-copilot.png",
+          "bytes": 45627,
+          "sha256": "5d6db269bfb31fa2e42839217e585040320593d51fd00fb18095bcb35b3b7017"
+        }
+      ],
+      "font_points_remote_local": [
+        11.5,
+        14
+      ],
+      "observations": 10,
+      "singleton_reply_bytes": 202,
+      "DSR_row_col": [
+        1,
+        1
+      ],
+      "raw_differences": [
+        "case",
+        "elapsed_ms",
+        "environment.LC_ALL"
+      ]
+    }
+  ],
+  "assets": {
+    "ios-linux-on-44x34-remote-query.json": {
+      "path": "ios-client-linux-native/ios-linux-on-44x34-remote-query.json",
+      "bytes": 1374,
+      "sha256": "2dfd39daca89ca55b93d730b5c052ee7aba38acdfc4672ba74e86460f714fffd"
+    },
+    "ios-linux-on-44x34-local-query.json": {
+      "path": "ios-client-linux-native/ios-linux-on-44x34-local-query.json",
+      "bytes": 1388,
+      "sha256": "0dee72e1d34a5f79916bdd091e0f39adacdc4a2c2b7653d9d9fbe3c3e70509b5"
+    },
+    "ios-linux-on-44x34-remote-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-on-44x34-remote-copilot.png",
+      "bytes": 232258,
+      "sha256": "082078b51cc53391d7c06948936bbfb14436772b0929b45df66a608a62e66bb9"
+    },
+    "ios-linux-on-44x34-local-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-on-44x34-local-copilot.png",
+      "bytes": 42033,
+      "sha256": "bdfc0b9cf1aedb7d91df9fe3add2787ff44ec873e0c2946dddf984bc546acf28"
+    },
+    "ios-linux-on-53x42-remote-query.json": {
+      "path": "ios-client-linux-native/ios-linux-on-53x42-remote-query.json",
+      "bytes": 1374,
+      "sha256": "8d9f92c21c90d70bce67b9295486b3bb0cb04a3fcc5f07424b488a902c203ef8"
+    },
+    "ios-linux-on-53x42-local-query.json": {
+      "path": "ios-client-linux-native/ios-linux-on-53x42-local-query.json",
+      "bytes": 1388,
+      "sha256": "ff11c465ca9a922720fbb178476cb5bec57310047551dc4b62c49ae604a02700"
+    },
+    "ios-linux-on-53x42-remote-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-on-53x42-remote-copilot.png",
+      "bytes": 211475,
+      "sha256": "8faea510bd47700d81a3bcce003027c60fa16e481fde9f1f2cf8ec6f3859012b"
+    },
+    "ios-linux-on-53x42-local-copilot.png": {
+      "path": "ios-client-linux-native/ios-linux-on-53x42-local-copilot.png",
+      "bytes": 45627,
+      "sha256": "5d6db269bfb31fa2e42839217e585040320593d51fd00fb18095bcb35b3b7017"
+    }
+  },
+  "limits": [
+    "First observations on Enable confirmations transitional. First mobile raw observer expected a Windows result field; corrected a bounded read-only check without replay.",
+    "Visible echo draft had one wrong uncommitted key, corrected with actual Backspace and intended key before Return.",
+    "Old local seed hash and display-restore run identity caused guard-only refusals. Corrected exact controller pins under the existing clock without repeating the GUI launch or display-mode application.",
+    "Actual app-owned software keyboard touch and System XCTest qualify. OS software keyboard visibility remains unqualified.",
+    "ActualLC_ALL remoteunset/localen_US.UTF-8 retained; default14 local versus iOSLarge14/Normal11.5; different physicalscale/raster/chrome, no pixelidentity or normalization.",
+    "ON93 Create/foreground/rawCLI and OFF95 savedreopen/echo are explicitly separate phases. Prior SDKON89 is independently attributed, not a fresh/current uniform service snapshot.",
+    "Mixed pinned26/24 producers are not relabeled as the public27 release or production/TestFlight upgrade; Mac CWD-label/MCP visual text variance remains open."
+  ],
+  "root_acceptance_sha256": "85c2c315282039dcbc5f09e05c0230d1aeac00b74171f5f0ffe46b65ef787e62",
+  "final_candidate_sha256": "e5bba5332399e1db63863cf5339e344337730d30fa1954657cae73686ed8c720",
+  "matrix_status_after_functional_acceptance": {
+    "accepted": 22,
+    "desktop_accepted": 12,
+    "mobile_accepted": 10,
+    "Android_accepted": 6,
+    "iOS_accepted": 4,
+    "partial": 0,
+    "unstarted": 2,
+    "remaining_iOS": [
+      "MacON",
+      "MacOFF"
+    ]
+  }
+}

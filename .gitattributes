@@ -80,3 +80,6 @@ validation/dev-tunnels/ios-client-linux-native/*-query.json -text whitespace=-bl
 
 # Original iOS/Windows query reports retain captured bytes.
 validation/dev-tunnels/ios-client-windows-native/*-query.json -text whitespace=-blank-at-eof
+
+# Original iOS/macOS query reports retain captured bytes.
+validation/dev-tunnels/ios-client-mac-native/*-query.json -text whitespace=-blank-at-eof

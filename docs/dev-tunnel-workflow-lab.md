@@ -9,12 +9,12 @@ OwnerBinding JSON or a per-device approval on the server for this normal path.
 Host setup still requires explicit protected access consent; legacy installations
 retain OwnerOnly until reviewed migration while disabled.
 
-**Current coverage:** twenty-one pinned functional cases are accepted (desktop
-12/12, mobile 9/12), one is partial and two are unstarted. The first mobile pair is
+**Current coverage:** all twenty-four pinned functional cases are accepted
+(desktop 12/12, Android 6/6, iOS 6/6), with no partial or unstarted cases. The first mobile pair is
 Android→Linux [creation OFF](../validation/dev-tunnels/android-client-linux-native-off.json)
 and [creation ON](../validation/dev-tunnels/android-client-linux-native-on.json).
-Three iOS cases, the full 24-case native matrix and combined-current-release
-qualification remain incomplete. The
+The pinned functional matrix is complete; identical overall visuals and
+qualification of one current combined release remain separate. The
 service-client runner below uses the
 ordinary client facade with **fes-festerm1**. Its schema-2
 fixture rejects the old manual-pairing fixture and uses a distinct completion
@@ -102,8 +102,9 @@ release. Historical local references and supporting SDK routes stay attributed.
 | Android → Linux | [Accepted](../validation/dev-tunnels/android-client-linux-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-linux-native-on.json) |
 | Android → Windows | [Accepted, attributed composite](../validation/dev-tunnels/android-client-windows-native-off.json) | [Accepted](../validation/dev-tunnels/android-client-windows-native-on.json) |
 | Android → macOS | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-off.json) | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-on.json) |
-| iOS → Linux | [Functional, attributed composite](../validation/dev-tunnels/ios-client-linux-native-off.json) | Partial |
+| iOS → Linux | [Functional, attributed composite](../validation/dev-tunnels/ios-client-linux-native-off.json) | [Functional, explicit ON/OFF composition](../validation/dev-tunnels/ios-client-linux-native-on.json) |
 | iOS → Windows | [Functional, attributed composite](../validation/dev-tunnels/ios-client-windows-native-off.json) | [Functional, mixed cohorts](../validation/dev-tunnels/ios-client-windows-native-on.json) |
+| iOS → macOS | [Functional; current pairs agree](../validation/dev-tunnels/ios-client-mac-native-off.json) | [Functional; ON navigation variance retained](../validation/dev-tunnels/ios-client-mac-native-on.json) |
 
 The first two iOS functional records are [Linux OFF](../validation/dev-tunnels/ios-client-linux-native-off.json)
 and [Windows ON](../validation/dev-tunnels/ios-client-windows-native-on.json). They
@@ -121,8 +122,37 @@ adds current80 existing generic-shell I/O/reopen and two fresh references,
 composing separately accepted Windows72 SDK policy negatives. Original ON82,
 all33 actors/catalog/29 operations and preferences were preserved/restored.
 Its two Windows background captures remain private with hashes/provenance;
-two original iOS screenshots/four raw reports are public. Three iOS cases
-remain: Linux ON, Mac ON and Mac OFF.
+two original iOS screenshots and four raw reports are public.
+
+The [Linux ON case 22](../validation/dev-tunnels/ios-client-linux-native-on.json)
+adds one creation, System and app-key input, foreground reopening and two
+query/CLI pairs under creation-ON epoch 93. Saved AttachOnly reopening occurred
+in a separate phase after restoring creation-OFF epoch 95. SDK epoch 89 policy
+proof remains separately attributed. The local font was at its default 14 points;
+iOS used 14 or 11.5 points. The actual LC_ALL difference is retained. All 26 actors,
+catalog a62d, 50 operations, the detached writer 7 of the new 7ec session,
+original settings/display and normal cleanup checks were preserved.
+
+The [Mac ON case 23](../validation/dev-tunnels/ios-client-mac-native-on.json)
+adds one persistent login-shell creation at HOME, System and app-key input,
+foreground reopening and a new saved AttachOnly profile. Both raw pairs agree
+except for case labels and elapsed time, including PENDIN changes and descriptor
+restoration. With the local font at its default 14 points, the full CWD suffix,
+MCP wording and body wrapping agree with the corresponding ON iOS frames. Tall local
+navigation shows Pull requests; remote navigation shows Issues plus an arrow.
+That navigation variance remains open. The historical Android 11-point text
+differences remain unexplained; this case does not establish identical overall
+visuals, pixel identity or a fix based on unsetting environment variables.
+The [Mac OFF case 24](../validation/dev-tunnels/ios-client-mac-native-off.json)
+completes the functional matrix using the existing saved target under OFF49,
+with actual input, foreground reopening and two fresh query/CLI pairs. Current
+OFF body text, CWD, MCP wording, navigation, wrapping and palette agree at both grids. Older ON
+navigation and Android text differences remain unexplained. Supporting OFF45
+SDK proof is separately attributed and was not replayed. Original ON51 and
+all 18 actors, catalog prefix `7ec3`, 27 operations, metadata and cleanup were verified at
+the closed case boundary. A later TestFlight build-memory booking is separate.
+The tall carrier exit 1 and post-owner observer TypeError remain recorded
+infrastructure limits alongside independent positive restoration checks.
 
 The Android pair uses APK `150c8371` (runtime 0.17.24), genuine Linux GUI/HOST
 0.17.24 (`697daa9a`), SDK `ab2904e8` and Copilot 1.0.112. Both actual 54×24 and
@@ -167,7 +197,8 @@ original ON47, actors/catalog and display mode are restored with normal drains.
 Android APK9796/sourceef0613d and genuine Mac HOST/localGUI26/edaceef4 remain
 attributed separately from the cached supporting SDK.
 
-Exact Copilot body text remains an open visual gate: the local CWD label omits
+For this historical Android 11-point pair, exact Copilot body text remains an
+open visual gate: the local CWD label omits
 `r22` and MCP wording differs, despite equal actual CWD, six environment fields,
 ten query replies and nonexported COLUMNS/LINES. The differences persist in
 OFF no-input captures five seconds later. Local11pt/1×/CUP and Android
