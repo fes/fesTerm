@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "72321ffa4730984a69c7a58ee63a23c8a42dc538ae5a59cd1aad0660e02ada07"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "515a0694ff6eaa47cea40ffb995ec15b15ee3f540e343f142abf524521eb2211"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

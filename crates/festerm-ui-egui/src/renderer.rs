@@ -279,7 +279,10 @@ impl GlyphCache {
         }
 
         let mut job = LayoutJob::default();
-        job.wrap.max_width = layout_width;
+        // The terminal grid already owns wrapping. Font advances can slightly
+        // exceed the cell run, so wrapping here would hide a second galley row
+        // behind the unchanged one-row terminal clip.
+        job.wrap.max_width = f32::INFINITY;
         job.break_on_newline = false;
         job.append(
             text,
@@ -2415,6 +2418,149 @@ mod tests {
                 )
                 .textures_delta
                 .clear();
+        }
+    }
+
+    #[test]
+    fn terminal_runs_keep_suffix_pixels_on_one_row() {
+        for (prefix, suffix, rgb) in [
+            (
+                "~/.ft-copilot-reference-native19-",
+                "r22",
+                Some("145;152;161"),
+            ),
+            (
+                "MCP Servers reloaded: 0 servers ",
+                "connected",
+                Some("205;210;215"),
+            ),
+            ("MCP Servers reloaded: 0 servers ", "connected", None),
+        ] {
+            for (rendition, visible) in [("", true), ("\x1b[2m", true), ("\x1b[8m", false)] {
+                let style = rgb.map_or_else(
+                    || rendition.to_owned(),
+                    |rgb| format!("\x1b[38;2;{rgb}m{rendition}"),
+                );
+                let mut final_images = Vec::new();
+                for sizes in [&[11.0][..], &[14.0, 13.0, 12.0, 11.0][..]] {
+                    let context = egui::Context::default();
+                    context.set_pixels_per_point(1.0);
+                    crate::install_terminal_fonts(&context);
+                    let mut terminal = terminal(54, 24);
+                    terminal.ingest(b"\x1b[?25l");
+                    let mut cache = TerminalRenderCache::default();
+                    let mut glyphs = GlyphCache::default();
+                    let mut renderer = egui_kittest::wgpu::WgpuTestRenderer::new();
+                    let mut fonts = FontSettings::default();
+                    let selection = Selection::default();
+                    let mut render = |terminal: &mut Terminal, fonts: &FontSettings| {
+                        let dirty = terminal.take_dirty_rows();
+                        cache.update(TerminalSnapshot::from_terminal(terminal), &dirty);
+                        let mut metrics = None;
+                        let mut output = context.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(Rect::from_min_size(
+                                    Pos2::ZERO,
+                                    Vec2::new(620.0, 560.0),
+                                )),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                let painter = ui.painter().clone();
+                                let glyph = painter.layout_no_wrap(
+                                    "M".into(),
+                                    fonts.regular_font_id(),
+                                    DEFAULT_FOREGROUND,
+                                );
+                                let measured =
+                                    CellMetrics::new(glyph.size().x, glyph.size().y).unwrap();
+                                metrics = Some(measured);
+                                let layout = GridLayout {
+                                    rect: Rect::from_min_size(
+                                        Pos2::new(8.0, 8.0),
+                                        Vec2::new(measured.width * 54.0, measured.height * 24.0),
+                                    ),
+                                    dimensions: terminal.dimensions(),
+                                    metrics: measured,
+                                };
+                                paint_grid(
+                                    painter.with_clip_rect(layout.rect),
+                                    GridPaint {
+                                        cache: &cache,
+                                        snapshot: TerminalSnapshot::from_terminal(terminal),
+                                        layout,
+                                        selection: &selection,
+                                        fonts,
+                                        color_scheme: None,
+                                        focused: false,
+                                        suppress_cursor: true,
+                                        full_redraw: false,
+                                        shape_cell_runs: true,
+                                    },
+                                    &mut glyphs,
+                                );
+                            },
+                        );
+                        renderer.handle_delta(&mut output.textures_delta);
+                        let pixels = renderer
+                            .render(&context, &output)
+                            .expect("existing renderer pixels");
+                        (pixels, metrics.unwrap())
+                    };
+                    for &size in sizes {
+                        fonts.size_points = size;
+                        let _ = render(&mut terminal, &fonts);
+                    }
+                    let row = if rgb.is_some() {
+                        format!("\x1b[H{style}{prefix}{suffix}\x1b[0m")
+                    } else {
+                        format!("\x1b[H{prefix}{style}{suffix}\x1b[0m")
+                    };
+                    terminal.ingest(row.as_bytes());
+                    assert!(terminal
+                        .row_text(0)
+                        .unwrap()
+                        .contains(&format!("{prefix}{suffix}")));
+                    let (full, metrics) = render(&mut terminal, &fonts);
+                    // Same public prefix/background, but no suffix: compare actual pixels,
+                    // rather than accepting a galley whose text was never painted.
+                    terminal.ingest(b"\x1b[H\x1b[2K");
+                    let prefix_only = if rgb.is_some() {
+                        format!("{style}{prefix}")
+                    } else {
+                        prefix.to_owned()
+                    };
+                    terminal.ingest(prefix_only.as_bytes());
+                    let (without_suffix, _) = render(&mut terminal, &fonts);
+                    let x0 = (8.0 + prefix.len() as f32 * metrics.width).ceil() as u32;
+                    let x1 =
+                        (8.0 + (prefix.len() + suffix.len()) as f32 * metrics.width).floor() as u32;
+                    let y1 = (8.0 + metrics.height).ceil() as u32;
+                    let mut changed = 0;
+                    for y in 8..y1 {
+                        for x in x0..x1 {
+                            changed +=
+                                usize::from(full.get_pixel(x, y) != without_suffix.get_pixel(x, y));
+                        }
+                    }
+                    if visible {
+                        assert!(
+                            changed > 5,
+                            "visible suffix must paint actual pixels: {style:?}, {sizes:?}"
+                        );
+                    } else {
+                        assert_eq!(
+                            changed, 0,
+                            "concealed suffix retains text without painting it"
+                        );
+                    }
+                    final_images.push(full);
+                }
+                assert!(
+                    final_images[0] == final_images[1],
+                    "cold11 and warmed14-to11 pixels: {style:?}"
+                );
+            }
         }
     }
 

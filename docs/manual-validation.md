@@ -3891,6 +3891,18 @@ Also verify that ordinary reattach never displaces a concurrent client, that
 explicit takeover defaults to Cancel, and that stale generations and changed
 hosted profiles/consent are refused before a client is disconnected.
 
+### Small-font truecolor terminal runs
+
+A controlled signed GUI26 local capture at 54×24, 11 pt and 1× retained the full
+public MCP/CWD suffixes while the corresponding pixels were absent. Private
+recording replay found normal attributes and distinct foreground/background
+colors. A public ASCII+SGR fixture reproduced a second shaped galley row,
+clipped by the terminal's existing single-row boundary. The source correction
+keeps wrapping in the terminal grid and preserves its native cell clip.
+Automated pixel checks cover both known RGB rows, normal/faint/concealed text,
+cold 11 pt and a 14→13→12→11 transition. Corrected native GUI rendering remains
+unqualified; historical mixed-cohort visual evidence is not relabeled fixed.
+
 ### Rendering performance
 
 `TERM-01` presentation-cache allocation/lifecycle coverage is automated:

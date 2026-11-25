@@ -3701,7 +3701,8 @@
         "osc8_rejects_malformed_spoofable_and_non_web_targets",
         "unterminated_osc8_links_end_at_security_boundaries",
         "external_link_policy_accepts_only_normalized_http_and_https_urls",
-        "a_reporting_application_is_scrolled_by_rows_and_obeys_the_speed_preference"
+        "a_reporting_application_is_scrolled_by_rows_and_obeys_the_speed_preference",
+        "terminal_runs_keep_suffix_pixels_on_one_row"
       ],
       "manual_scenarios": [
         "TI-01",
@@ -5253,7 +5254,8 @@
         "repeated_emoji_frame_rasterizes_once_then_uses_only_cache_hits",
         "diagnostics_summary_reports_content_free_emoji_cache_work",
         "failed_color_emoji_rasterization_is_negative_cached",
-        "failed_emoji_rasterization_attempts_once_then_uses_negative_cache"
+        "failed_emoji_rasterization_attempts_once_then_uses_negative_cache",
+        "terminal_runs_keep_suffix_pixels_on_one_row"
       ],
       "manual_scenarios": [
         "NP-05"
