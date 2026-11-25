@@ -2750,7 +2750,9 @@ unavailable ring/daemon attribution explicit. **Copy startup diagnostics** copie
 only this retained typed snapshot through the central tab-bound command, separate
 from **Copy redacted routing report**. Missing or replaced snapshots produce no
 clipboard write; generic startup errors and input recordings are never included.
-No startup retry is implied.
+Gaining keyboard focus on **Copy startup diagnostics** scrolls it into view
+once within the Inspector body, including short windows; subsequent pointer
+scrolling remains free. No startup retry is implied.
 
 Only applicable sections appear. A normal SSH inspector may show destination,
 username, connected state, reliably known remote platform, actual grid, full

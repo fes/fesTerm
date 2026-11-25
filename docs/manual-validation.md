@@ -6533,7 +6533,11 @@ Inspector retention remain unqualified. Use **Copy startup
 diagnostics** to copy only that typed snapshot; it is separate from **Copy redacted
 routing report**. Confirm no generic error, path, command, stderr or recording
 content is copied, and the control disappears without typed evidence. Rendered
-route/clipboard and absent/sibling/replacement fixtures are automated. Native
+route/clipboard and absent/sibling/replacement fixtures are automated. Ordinary
+Tab navigation at 375×378 now has an automated typed-failure regression that
+requires the focused Copy control to be visible before Enter dispatches its
+existing action, then lets an ordinary wheel scroll away while focus remains.
+Native keyboard-scroll behavior remains part of TI-06. Native
 clipboard delivery outside the two pinned cohorts remains pending. There is no
 automatic retry/restart or remote
 HOST diagnostic delivery. Portable tests cover privacy,
