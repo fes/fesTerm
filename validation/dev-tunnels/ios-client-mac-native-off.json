@@ -166,7 +166,7 @@
   ],
   "visual_observations": {
     "current_OFF": "At both grids the body, full CWD, MCP wording, navigation, wrapping and palette agree; both tall images show Pull requests. Physical scale/chrome/rasterization differ.",
-    "historical_ON23": "The earlier ON tall remote frame omitted Pull requests; that navigation variance remains unexplained and is not relabeled fixed.",
+    "historical_ON23": "Additive review correction: the exact earlier ON tall remote and local originals both show Pull requests and an arrow. The earlier omission description was mistaken, not a product fix. Original private receipts remain unchanged.",
     "historical_Android11pt": "Earlier CWD-label/MCP differences remain historical with unknown cause. Current matching OFF frames do not establish a product fix or identical overall TUI output."
   },
   "assets": {

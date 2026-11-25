@@ -1175,8 +1175,8 @@ boundary remains unproved. No final-release status is inferred. The matrix now
 has all twenty-four pinned functional cases accepted (desktop 12/12, Android6/6,
 iOS6/6), with no partial or unstarted cases after the separately attributed
 Android and iOS records below. Historical
-Android 11-point text variance and historical iOS ON tall-navigation variance remain
-open; these counts do not establish identical overall TUI output. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+Android 11-point text variance remains open. The earlier iOS ON tall-navigation
+description was corrected by reviewing its exact originals; these counts do not establish identical overall TUI output. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -7205,7 +7205,8 @@ config/vault/credential-reference/private SDK logs are published.
 Current totals are 24/24 pinned functional cases (desktop 12/12, Android6/6,
 iOS6/6), with no partial or unstarted cases. All six Android and six iOS cases
 are accepted on their attributed producers. Historical Android text variance
-and ON navigation variance remain unexplained; the current OFF pairs agree.
+remains unexplained; current iOS ON and OFF pairs agree after correcting the
+earlier ON navigation description from its exact originals.
 
 
 ### iOS→Linux OFF pinned functional case19
@@ -7351,7 +7352,7 @@ identical overall TUI output, one combined-release qualification or additional
 native keyboard coverage.
 
 
-### iOS→Mac ON pinned functional case 23; navigation variance open
+### iOS→Mac ON pinned functional case 23; original-image review correction
 
 DT-02 / MOB-06 / HOST-02: the [case 23 record](../validation/dev-tunnels/ios-client-mac-native-on.json)
 adds one persistent creation under ON47: session `5e40`, generation
@@ -7368,10 +7369,10 @@ upgrade and TestFlight qualification are not part of this case.
 
 Four public original screenshots and four raw reports show that the current
 local default 14-point CWD label, including suffix `r22`, MCP wording, body wrapping
-and palette agree with the corresponding iOS frames at both grids. Tall local
-top navigation shows Pull requests; remote navigation shows Issues plus an arrow.
-That variance remains open. Identical navigation, pixel identity and identical
-overall TUI output are not claimed. Historical Android 11-point CWD/MCP differences
+and palette agree with the corresponding iOS frames at both grids. Later review
+of the exact tall originals confirms that both show Pull requests and an arrow;
+the earlier omission description was mistaken. This is an evidence-description
+correction without a new native run, not a product fix or a pixel-identity claim. Historical Android 11-point CWD/MCP differences
 remain unexplained and are not relabeled fixed. Both isolated local GUIs initially
 launched sh as a login shell, then explicitly used exec to replace it with a zsh
 login shell in the same owned PTY. No environment-unset normalization or alternate
@@ -7405,8 +7406,8 @@ ten singleton observations, 202 bytes, DSR1,1, six actual environment values,
 PENDIN and terminal/descriptor restoration. Four original screenshots and four
 raw reports are public. Current OFF body text, full CWD, MCP wording, navigation,
 wrapping and palette agree at both grids; both tall images include Pull requests.
-Older ON navigation and Android 11-point text differences remain unexplained,
-not relabeled fixed. No pixel identity or identical overall TUI output is claimed.
+The older ON navigation description was corrected by reviewing its exact originals.
+Android 11-point text differences remain unexplained and are not relabeled fixed. No pixel identity or identical overall TUI output is claimed.
 The local OFF PNGs are byte-identical to the corresponding ON local PNGs, with
 separate fresh OFF source captures, CLI identities, raw reports and phase proofs
 retained. No crop, reconstruction or private production/control capture is used.

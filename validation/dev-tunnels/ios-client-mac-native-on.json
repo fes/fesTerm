@@ -1,6 +1,6 @@
 {
   "record_version": 1,
-  "status": "accepted pinned functional iOS-to-Mac creation-ON case23; navigation variance open",
+  "status": "accepted pinned functional iOS-to-Mac creation-ON case23; reviewed navigation agrees",
   "case_number": 23,
   "direction": {
     "client": "iOS Simulator",
@@ -137,7 +137,7 @@
   ],
   "visual_observations": {
     "current_body": "At default14 local in both grids, full controlledCWD suffixr22, MCP wording/bodywrap/palette/footer agree with corresponding remote images.",
-    "open_tall_navigation": "Local53x42 shows Pull requests navigation; corresponding remote shows Issues plus an arrow. Identical navigation/globalvisualcompletion/pixelidentity not claimed.",
+    "reviewed_tall_navigation": "Additive review correction: both exact original 53x42 frames show Pull requests followed by an arrow. The earlier omission description was mistaken. Body, CWD, MCP wording and navigation agree on this pair; pixel identity and a global visual claim are not established.",
     "historical_Android11pt": "Earlier CWD-label/MCP differences remain historical with unknown cause; not relabeled fixed by current iOS/default14 comparisons."
   },
   "assets": {

@@ -151,13 +151,15 @@ restored creation-OFF epoch 95 and separately attributed SDK epoch 89 policy pro
 The [iOS→Mac creation-ON record](validation/dev-tunnels/ios-client-mac-native-on.json)
 adds one persistent login-shell creation at HOME, saved AttachOnly reopening and
 two fresh comparisons. With the local font at its default 14 points, current
-body text, the CWD label and MCP wording agree. Tall top navigation still differs;
-the earlier Android 11-point text differences remain unexplained.
+body text, the CWD label, MCP wording and tall navigation agree. A later review
+of the exact original images corrected the earlier navigation description;
+the Android 11-point text differences remain unexplained.
 The [iOS→Mac creation-OFF record](validation/dev-tunnels/ios-client-mac-native-off.json)
 completes the pinned functional matrix: all twenty-four cases are accepted
 (desktop 12/12, Android 6/6, iOS 6/6), with no partial or unstarted cases.
 Both current OFF references agree on body text, CWD, MCP wording and navigation.
-Earlier ON navigation and Android 11-point text differences remain unexplained.
+The earlier ON navigation description was corrected by reviewing its exact
+original images. Android 11-point text differences remain unexplained.
 This is acceptance of attributed native cohorts, not pixel identity or
 qualification of one current combined release. A separate
 [iOS/Windows 44×34 record](validation/dev-tunnels/ios-client-windows-44x34/record.json)
