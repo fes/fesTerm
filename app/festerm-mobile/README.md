@@ -348,6 +348,15 @@ This slice has no durable mobile recovery ledger, crash-resume, recursive local
 upload, rename, chmod or links. Native iOS/Android
 Files qualification remains pending; source tests do not establish device use.
 
+Files forms reuse the native-keyboard safe viewport: New Folder input and
+Create/Cancel stay visible while typing, without shrinking idle Files for a
+retained terminal keyboard. Sheets keep the pre-pane visible bounds. The narrow
+profile selector says **Files**; full saved-profile names remain unchanged.
+Files headers use the typed name or chosen host, Save/Edit keeps the standard
+body inset, and unknown file sizes do not become a false zero-byte total.
+These corrections have rendered source tests; the corrected native build still
+requires device qualification.
+
 ### Saved Files destinations and reviewed deletion
 
 **Dev Tunnels Files** is a separate saved-profile kind. Save from the current

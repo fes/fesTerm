@@ -1228,6 +1228,18 @@ mod tests {
             session.notice.as_deref(),
             Some("Upload is unavailable in this read-only Files view")
         );
+        session
+            .remote
+            .as_mut()
+            .unwrap()
+            .listing
+            .as_mut()
+            .unwrap()
+            .entries
+            .iter_mut()
+            .find(|entry| entry.name == "README.md")
+            .unwrap()
+            .size = None;
         let mut harness = Harness::builder()
             .with_size(egui::vec2(390.0, 844.0))
             .build_ui_state(
@@ -1237,6 +1249,28 @@ mod tests {
                 session,
             );
         harness.run();
+        harness.get_by_label("3 items · 1 selected");
+        assert!(
+            harness
+                .query_by_label("3 items · 1 selected · 0 B")
+                .is_none(),
+            "an unreported HOST listing size is not a zero-byte file"
+        );
+        harness
+            .state_mut()
+            .remote
+            .as_mut()
+            .unwrap()
+            .listing
+            .as_mut()
+            .unwrap()
+            .entries
+            .iter_mut()
+            .find(|entry| entry.name == "README.md")
+            .unwrap()
+            .size = Some(0);
+        harness.run();
+        harness.get_by_label("3 items · 1 selected · 0 B");
         harness.get(
             By::new()
                 .label("Upload 1")

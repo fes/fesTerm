@@ -3180,10 +3180,19 @@ impl MobileApp {
                     .into(),
                 label: self
                     .hosts
-                    .selected
-                    .as_ref()
-                    .map(|r| r.name.clone())
-                    .unwrap_or_else(|| "Host files".into()),
+                    .files_profile_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        self.hosts
+                            .hosts
+                            .iter()
+                            .find(|host| host.locator == self.hosts.locator)
+                            .map(|host| view::host_display_name(host).to_owned())
+                            .unwrap_or_else(|| self.hosts.locator.clone())
+                    }),
             };
             return self.open_host_files_target(target, ctx);
         }
