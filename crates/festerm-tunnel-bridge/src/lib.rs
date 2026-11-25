@@ -98,3 +98,7 @@ mod tests {
         assert_eq!(values.len(), count);
     }
 }
+
+/// Optional shared adapter to the neutral SSH-owned transfer queue.
+#[cfg(feature = "files-transfer")]
+pub mod files_endpoint;

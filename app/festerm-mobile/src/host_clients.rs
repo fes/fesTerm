@@ -1921,11 +1921,11 @@ impl MobileApp {
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 let index = OrdinaryKeyIndex::in_app_sandbox(&root)
                     .map_err(|_| "Protected sign-in storage is unavailable")?;
-                let files = runtime
+                let mut files = runtime
                     .block_on(host_client::ordinary::open_files(
                         &identity,
                         &locator,
-                        index,
+                        index.clone(),
                         &budgets,
                         guard.clone(),
                         cancel,
@@ -1937,13 +1937,40 @@ impl MobileApp {
                     return Err("The selected host changed. Choose it again.".into());
                 }
                 guard.check().map_err(|_| "Connection cancelled")?;
-                Ok(files)
+                let transfer = if files.client().capabilities().write {
+                    let scope = files.scope().clone();
+                    let mut transfer = runtime
+                        .block_on(host_client::ordinary::open_files(
+                            &identity,
+                            &locator,
+                            index,
+                            &budgets,
+                            guard.clone(),
+                            cancel,
+                            Some(&scope),
+                        ))
+                        .map_err(|_| "Could not open the Files transfer channel")?
+                        .ok_or("Files are disabled on this host")?;
+                    if !transfer.client().capabilities().write
+                        || !same_files_host(&expected, transfer.host_info())
+                    {
+                        return Err(
+                            "Files permissions or host identity changed. Reconnect explicitly."
+                                .into(),
+                        );
+                    }
+                    Some(transfer)
+                } else {
+                    None
+                };
+                guard.check().map_err(|_| "Connection cancelled")?;
+                Ok((files, transfer))
             },
         );
         self.close_files();
         self.files = Some(Box::new(super::files::FilesSession::connecting(
             target.label.clone(),
-            "Dev Tunnels Files · Read-only".into(),
+            "Dev Tunnels Files".into(),
             Box::new(connector),
         )));
         self.files_ctx.host = Some(target);

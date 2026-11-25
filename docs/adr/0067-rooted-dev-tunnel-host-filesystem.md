@@ -467,3 +467,54 @@ scope/deadline, content-free canary mismatch and first-failure/count fencing
 tests. Native held-stream proof
 is pending. Supported Disable also stops transport, so this does not isolate
 hot-policy revocation, infer a remote error cause or resolve unknown publication.
+
+### Mobile upload and directory creation: shared client adapter
+
+The optional `festerm-tunnel-bridge/files-transfer` feature composes the existing
+Files protocol client with `festerm-ssh`'s neutral transfer queue. The dependency
+points from bridge to SSH, never SSH to bridge. It selects the existing ordinary
+`host-routing` client boundary and does not enable the host `relay` feature. The previously desktop-local `FilesEndpoint`, finite failure
+observation, reviewed-delete support and their existing protocol tests move
+intact to this client module. Desktop account preparation, connection admission,
+GUI state, recovery presentation and tab lifetimes remain desktop-owned. Moving
+existing Delete internals does not expose mobile Delete controls or new grants.
+
+Mobile obtains a second Files stream against the same authenticated scope only
+when the fresh host advertises write permission. That stream uses the existing
+queue's bounded planning, progress, Skip/Keep Both/reviewed Replace and atomic
+publication semantics. It does not introduce a mobile publication or conflict
+engine. Read-only downloads retain their existing guarded new-file staging.
+
+A single Documents root is opened no-follow from the supplied startup path
+before LocalFs canonicalization, normalizing only Apple's documented /var
+prefix. Its retained identity fences listing/stat, upload admission, mkdir,
+download staging and preview admission. A changed root retires the Files view.
+Ordinary Files never runs the legacy recursive preview-cache cleanup: each
+session creates an exclusive private preview namespace and retains those copies,
+without adopting an existing cache. Local previews open a retained regular
+no-follow leaf and cap the actual read, rather than trusting a size-only stat.
+Root/path checks are negative fences, not atomic same-user race immunity.
+Existing SSH preview preparation/read/cleanup semantics remain unchanged.
+
+An optional caller-admitted local-source interface fences mobile Documents
+uploads. Admission retains no-follow root, parent and regular-file handles,
+source identity, size, change stamps and security metadata. The queue's strict
+constructor has no pathname-open fallback. Reads recheck the selected path,
+retained objects and current account/privacy authority before and after each
+chunk. The original ordinary SFTP constructor keeps its existing behavior.
+These checks are negative fences, not atomic immunity to hostile same-user/root
+mutation. Sources are bounded to admitted regular files; recursive local upload
+and durable mobile recovery are not claimed by this slice.
+
+New folder controls validate one bounded name and target path. Remote creation
+requires the current write capability and ordinary Files authority. Local
+creation uses a retained no-follow trusted Documents parent and exclusive
+private creation. No permission repair, remote rename/chmod/link, saved Files
+profile or mobile Delete workflow is added. Unobserved publication remains
+uncertain and is never replayed automatically.
+
+Validation impact: GUI:MOB-11, GUI:MOB-12, GUI:DTFILES-02, ADR-0067. Preserve the
+existing relocated endpoint/publication/Delete tests; add actual held-source
+replacement and account-cutover tests, real framed queue/conflict tests and
+rendered capability/directory-action tests. Device-native upload, mkdir,
+conflicts, lifecycle retirement and uncertainty remain separate pending gates.

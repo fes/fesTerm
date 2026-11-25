@@ -54,6 +54,8 @@ pub(crate) struct FileFacts {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConflictView {
     pub direction: Direction,
+    pub allowed: Vec<ConflictPolicy>,
+    pub can_remember: bool,
     pub iphone: FileFacts,
     pub remote: FileFacts,
     pub suggested_name: String,
@@ -89,6 +91,17 @@ impl TransferRow {
 
 /// The transfer engine behind the Files screen.
 pub(crate) trait Transfers: Send + Sync {
+    /// Ordinary Files keeps private preview copies; SSH retains its historical
+    /// preparation, read and cleanup path through these default hooks.
+    fn retains_preview_copies(&self) -> bool {
+        false
+    }
+    fn prepare_preview_cache(&self) -> Option<Result<String, SftpError>> {
+        None
+    }
+    fn read_local_markdown(&self, _: &str, _: usize) -> Option<Result<String, String>> {
+        None
+    }
     fn connection_error(&self) -> Option<String> {
         None
     }
@@ -142,6 +155,16 @@ impl Transfers for ManagerTransfers {
                         };
                         conflict = Some(ConflictView {
                             direction: info.direction,
+                            allowed: if found.existing_is_directory {
+                                vec![ConflictPolicy::KeepBoth, ConflictPolicy::Skip]
+                            } else {
+                                vec![
+                                    ConflictPolicy::KeepBoth,
+                                    ConflictPolicy::Skip,
+                                    ConflictPolicy::Replace,
+                                ]
+                            },
+                            can_remember: true,
                             iphone: facts_of(iphone),
                             remote: facts_of(remote),
                             suggested_name: found.suggested_name.clone(),
@@ -481,8 +504,22 @@ pub(crate) enum FilesEvent {
     },
 }
 
+pub(crate) struct FolderDraft {
+    pub remote: bool,
+    pub path: String,
+    pub name: String,
+    pub error: Option<String>,
+    pending: Option<mpsc::Receiver<Result<(), SftpError>>>,
+}
+impl FolderDraft {
+    pub(crate) fn busy(&self) -> bool {
+        self.pending.is_some()
+    }
+}
+
 pub(crate) struct FilesSession {
     pub(crate) remote_write: bool,
+    pub(crate) folder: Option<FolderDraft>,
     pub(crate) title: String,
     /// Protocol and target, e.g. `SFTP · dev@example.net`.
     pub(crate) subtitle: String,
@@ -498,7 +535,7 @@ pub(crate) struct FilesSession {
     connector: Option<Box<dyn Connector>>,
     local_root: Option<PathBuf>,
     finished_seen: HashSet<u64>,
-    opening: Option<(u64, String, String)>,
+    opening: Option<(u64, String, String, String)>,
     cache_counter: u32,
 }
 
@@ -513,6 +550,7 @@ impl FilesSession {
             subtitle,
             link: Link::Connecting("Connecting".to_owned()),
             remote_write: false,
+            folder: None,
             remote: None,
             local: None,
             transfers: None,
@@ -642,7 +680,111 @@ impl FilesSession {
                 self.notice = None;
             }
         }
+        if self.is_ready() {
+            self.poll_folder(ctx);
+        } else {
+            self.folder = None;
+        }
         events
+    }
+
+    pub(crate) fn new_folder(&mut self, remote: bool) {
+        if !self.is_ready() || (remote && !self.remote_write) {
+            return;
+        }
+        let pane = if remote {
+            self.remote.as_ref()
+        } else {
+            self.local.as_ref()
+        };
+        if let Some(pane) = pane {
+            self.folder = Some(FolderDraft {
+                remote,
+                path: pane.path.clone(),
+                name: String::new(),
+                error: None,
+                pending: None,
+            });
+        }
+    }
+    pub(crate) fn create_folder(&mut self, ctx: &egui::Context) {
+        if !self.is_ready() {
+            self.folder = None;
+            return;
+        }
+        let Some(draft) = &mut self.folder else {
+            return;
+        };
+        if draft.busy() || (draft.remote && !self.remote_write) {
+            return;
+        }
+        if draft.name.len() > 255 || festerm_sftp::path::validate_name(&draft.name).is_err() {
+            draft.error = Some("Enter one folder name without separators".into());
+            return;
+        }
+        let pane = if draft.remote {
+            self.remote.as_ref()
+        } else {
+            self.local.as_ref()
+        };
+        let Some(pane) = pane else {
+            return;
+        };
+        let path = match pane.fs.join(&draft.path, &draft.name) {
+            Ok(path) => path,
+            Err(e) => {
+                draft.error = Some(describe_error(&e));
+                return;
+            }
+        };
+        let fs = pane.fs.clone();
+        let (send, receive) = mpsc::sync_channel(1);
+        let wake = ctx.clone();
+        if std::thread::Builder::new()
+            .name("files-new-folder".into())
+            .spawn(move || {
+                let _ = send.send(fs.mkdir(&path));
+                wake.request_repaint();
+            })
+            .is_err()
+        {
+            draft.error = Some("Could not start folder creation".into());
+            return;
+        }
+        draft.pending = Some(receive);
+        draft.error = None;
+    }
+    fn poll_folder(&mut self, ctx: &egui::Context) {
+        let Some(draft) = &mut self.folder else {
+            return;
+        };
+        let Some(reply) = &draft.pending else {
+            return;
+        };
+        let result = match reply.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err(SftpError::Disconnected("Folder worker closed".into()))
+            }
+        };
+        draft.pending = None;
+        if let Err(e) = result {
+            draft.error = Some(describe_error(&e));
+            return;
+        }
+        let pane = if draft.remote {
+            self.remote.as_mut()
+        } else {
+            self.local.as_mut()
+        };
+        if let Some(pane) = pane.filter(|pane| pane.path == draft.path) {
+            pane.refresh(ctx);
+        }
+        self.folder = None;
     }
 
     fn after_transfers(&mut self, ctx: &egui::Context, events: &mut Vec<FilesEvent>) {
@@ -651,9 +793,9 @@ impl FilesSession {
         for row in &self.rows {
             if row.state.finished() && self.finished_seen.insert(row.id) {
                 refresh |= row.state == RowState::Done;
-                if let Some((id, name, location)) = &self.opening {
+                if let Some((id, name, location, path)) = &self.opening {
                     if *id == row.id {
-                        opened = Some((row.state, name.clone(), location.clone()));
+                        opened = Some((row.state, name.clone(), location.clone(), path.clone()));
                     }
                 }
             }
@@ -671,11 +813,10 @@ impl FilesSession {
                 }
             }
         }
-        if let Some((state, name, location)) = opened {
+        if let Some((state, name, location, path)) = opened {
             self.opening = None;
             self.notice = None;
             if state == RowState::Done {
-                let path = format!("{CACHE_DIR}/{}/{name}", self.cache_counter);
                 match self.read_local(&path) {
                     Ok(text) => events.push(FilesEvent::OpenMarkdown {
                         name,
@@ -691,6 +832,11 @@ impl FilesSession {
     }
 
     fn read_local(&self, relative: &str) -> Result<String, String> {
+        if let Some(result) = self.transfers.as_ref().and_then(|transfers| {
+            transfers.read_local_markdown(relative, MAX_MARKDOWN_BYTES as usize)
+        }) {
+            return result;
+        }
         let root = self.local_root.as_ref().ok_or_else(|| {
             super::platform_text(
                 "This iPhone storage is unavailable",
@@ -728,20 +874,41 @@ impl FilesSession {
         }
         if remote_side {
             let transfers = self.transfers.clone()?;
-            self.cache_counter += 1;
-            let directory = format!("{CACHE_DIR}/{}", self.cache_counter);
+            self.cache_counter = match self.cache_counter.checked_add(1) {
+                Some(next) => next,
+                None => {
+                    self.notice = Some("Reconnect before opening another preview".into());
+                    return None;
+                }
+            };
             let local = self.local.as_ref()?.fs.clone();
-            if local.mkdir(CACHE_DIR).is_err() && local.stat(CACHE_DIR).is_err() {
-                self.notice = Some("Could not prepare storage for the document".to_owned());
-                return None;
-            }
+            let cache = match transfers.prepare_preview_cache() {
+                Some(Ok(path)) => path,
+                Some(Err(_)) => {
+                    self.notice = Some("Could not prepare private preview storage".into());
+                    return None;
+                }
+                None => {
+                    if local.mkdir(CACHE_DIR).is_err() && local.stat(CACHE_DIR).is_err() {
+                        self.notice = Some("Could not prepare storage for the document".to_owned());
+                        return None;
+                    }
+                    CACHE_DIR.to_owned()
+                }
+            };
+            let directory = format!("{cache}/{}", self.cache_counter);
             if local.mkdir(&directory).is_err() {
                 self.notice = Some("Could not prepare storage for the document".to_owned());
                 return None;
             }
             match transfers.enqueue(Direction::Download, &path, &directory) {
                 Ok(id) => {
-                    self.opening = Some((id, entry.name.clone(), path));
+                    self.opening = Some((
+                        id,
+                        entry.name.clone(),
+                        path,
+                        format!("{directory}/{}", entry.name),
+                    ));
                     self.notice = Some(format!("Opening {}…", entry.display_name));
                 }
                 Err(error) => self.notice = Some(error),
@@ -825,8 +992,14 @@ impl FilesSession {
 
     /// Removes opened-document copies; called when the session closes.
     pub(crate) fn cleanup(&mut self) {
-        if let Some(root) = &self.local_root {
-            let _ = std::fs::remove_dir_all(root.join(CACHE_DIR));
+        if self
+            .transfers
+            .as_ref()
+            .is_none_or(|transfers| !transfers.retains_preview_copies())
+        {
+            if let Some(root) = &self.local_root {
+                let _ = std::fs::remove_dir_all(root.join(CACHE_DIR));
+            }
         }
         if let Some(transfers) = &self.transfers {
             for row in &self.rows {
@@ -1041,6 +1214,16 @@ mod tests {
                 .label("Download 1")
                 .predicate(|node| !node.is_disabled()),
         );
+        harness.get(
+            By::new()
+                .label("New remote folder")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("New local folder")
+                .predicate(|node| !node.is_disabled()),
+        );
         harness.state_mut().remote_write = true;
         harness.run();
         harness.get(
@@ -1096,7 +1279,12 @@ mod tests {
             data.local = Arc::new(festerm_sftp::LocalFs::new(root.path()).unwrap());
             let mut session = FilesSession::ready("Files".into(), "Read-only".into(), data, &ctx);
             session.cache_counter = 1;
-            session.opening = Some((id, "README.md".into(), "/README.md".into()));
+            session.opening = Some((
+                id,
+                "README.md".into(),
+                "/README.md".into(),
+                format!("{CACHE_DIR}/1/README.md"),
+            ));
             session
         };
         let mut active = make_session();
@@ -1127,6 +1315,94 @@ mod tests {
             ),
             "explicit local preview is independent of retired remote authority"
         );
+    }
+
+    #[test]
+    fn files_new_folder_uses_bounded_name_and_current_pane_without_remote_write_authority() {
+        let ctx = egui::Context::default();
+        let root = tempfile::tempdir().unwrap();
+        let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+        data.remote_write = false;
+        data.local = Arc::new(festerm_sftp::LocalFs::new(root.path()).unwrap());
+        data.local_root = root.path().to_owned();
+        let mut session = FilesSession::ready("Files".into(), "Read-only".into(), data, &ctx);
+        session.new_folder(true);
+        assert!(
+            session.folder.is_none(),
+            "read-only remote must not admit a mutation draft"
+        );
+        session.new_folder(false);
+        session.folder.as_mut().unwrap().name = "../outside".into();
+        session.create_folder(&ctx);
+        assert!(session.folder.as_ref().unwrap().error.is_some());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        session.folder.as_mut().unwrap().name = "Public folder α".into();
+        session.create_folder(&ctx);
+        for _ in 0..400 {
+            session.poll(&ctx);
+            if session.folder.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(session.folder.is_none());
+        assert!(root.path().join("Public folder α").is_dir());
+        session.new_folder(false);
+        session.folder.as_mut().unwrap().name = "never-created".into();
+        session.link = Link::Failed("Connection closed".into());
+        session.create_folder(&ctx);
+        assert!(session.folder.is_none());
+        assert!(!root.path().join("never-created").exists());
+    }
+
+    #[test]
+    fn files_conflict_projects_only_supported_actions_and_no_cross_batch_remember() {
+        use egui_kittest::{
+            kittest::{By, Queryable},
+            Harness,
+        };
+        let row = crate::files_fixture::transfer_rows(true)
+            .into_iter()
+            .find(|row| row.conflict.is_some())
+            .unwrap();
+        let mut view = row.conflict.unwrap();
+        view.existing_is_directory = false;
+        view.allowed = vec![ConflictPolicy::Skip];
+        view.can_remember = false;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, state: &mut (ConflictView, bool, Option<ConflictPolicy>)| {
+                    if let Some(choice) = crate::files_ui::conflict_sheet_content(
+                        ui,
+                        "public.txt",
+                        "/",
+                        &state.0,
+                        &mut state.1,
+                    ) {
+                        state.2 = Some(choice);
+                    }
+                },
+                (view, true, None),
+            );
+        harness.run();
+        harness.get(
+            By::new()
+                .label("Keep both")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("Replace remote file")
+                .predicate(|node| node.is_disabled()),
+        );
+        assert!(harness
+            .query(By::new().label("Use this choice for remaining conflicts"))
+            .is_none());
+        assert!(!harness.state().1);
+        harness.get(By::new().label("Skip file")).click();
+        harness.run();
+        assert_eq!(harness.state().2, Some(ConflictPolicy::Skip));
     }
 
     #[test]

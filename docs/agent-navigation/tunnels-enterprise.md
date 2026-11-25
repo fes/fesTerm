@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "32af7fd5b4a75a897d024c9694c251806c2662fc9cf2a4202d8638ed262dae97"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "c0c81cad85d6fa8f4e7ca58b8b702995e4b3f2c427b87b67f3d6b27e5ad82ab0"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -103,7 +103,7 @@ Caveats:
 Use for: Returned local I/O errors and a Files connection that should remain usable after cancellation.
 
 - [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Closes the exact transfer handle once within the original local I/O deadline.
-- [`FilesEndpoint`](../../app/festerm/src/host_files.rs) — Preserves confirmed handle aborts and maps unconfirmed cleanup without masking either error.
+- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared optional client adapter; preserves publication, cleanup and authority fences.
 
 Evidence:
 - [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Actual rooted service aborts a partial upload and accepts a later operation on the same stream.

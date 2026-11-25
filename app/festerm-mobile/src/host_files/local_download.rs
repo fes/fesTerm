@@ -1,8 +1,10 @@
 //! Reuse the retained-directory/file primitives used by ordinary SFTP downloads.
 //! Identity checks are negative fences, not immunity to hostile same-user races.
+use super::local_root::Root;
 #[cfg(unix)]
 use festerm_sftp::path;
-use festerm_sftp::{LocalFs, SftpError};
+use festerm_sftp::SftpError;
+use std::sync::Arc;
 #[cfg(unix)]
 use std::{
     fs::File,
@@ -16,7 +18,7 @@ fn uncertain() -> SftpError {
 }
 #[cfg(unix)]
 pub(super) struct Stage {
-    root: PathBuf,
+    root: Arc<Root>,
     components: Vec<String>,
     parent: File,
     file: File,
@@ -26,14 +28,13 @@ pub(super) struct Stage {
 }
 #[cfg(unix)]
 impl Stage {
-    pub(super) fn create(local: &LocalFs, directory: &str) -> Result<Self, SftpError> {
+    pub(super) fn create(local: &Arc<Root>, directory: &str) -> Result<Self, SftpError> {
         let components = path::local_components(directory)?
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let root = local.root().to_owned();
-        let root_file = festerm_unix_security::open_absolute_directory_read_nofollow(&root)
-            .map_err(|_| uncertain())?;
+        let root = local.clone();
+        let root_file = root.directory().map_err(|_| uncertain())?;
         let mut parent = root_file.try_clone().map_err(|_| uncertain())?;
         for name in &components {
             parent = festerm_unix_security::open_directory_read_nofollow(&parent, Path::new(name))
@@ -90,8 +91,7 @@ impl Stage {
             let b = b.metadata().map_err(|_| uncertain())?;
             Ok(a.dev() == b.dev() && a.ino() == b.ino())
         }
-        let mut current = festerm_unix_security::open_absolute_directory_read_nofollow(&self.root)
-            .map_err(|_| uncertain())?;
+        let mut current = self.root.directory().map_err(|_| uncertain())?;
         if !same(&current, &self.root_file)? {
             return Err(uncertain());
         }
@@ -161,7 +161,7 @@ impl Drop for Stage {
 pub(super) struct Stage;
 #[cfg(not(unix))]
 impl Stage {
-    pub(super) fn create(_: &LocalFs, _: &str) -> Result<Self, SftpError> {
+    pub(super) fn create(_: &Arc<Root>, _: &str) -> Result<Self, SftpError> {
         Err(uncertain())
     }
     pub(super) fn writer(&self) -> Result<tokio::fs::File, SftpError> {
@@ -183,9 +183,9 @@ impl Stage {
 mod tests {
     use super::*;
     use std::{fs, io::Write};
-    fn setup() -> (tempfile::TempDir, LocalFs) {
+    fn setup() -> (tempfile::TempDir, Arc<Root>) {
         let root = tempfile::tempdir().unwrap();
-        let local = LocalFs::new(root.path()).unwrap();
+        let local = Root::open(root.path()).unwrap();
         (root, local)
     }
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         let outside = base.path().join("outside");
         fs::create_dir(&documents).unwrap();
         fs::create_dir(&outside).unwrap();
-        let local = LocalFs::new(&documents).unwrap();
+        let local = Root::open(&documents).unwrap();
         fs::rename(&documents, base.path().join("original-Documents")).unwrap();
         symlink(&outside, &documents).unwrap();
         assert!(

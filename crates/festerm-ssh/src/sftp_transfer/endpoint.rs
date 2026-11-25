@@ -66,9 +66,25 @@ pub trait RemoteTransferEndpoint: Send + 'static {
     ) -> RemoteTransferFuture<'a, u64>;
 }
 
+/// A caller-admitted regular local source. The reader must retain its object,
+/// fence current authority/path/identity on every read, and never reopen by name.
+pub struct OpenedLocalUpload {
+    pub reader: Pin<Box<dyn AsyncRead + Send>>,
+    pub size: u64,
+}
+
+/// Optional application-owned source admission for rooted app storage. It
+/// grants no remote authority and supports only already-retained regular files.
+/// Existing ordinary SFTP constructors keep their original path semantics.
+pub trait LocalUploadSources: Send + Sync + 'static {
+    fn metadata(&self, path: &Path) -> Result<SftpPathMetadata, SftpSessionError>;
+    fn open(&self, path: &Path) -> Result<OpenedLocalUpload, SftpSessionError>;
+}
+
 pub(super) struct EndpointBackend<R> {
     pub(super) remote: R,
     pub(super) partial: Option<crate::sftp::PartialFile>,
+    pub(super) local_upload_sources: Option<Arc<dyn LocalUploadSources>>,
 }
 
 impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
@@ -130,7 +146,10 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
         Box::pin(async move {
             self.remote.check_current()?;
             match path {
-                SftpPath::Local(path) => read_local_path_metadata(path).await,
+                SftpPath::Local(path) => match &self.local_upload_sources {
+                    Some(sources) => sources.metadata(path).map(Some),
+                    None => read_local_path_metadata(path).await,
+                },
                 SftpPath::Remote(path) => self.remote.metadata(path).await,
             }
         })
@@ -146,6 +165,14 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
                 let SftpPath::Local(path) = path else {
                     unreachable!()
                 };
+                if self.local_upload_sources.is_some() {
+                    return Err(endpoint_error(
+                        "plan upload",
+                        &path.display().to_string(),
+                        "Only admitted regular files can be uploaded",
+                    )
+                    .into());
+                }
                 return read_local_directory_for_planning(path, budget).await;
             };
             let handle = self.remote.open_directory(path).await?;
@@ -265,20 +292,26 @@ impl<R: RemoteTransferEndpoint> TransferBackend for EndpointBackend<R> {
                 .map_err(CopyFileError::Operation)?;
             match (source, destination) {
                 (SftpPath::Local(source), SftpPath::Remote(destination)) => {
-                    let file = fs::File::open(source).await.map_err(|error| {
-                        CopyFileError::Operation(local_error("open source file", source, error))
-                    })?;
-                    let size = file
-                        .metadata()
-                        .await
-                        .map_err(|error| {
-                            CopyFileError::Operation(local_error(
-                                "read source metadata",
-                                source,
-                                error,
-                            ))
-                        })?
-                        .len();
+                    let (file, size) = if let Some(sources) = &self.local_upload_sources {
+                        let opened = sources.open(source).map_err(CopyFileError::Operation)?;
+                        (opened.reader, opened.size)
+                    } else {
+                        let file = fs::File::open(source).await.map_err(|error| {
+                            CopyFileError::Operation(local_error("open source file", source, error))
+                        })?;
+                        let size = file
+                            .metadata()
+                            .await
+                            .map_err(|error| {
+                                CopyFileError::Operation(local_error(
+                                    "read source metadata",
+                                    source,
+                                    error,
+                                ))
+                            })?
+                            .len();
+                        (Box::pin(file) as Pin<Box<dyn AsyncRead + Send>>, size)
+                    };
                     let mut reader = ProgressIo {
                         inner: file,
                         total: 0,
@@ -460,6 +493,7 @@ mod tests {
                     let mut backend = EndpointBackend {
                         remote: ScriptedRemote(Arc::new(Mutex::new(RemoteState::default()))),
                         partial: None,
+                        local_upload_sources: None,
                     };
                     crate::sftp::begin_transfer_partial(
                         &mut backend.partial,

@@ -533,8 +533,8 @@ unsupported hosts refuse this operation without a terminal/SFTP fallback.
 
 This initial client lists and inspects rooted entries, downloads regular files
 up to 16 MiB into app Documents, and reuses the existing 4 MiB Markdown-preview
-limit. It disables Upload and refuses every remote mutation locally; an advertised
-host write grant does not imply mobile support. New destinations are published
+limit. A read-only grant disables Upload and refuses every remote mutation
+locally; the write-enabled increment below handles a fresh write capability. New destinations are published
 without replacement after retained-directory/file checks and a final account
 check. Replaced parents/partials are not accepted as the original objects;
 uncertain cleanup is reported. These are the existing negative identity fences,
@@ -548,7 +548,44 @@ uses only retained public target metadata to request fresh Files authority;
 it never replays transfers. Retirement discards pending automatic preview
 disclosure, including completed downloads, while preserving local files and
 explicit local preview. Existing files are preserved on destination
-conflicts; replacement/Keep Both UI and mobile remote writes remain pending.
+conflicts. The next client increment below adds write-gated upload and mkdir;
+other remote mutations and download replacement/Keep Both remain pending.
 No wire format or host grant changes are introduced.
 There is no crash-resume or durable partial-file recovery ledger in this slice. Device-native qualification
 is still required; framed-service and UI tests are source evidence only.
+
+### Mobile upload and folder creation
+
+The opt-in client adapter composes bridge → SSH's existing neutral transfer
+queue; it does not change the wire contract or host consent. A write-enabled
+mobile view opens its transfer stream against the same authenticated host,
+installation and lifecycle scope as browsing. No alternate service or terminal
+fallback is admitted. Read-only views cannot enqueue uploads or remote mkdir.
+
+The supplied Documents root is pinned before canonicalization; only Apple's
+documented /var prefix is normalized. Root replacement or an existing leaf
+alias refuses; the same retained identity fences source admission, local
+listing/stat/mkdir and download staging. Ordinary Files preview reads use a
+retained regular no-follow leaf and an actual bounded read. Each session creates
+an exclusive private preview namespace; its copies remain in app Documents.
+No existing cache is adopted or recursively removed on close, including when no
+preview was requested. Existing SSH preview behavior remains unchanged. These
+are negative identity fences, not atomic same-user race immunity.
+
+Uploads admit only selected retained regular Documents files. The strict queue
+constructor uses that admission for metadata and reads, with no raw pathname
+fallback. The existing queue owns conflicts, actual transfer progress,
+Skip/Keep Both/reviewed Replace, atomic publication and uncertainty. The sheet
+projects only offered decisions. Each mobile upload is a single-item batch;
+there is no cross-batch Remember option. Mobile
+retains terminal events in its bounded presentation history; live snapshots are
+not treated as a durable completion ledger. Local source cutover or account
+retirement fences further reads. Returning a known refusal, an unobserved Finish
+and incomplete cleanup keep their separate meanings and never cause replay.
+
+New folder uses one validated name and an asynchronous result. Remote mkdir
+requires current write authority; local mkdir uses exclusive private creation
+relative to a trusted no-follow Documents parent. Closing the view does not
+claim rollback of an already admitted folder operation. There is no new remote
+Delete, rename, chmod/link, saved Files profile or durable mobile recovery flow.
+Native mobile write/conflict/lifecycle qualification remains pending.

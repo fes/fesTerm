@@ -10,14 +10,14 @@ pub(super) struct PreparedDelete {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct DeleteObservation(Arc<Mutex<Option<DeleteProgress>>>);
+pub struct DeleteObservation(Arc<Mutex<Option<DeleteProgress>>>);
 struct DeleteProgress {
     path: String,
     confirmed: usize,
     total: usize,
 }
 impl DeleteObservation {
-    pub(crate) fn interrupted(&self) -> Option<SftpSessionError> {
+    pub fn interrupted(&self) -> Option<SftpSessionError> {
         self.0.lock().expect("Files delete observation lock").take().map(|value| {
             SftpSessionError::PublicationUncertain {
                 path: value.path,
@@ -28,21 +28,21 @@ impl DeleteObservation {
 }
 
 #[derive(Debug)]
-pub(crate) struct DeleteOutcome {
-    pub(crate) confirmed: usize,
-    pub(crate) total: usize,
+pub struct DeleteOutcome {
+    pub confirmed: usize,
+    pub total: usize,
     /// A returned known refusal leaves this false. A missing mutation result
     /// or RecoveryRequired is explicitly unknown, never offered as retryable.
-    pub(crate) failure: Option<(bool, String)>,
+    pub failure: Option<(bool, String)>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
-    pub(crate) fn delete_review_stop(&self) -> Option<CancellationToken> {
+    pub fn delete_review_stop(&self) -> Option<CancellationToken> {
         self.delete_review
             .as_ref()
             .map(|review| review.stop.clone())
     }
-    pub(crate) async fn cancel_delete_review(&mut self) -> Result<(), SftpSessionError> {
+    pub async fn cancel_delete_review(&mut self) -> Result<(), SftpSessionError> {
         let Some(review) = self.delete_review.take() else {
             return Ok(());
         };
@@ -65,7 +65,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
             Ok(())
         }
     }
-    pub(crate) async fn prepare_delete(
+    pub async fn prepare_delete(
         &mut self,
         paths: &[String],
         stop: CancellationToken,
@@ -131,7 +131,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
         self.delete_review = Some(PreparedDelete { id, stop, entries });
         Ok((id, items))
     }
-    pub(crate) async fn commit_delete(
+    pub async fn commit_delete(
         &mut self,
         id: u64,
         observation: &DeleteObservation,

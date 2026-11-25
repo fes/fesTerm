@@ -155,6 +155,12 @@ pub(crate) fn transfer_rows(conflict: bool) -> Vec<files::TransferRow> {
                 total: Some(38_900_000),
                 rate: 0.0,
                 conflict: Some(ConflictView {
+                    allowed: vec![
+                        festerm_sftp::ConflictPolicy::KeepBoth,
+                        festerm_sftp::ConflictPolicy::Skip,
+                        festerm_sftp::ConflictPolicy::Replace,
+                    ],
+                    can_remember: true,
                     direction: Direction::Upload,
                     iphone: FileFacts {
                         size: Some(38_900_000),

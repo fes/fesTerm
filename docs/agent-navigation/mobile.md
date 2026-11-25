@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "4619308ef43584f74d21d205d7a043f010e83aaeff869e3757aefa5464c884c4"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "dc1f86e19ae02bb9352a78ce95cea7a74d63e6d1d40387524564599d40fc2dec"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -50,15 +50,17 @@ Caveats:
 
 Use for: document authority and file browsing.
 
-- [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns source authorities, preview state, and dirty-save policy.
+- [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns document authority and save policy.
 
-- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Opens ordinary read-only Files with account/privacy fences, progress and retained local staging.
+- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Owns Files and the shared upload queue adapter.
+
+- [`Root`](../../app/festerm-mobile/src/host_files/local_root.rs) — Pins Documents before canonicalization.
 
 Evidence:
 - [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs)
 
 Caveats:
-- Private copies preserve originals; Markdown/edit state is view-local. Imports are bounded and sanitized.
+- Private copies preserve originals; imports are bounded.
 
 ## Live SSH shell
 
