@@ -6286,6 +6286,19 @@ update and true missing owner-only consent. Provider-owner with no enrolled
 keys alone is not missing owner-only consent. No permission grant, automatic
 retry, plaintext fallback or rollback-check bypass is authorized by a diagnostic.
 
+HOST-04 / DT-05 / DIAG-01 initial runtime preparation also records finite
+`host.runtime` outcomes for `helper_validation` and `initial_policy_prepare`
+before `relay_open`. Each existing call records only `ok` or `error`, using the
+existing bounded category/HTTP/OS fields and run/epoch correlation. A helper
+failure emits no policy-preparation outcome; neither preparation phase implies
+relay execution or readiness. Original I/O errors, the existing broad
+`authenticated-bundle-required` classification and managed refusal disposition
+remain unchanged; log failure never grants retry or changes the result. No raw
+error text, provider body, URL or credential is recorded. Portable fixtures
+cover valid-helper/policy refusal, helper refusal and unavailable log storage.
+The production HOST27 first-Start cause remains unknown; native signed-helper
+qualification of these added phases is still pending, with no retry authorized.
+
 Foreground Enable can fail before a HOST run exists. For a helper/frontend
 composition containing the foreground setup diagnostics, retain only
 `host.owner_setup` lines from the same bounded logs, correlated by the actual

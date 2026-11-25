@@ -14,6 +14,8 @@ const RECORD_COUNT: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Phase {
+    HelperValidation,
+    InitialPolicyPrepare,
     RelayOpen,
     PolicyRefresh,
     RuntimeServe,
@@ -29,6 +31,8 @@ pub enum Phase {
 impl Phase {
     pub fn code(self) -> &'static str {
         match self {
+            Self::HelperValidation => "helper_validation",
+            Self::InitialPolicyPrepare => "initial_policy_prepare",
             Self::RelayOpen => "relay_open",
             Self::PolicyRefresh => "policy_refresh",
             Self::RuntimeServe => "runtime_serve",
@@ -44,6 +48,8 @@ impl Phase {
     }
     fn parse(code: &str) -> Option<Self> {
         [
+            Self::HelperValidation,
+            Self::InitialPolicyPrepare,
             Self::RelayOpen,
             Self::PolicyRefresh,
             Self::RuntimeServe,

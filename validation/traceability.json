@@ -4026,6 +4026,9 @@
         "desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim",
         "desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_scope",
         "host_runtime_diagnostics_pre_serve_failure_never_invents_runtime_execution",
+        "host_runtime_initial_preparation_reports_policy_failure_after_valid_helper",
+        "host_runtime_initial_preparation_reports_helper_failure_before_policy",
+        "host_runtime_initial_preparation_log_failure_preserves_original_error",
         "startup_snapshot_is_actor_scoped_bounded_and_not_a_daemon_history",
         "startup_history_observation_never_creates_and_refuses_untrusted_or_busy_state",
         "startup_evidence_preserves_original_error_and_redacts_untrusted_message",
@@ -4049,6 +4052,7 @@
         "About and Remote access display only typed last-setup stage, available HTTP status, fixed category and recovery guidance. Provider text, credentials, URLs and arbitrary native errors never enter the metadata. Original create uncertainty/cancellation/transient semantics remain intact. Owned installation/origin/epoch, current worker and cancel/draft/success fences reject stale diagnostics; no readiness claim. Native provider/store/cancel captures remain required.",
         "event emphasis and complete redacted Copy Details",
         "Explicit Refresh loads only recognized bounded runtime-log history correlated with protected runtime/managed records. Primary and cleanup classifications remain separate; diagnostic failures do not alter readiness, retry, cancellation or authority. Native failure cause and longevity qualification remain open under #780; historical evidence is not a current process observation.",
+        "Initial helper validation and initial policy preparation emit recognized finite ok/error runtime phases before relay_open, preserving the original I/O error, existing authenticated-bundle-required failure and managed refusal disposition. Fixtures cover helper failure, injected scope refusal before vault/network work, and unavailable logs without daemon/relay side effects. Signed-native qualification and the original production first-Start cause remain unproven; this adds diagnostics only, not retry or authentication policy.",
         "Native local startup snapshot rendering/failure classification and remote HOST delivery remain unqualified; ordinary local startup has no trusted parent generation"
       ]
     },

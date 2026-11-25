@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "aeda0c818756ce7d9a16a8b75645c1122f030413c44c742521f5e5a6a4bc155f"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "8f7c1d77328e03393e8e5fe2ce44e73acee505ccb4cc089ef308539382b2df60"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -23,9 +23,9 @@ Caveats:
 - Inventory rows are metadata, not live daemon proof
 - Foreign generations are ignored
 
-## Owner Consent
+## Owner consent and runtime preparation
 
-Use for: Owner approval for replacement or administration.
+Use for: Owner approval and initial HOST runtime preparation.
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs)
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs)
