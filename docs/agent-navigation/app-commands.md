@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "13e7bd78d989bd13f738223e918c07fc2c3db33d55ea534ca1ce9243048801f6"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "20d359c7ea2eec8dfce632b67fb62edd1f4a1ff522e8b219f5f2e2651e9db74b"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns app-wide command intents, singleton-tab routing, keyboard capture scope, modal overlays, and Vim-style editor actions as a single stateful routing layer.
+This domain owns singleton-tab app intents, close/focus routing, keyboard capture scope, modal overlay gates, and Vim-style editor commands.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
@@ -13,10 +13,10 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 Use for: A widget or launcher needs to turn a gesture into a state-changing app intent
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — Typed app intents for launcher, settings, tabs, and sessions
-- [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path from commands to state
+- [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path from commands to AppState
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Close returns to the opener instead of the neighboring tab
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — Close returns to the opener instead of the neighbor
 - [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — Singleton surfaces are skipped from close fallback
 
 Caveats:

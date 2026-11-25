@@ -1,124 +1,71 @@
-<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "codex-source-verified", "sources": "e0e51b68624c76eadaa56a50c5df157d4cd8c80af3596e366a1bcc8a8f35240a"} -->
+<!-- agent-navigation: {"domain": "app-shell", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5d8023a9f63780e4c03cd6660f6135a246f510db2998f17e57cd3f7af3c94f32"} -->
 # Desktop application shell and screens
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns desktop lifecycle, frames and host/profile/settings routing.
+Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings.
 
 Canonical docs: [docs/gui-design.md](../../docs/gui-design.md), [docs/ui-state-narrative.md](../../docs/ui-state-narrative.md)
 
 ## Startup flow
 
-Use for: Startup and recovery
+Use for: When the app boots, restores windows, or handles startup recovery.
 
-- [`main`](../../app/festerm/src/main.rs)
-- [`FesTermApplication`](../../app/festerm/src/application.rs)
-- [`restore_windows`](../../app/festerm/src/application.rs)
+- [`main`](../../app/festerm/src/main.rs) — Entry point chooses startup mode and builds the native app.
+- [`FesTermApplication`](../../app/festerm/src/application.rs) — Window manager for primary and restored windows.
+- [`restore_windows`](../../app/festerm/src/application.rs) — Reopens saved windows after the primary view exists.
 
 Evidence:
-- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs)
+- [`aging_fixture_notifies_and_pumps_all_six_owned_sessions`](../../app/festerm/src/app/tests/session_aging.rs) — Proves startup and recovery keep owned sessions alive.
 
 Caveats:
-- Primary window owns quit, wake, and secret-store policy. Startup also loads report-only upload uncertainty without connecting.
-- Automation worker and MCP modes exit before GUI creation.
+- Primary window owns quit, wake, and secret-store policy.
+- Automation worker and MCP modes exit before the GUI is created.
 - Restored windows reopen only after the primary window exists.
 
 ## Frame loop
 
-Use for: Frame logic and focused panes
+Use for: When frame logic runs each pass or a pane UI is rendered.
 
-- [`frame_logic`](../../app/festerm/src/app.rs)
-- [`ui_content`](../../app/festerm/src/app.rs)
-- [`Binding`](../../app/festerm/src/key_file_import.rs)
+- [`frame_logic`](../../app/festerm/src/app.rs) — Runs input, session pumping, geometry writes, and wake checks.
+- [`ui_content`](../../app/festerm/src/app.rs) — Renders the app chrome, panes, and terminal surfaces.
 
 Evidence:
-- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs)
+- [`panes_render_both_live_terminals_and_route_input_only_to_focused_view`](../../app/festerm/src/app/panes_tests.rs) — Confirms pane rendering and focused-input routing.
 
 Caveats:
 - Pane overlays consume input before terminal adapters see raw events.
-- Session pumping and geometry writes are side effects of logic, not rendering.
-- Terminal fonts install once per context and repaint after setup.
+- Session pumping and geometry writes are side effects of logic, not render code.
+- Terminal fonts install once per context and request a repaint after setup.
 
 ## Screen routing
 
-Use for: Profiles, settings, and typed app command dispatch
+Use for: When profiles or settings screens open and dispatch AppCommand actions.
 
-- [`show_profiles`](../../app/festerm/src/screens/profiles.rs)
-- [`show_settings`](../../app/festerm/src/screens/settings.rs)
+- [`show_profiles`](../../app/festerm/src/screens/profiles.rs) — Edits profile drafts and emits profile actions as commands.
+- [`show_settings`](../../app/festerm/src/screens/settings.rs) — Builds the settings view and tracks page navigation state.
 
 Evidence:
-- [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs)
-- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs)
+- [`profiles_row_menu_dispatches_profile_actions`](../../app/festerm/src/screens/profiles.rs) — Shows profile menu actions dispatch to AppCommand handlers.
+- [`settings_main_page_sections_follow_the_documented_order`](../../app/festerm/src/screens/settings.rs) — Verifies Settings page ordering and section structure.
 
 Caveats:
-- Profile and settings actions dispatch as AppCommand events, not direct mutation.
-- Draft state is keyed by tab or context; stale UI state can leak across editors.
+- Screen actions emit AppCommand events, not direct mutation.
+- Draft state is keyed by tab or context; stale UI can leak across editors.
 - Bindings and preference updates are committed outside the screen render itself.
-
-## Host access
-
-Use for: Host discovery, inventory, attach, and creation review
-
-- [`show_inline_host_browser`](../../app/festerm/src/host_browser.rs)
-- [`record_privacy_preparation_report`](../../app/festerm/src/host_browser.rs)
-
-Evidence:
-- [`full_page_host_selection_stays_inline_and_seven_sessions_scroll_in_short_window`](../../app/festerm/src/host_browser_tests.rs)
-- [`desktop_remote_access_enable_observation_warning_keeps_confirmed_phase_and_setup`](../../app/festerm/src/desktop_remote_access/tests.rs)
-- [`host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default`](../../app/festerm/src/desktop_remote_access/tests.rs)
-
-Caveats:
-- Discovery requires no manual fingerprint or JSON; uncertain status requires Refresh.
-- Host choices disclose their public locator on hover without selection; review emits actions, not session mutations.
-- Ownership and approval states are separate from the session runtime state.
 
 ## Lifecycle diagnostics
 
-Use for: Exit recovery and host failure history
+Use for: When app lifecycle, exits, and recovery evidence are recorded.
 
-- [`init`](../../app/festerm/src/diagnostics.rs)
-- [`Failure`](../../app/festerm/src/desktop_remote_access.rs) — Native timeout recovery.
-- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs)
-- [`from_local_persistent_session_result`](../../app/festerm/src/tabs.rs) — Startup Copy via AppCommand.
-- [`completion_io`](../../app/festerm/src/desktop_remote_access/native.rs)
+- [`init`](../../app/festerm/src/diagnostics.rs) — Initializes the diagnostics guard used during startup and shutdown.
+- [`record_exit_intent`](../../app/festerm/src/diagnostics.rs) — Captures why the app is exiting so recovery can preserve evidence.
 
 Evidence:
-- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs)
-- [`desktop_remote_access_runtime_history_renders_without_operation_or_readiness_claim`](../../app/festerm/src/desktop_remote_access/tests.rs)
+- [`panic_artifact_without_final_record_survives_recovery_and_retention`](../../app/festerm/src/diagnostics.rs) — Shows exit diagnostics persist evidence across recovery flows.
 
 Caveats:
 - Diagnostics preserve evidence, not runtime authority.
 - Journal writes are best-effort and degrade gracefully when unavailable.
-
-## File operation review
-
-Use for: Remote file review and worker lifecycle
-
-- [`ConnectionScope`](../../app/festerm/src/sftp_file_manager/file_operations.rs)
-- [`show_file_operation_dialog`](../../app/festerm/src/sftp_file_manager/file_operations.rs)
-- [`run_files_worker`](../../app/festerm/src/sftp_file_manager/host_files.rs)
-- [`FilesEndpoint`](../../app/festerm/src/host_files.rs) — Keeps confirmed transfer-handle cancellation separate from tab retirement.
-- [`prepare_rooted_delete`](../../app/festerm/src/sftp_file_manager/file_operations/reviewed_delete.rs)
-
-Evidence:
-- [`file_manager_long_create_and_delete_dialogs_fit_narrow_windows`](../../app/festerm/src/sftp_file_manager/file_operations.rs)
-- [`files_account_retirement_clears_review_and_refuses_late_ready_disclosure`](../../app/festerm/src/sftp_file_manager.rs)
-- [`files_cancelled_upload_does_not_mask_later_browsing_failure`](../../app/festerm/src/host_files.rs) — Cancellation preserves transfer liveness; a later genuine browsing failure still retires only its tab.
-
-Caveats:
-- Local/SFTP delete is nonrecursive; Open2 write grants no delete; Open3 needs separate consent and exact review.
-
-## Program and image composition
-
-Use for: App-owned lifecycle, eligibility and Safe Mode
-
-- [`JavaScriptProgramCoordinator`](../../app/festerm/src/javascript_program_lifecycle.rs) — Tracks pending/live/closing quotas.
-- [`InlineGraphicsPolicy`](../../app/festerm/src/inline_graphics.rs)
-
-Evidence:
-- [`safe_mode_dominates_saved_automation_without_rewriting_it`](../../app/festerm/src/app.rs)
-- [`terminal_image_save_writes_exact_png_through_confirmed_destination`](../../app/festerm/src/app.rs)
-
-Caveats:
-- Default-off developer JavaScript and separately opted-in graphics retain their own consent gates.
+- Window shutdown intent is separate from the session runtime state.
