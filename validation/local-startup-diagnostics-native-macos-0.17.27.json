@@ -1,0 +1,121 @@
+{
+  "record_version": 1,
+  "status": "Accepted native local startup-diagnostics Copy and Inspector retention on the pinned Mac cohort",
+  "cohort": {
+    "GUI_version": "0.17.27",
+    "source": "feddda297921e59434959097548812fb9653a9e0",
+    "run": 45488939975,
+    "attempt": 2,
+    "artifact": 14969881256,
+    "app_MAIN_SHA256": "f55f82ee79e4fb228a2982e87d982b72098c1936fedde8165238cc4e1d81791e",
+    "mandatory_launcher_SHA256": "570b640cae8a02d04288188c97c48f901d580f6c3af4a8a2be75ec7d30a09de3",
+    "driver_SHA256": "dcc339819c97df006b2378038171aeb149c5ef96b74fc4758a912f97cbe33699"
+  },
+  "workflow": {
+    "profile": "Fresh isolated persistent LOCAL profile with a deliberately nonexistent public executable",
+    "connect_attempts": 1,
+    "owned_public_sentinel_writes": 1,
+    "Copy_startup_diagnostics": 1,
+    "clipboard_reads": 1,
+    "Inspector_retention": "Closed and reopened on the same failed tab; button and identical typed snapshot remained visible; no second Copy",
+    "failed_tab_closed": true
+  },
+  "copied_typed_snapshot": {
+    "typed_snapshot_match": true,
+    "bytes": 185,
+    "sha256": "8ebf8ccde82e4bc3dd430adc5afafbc00514f8efa17d121293141eba4d433c4c",
+    "read_count": 1,
+    "bounded_bytes": 4096,
+    "deadline_seconds": 5,
+    "raw_clipboard_emitted": false,
+    "phase": "ChildExit",
+    "starter_pid": 53732,
+    "generation": null,
+    "os": null,
+    "child_exit": 1,
+    "daemon_endpoint": "unavailable",
+    "lifecycle": "unavailable: starter attribution incomplete"
+  },
+  "privacy": "Exact typed-only allowlist; no raw or prior clipboard text, generic startup error, path, argv, terminal content, account data or credentials emitted. Record contains finite fields and digest only. No routing recording or routing-report Copy.",
+  "normal_cleanup": {
+    "GUI_exit": 0,
+    "supervisor_exit": 0,
+    "owned_helpers": 0,
+    "owned_GUI_and_supervisor_processes_absent": true,
+    "launch_carrier_unloaded_removed": true,
+    "new_live_generation_socket_or_lease_actor": false,
+    "no_bytecode": true,
+    "originals_and_inactive_artifacts_retained_for_review": true
+  },
+  "preservation": {
+    "Mac_policy_epoch": 51,
+    "protected_actors": 18,
+    "catalog_sha256": "7ec3ae63da01f614961939a1c2ff692273247f7580d44dd602d9ea106da1c5bd",
+    "catalog_operations": 27,
+    "HOST_policy_account_config_fixtures_unchanged": true,
+    "other_VMs": "No peer queries or new peer-state claims in this component"
+  },
+  "resource": {
+    "entry_bytes": 18448375808,
+    "whole_budget_bytes": 253711424,
+    "fixed_floor_bytes": 18194664384,
+    "final_free_bytes": 18302664704,
+    "one_original_lease_no_rebase_or_extension": true
+  },
+  "retained_control_refusal": {
+    "initial_assertion": "Blanket zero-socket/lease-file cleanup oracle refused after normal GUI/supervisor exit.",
+    "finite_classification": "The sole residual socket was document-activation/activation.sock, with no open lsof owner/listener; five existing runtime locks were positively inactive. No generation lease actor remained.",
+    "resolution": "Corrected the cleanup oracle to distinguish inactive artifacts from live actors. Original refusal retained; no relaunch, input replay or second Copy."
+  },
+  "screenshots": {
+    "publication": "PRIVATE originals only; no screenshot bytes copied into public assets",
+    "originals": [
+      {
+        "name": "16-COPY-BUTTON-OWNED.png",
+        "bytes": 658969,
+        "sha256": "392684694c6f75015c4e588e578db37ca540392d8d8d08c4aed07a64651f1fae",
+        "local_availability": "Retained privately with the accepted native receipt"
+      },
+      {
+        "name": "18-INSPECTOR-CLOSED.png",
+        "bytes": 559229,
+        "sha256": "ad575c46a75c5edfcd4aa4e5a3ef715cd2def98222c4d4a30b4086f57274fd96",
+        "local_availability": "Retained privately with the accepted native receipt"
+      },
+      {
+        "name": "19-INSPECTOR-REOPENED.png",
+        "bytes": 659220,
+        "sha256": "53ebc7218b72990aa3d66ad0117e38037ee92bfe60b2e55aee9eebcb1353cf2c",
+        "local_availability": "Retained privately with the accepted native receipt"
+      },
+      {
+        "name": "22-RETAINED-CHILD-EXIT.png",
+        "bytes": 674120,
+        "sha256": "b51572828bc2a01eda055b34f1b40da71ddb612136d852aa3a1ab457bf74ea7d",
+        "local_availability": "Retained privately with the accepted native receipt"
+      },
+      {
+        "name": "23-FAILED-TAB-CLOSED.png",
+        "bytes": 551557,
+        "sha256": "a263cee75c16d281a0e06bef391b19ab3d67062848193fb9a07692463038eb52",
+        "local_availability": "Retained privately with the accepted native receipt"
+      }
+    ]
+  },
+  "accepted_receipt": {
+    "name": "ROOT-NATIVE-COPY-ACCEPTANCE.json",
+    "bytes": 1232,
+    "sha256": "99c2145ddee139eeb7b66a7c06c7ce29a2ffc3456a42cc0ea01360d24c5df911"
+  },
+  "source_packet": {
+    "name": "FINAL-NATIVE-COPY-STARTUP-DIAGNOSTICS-QUALIFICATION.json",
+    "bytes": 11029,
+    "sha256": "2973c7b856a5caf17ba56d6a9b74ab78f72771b90567320f7c8e0d985ebb3e3b"
+  },
+  "limits": [
+    "Local persistent startup failure only; not remote or HOST startup-history delivery.",
+    "ChildExit is the parent starter boundary, not proof of the shell child exit or daemon identity.",
+    "No other-OS native Copy or global current-release qualification.",
+    "Fresh default-hostname appearance was not observed. Source verifies the OS hostname binding; three-OS automated coverage exercises sanitization and real default-settings paths, without an exact default-identity assertion. This does not require resetting a configured HOST."
+  ]
+}

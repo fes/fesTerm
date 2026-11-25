@@ -3048,12 +3048,14 @@ the earlier unqualified profile-picker attempt and original harness refusals are
 retained in the attributed private receipts. The screenshots predate the
 breadcrumb correction and do not qualify it.
 
+The [packaged Mac26 forwarded-SFTP component](../validation/sftp/macos-forwarded-native-controls-0.17.26.json) qualifies a 24-byte download, Unicode/spaced folder creation and reviewed Delete Cancel/Confirm with normal cleanup. It uses a temporary loopback SSH forward; direct LAN and the narrow toolbar remain unqualified. Its original images retain the long-path/status overlap and do not qualify the later layout fix.
+
 ### SFTP GUI backlog and transfer history
 
 For `SFTPG-02`, the production drawer paint regression checks both percent and
 byte bars at 320/640/1180 logical-pixel widths and 0/25/50/100% progress: finite
 panel bounds, retained inner padding, contrasting remaining tracks and correct
-filled widths. Review the normal and narrow transfer gallery captures; native
+filled widths. The long-path paint regression also checks non-overlapping state/path glyph bounds inside the padded drawer at 180/320/780/1076 logical pixels, including the stacked fallback. Review the normal and narrow transfer gallery captures; native
 Windows/macOS/Linux DPI, short-window scrolling and live-transfer visual
 usability remain manual. This layout fix does not change transfer admission,
 collision decisions or partial-file ownership.
@@ -6500,15 +6502,15 @@ numeric OS/child-exit codes, and explicit unavailable lifecycle/daemon/endpoint
 attribution. Ordinary startup has no trusted caller-issued generation, so it must
 not guess one or display another actor's ring. Close the Inspector, visit another
 tab and return: it must stay closed and retain only that failed attempt's facts.
-A replacement/reconnect generation must not retain them. Use **Copy startup
+A replacement/reconnect generation must not retain them. The [signed Mac27 native Copy component](../validation/local-startup-diagnostics-native-macos-0.17.27.json) qualifies one actual Copy/readback and same-tab Inspector retention after a controlled local startup failure, with original HOST/session state preserved and normal drain. It does not qualify remote startup history or other-OS native clipboard behavior. Use **Copy startup
 diagnostics** to copy only that typed snapshot; it is separate from **Copy redacted
 routing report**. Confirm no generic error, path, command, stderr or recording
 content is copied, and the control disappears without typed evidence. Rendered
 route/clipboard and absent/sibling/replacement fixtures are automated; native
-clipboard delivery remains pending. There is no automatic retry/restart or remote
+clipboard delivery outside the pinned Mac27 component remains pending. There is no automatic retry/restart or remote
 HOST diagnostic delivery. Portable tests cover privacy,
 bounded noncreating reads, actual controlled child failure and UI isolation;
-actual native pre-Ready classification/rendering remains pending.
+native pre-Ready classification/rendering outside the attributed accepted components remains pending.
 
 HOSTSETUP-01 / HOST-04 / DIAG-01: qualify the dedicated macOS diagnostic fence
 with a fresh pre-command frame proving no existing prompt, one authenticated

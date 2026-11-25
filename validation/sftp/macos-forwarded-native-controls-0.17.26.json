@@ -1,0 +1,108 @@
+{
+  "record_version": 1,
+  "status": "Accepted scoped packaged Mac26 forwarded-SFTP functional controls",
+  "cohort": {
+    "client_GUI_version": "0.17.26",
+    "client_GUI_source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+    "client": "Genuine signed cached Mac GUI; not relabeled as GUI27 or the later transfer-row fix",
+    "remote": "Linux OpenSSH/SFTP reached through a temporary controller-owned SSH forward; Linux HOST95 preservation was a separate guard, not the SFTP implementation",
+    "uniform_current_release_claim": false
+  },
+  "connection": {
+    "endpoint": "Mac loopback-only listener",
+    "GUI_handshakes": 1,
+    "host_key": "Exact Linux Ed25519 fingerprint independently verified before Accept Once",
+    "trust_action": "Accept Once, no saved trust/profile",
+    "direct_LAN_qualified": false,
+    "Local_Network_permission_attribution_qualified": false
+  },
+  "download": {
+    "public_fixture": "one.txt",
+    "bytes": 24,
+    "sha256": "129cf94ae221185db12c4d487002ebcdf0772ce427b9ea12b75661b8973037e0",
+    "no_partial_or_extra_leaf": true
+  },
+  "directory": {
+    "public_owned_name": "Café test folder",
+    "created_empty": true,
+    "Delete_Cancel": "Preserved the exact same inode and empty directory",
+    "separate_Delete_Confirm": "Removed only that owned empty directory",
+    "public_source_file_unchanged": true
+  },
+  "window": {
+    "observed": "Ordinary windowed layout, approximately 780×381 logical points",
+    "narrow_toolbar_under640_qualified": false,
+    "limits": "One ordinary drag left actual geometry unchanged; stock half-window action was disabled. No narrow-mode or resize acceptance inferred."
+  },
+  "normal_cleanup": {
+    "GUI_exit": 0,
+    "supervisor_exit": 0,
+    "owned_frontend_helpers_absent": true,
+    "launch_carrier_unregistered": true,
+    "SSH_forward_exit": 0,
+    "owned_listener_absent": true,
+    "exact_temporary_auth_entry_removed": true,
+    "all_other_auth_bytes_preserved": true,
+    "watchdog_timer_and_scoped_subsystem_drained": true,
+    "Mac51_all18_Linux95_all26_Windows82_all33_originals_preserved": true,
+    "restoration_debt": []
+  },
+  "retained_controller_observations": [
+    "Effective sshd test used capitalized directive names, requiring faithful case-insensitive finite extraction.",
+    "Initial guest netstat read omitted the listener; lsof supplied the exact sole owned loopback observation.",
+    "Whitespace-sensitive controller PID read refused but shell command chaining did not gate the one app bootstrap. The actual owned tunnel/argv/birth was independently revalidated before GUI input."
+  ],
+  "assets": [
+    {
+      "path": "sftp/macos-0.17.26-forwarded-originals/F-08-FIRST-ACTUAL-LOOPBACK-HOSTKEY.png",
+      "name": "F-08-FIRST-ACTUAL-LOOPBACK-HOSTKEY.png",
+      "bytes": 105419,
+      "sha256": "a67ad839d52e48a8d3ef6b228a266be05481cb7d77c27c49bfa455ae1b67e4c0",
+      "provenance": "Original unmodified dedicated test-frame capture from the accepted forwarded-SFTP phase"
+    },
+    {
+      "path": "sftp/macos-0.17.26-forwarded-originals/F-13-ONE-DOWNLOAD-ACTUAL.png",
+      "name": "F-13-ONE-DOWNLOAD-ACTUAL.png",
+      "bytes": 170272,
+      "sha256": "2d45530e9a8a55474dc879b0053114753e3b6a23f915b62bd518372fad20ff5e",
+      "provenance": "Original unmodified dedicated test-frame capture from the accepted forwarded-SFTP phase"
+    },
+    {
+      "path": "sftp/macos-0.17.26-forwarded-originals/F-15-EXACT-UNICODE-SPACED-FOLDER-PROPOSAL.png",
+      "name": "F-15-EXACT-UNICODE-SPACED-FOLDER-PROPOSAL.png",
+      "bytes": 311817,
+      "sha256": "5f23f2cfb9bfa382cef25221eb4d5fa0f285b9da9996c557599a20f3662a9b7c",
+      "provenance": "Original unmodified dedicated test-frame capture from the accepted forwarded-SFTP phase"
+    },
+    {
+      "path": "sftp/macos-0.17.26-forwarded-originals/F-17-ONE-EXACT-EMPTY-DIR-DELETE-REVIEW.png",
+      "name": "F-17-ONE-EXACT-EMPTY-DIR-DELETE-REVIEW.png",
+      "bytes": 350696,
+      "sha256": "8d1d0f129d296ffabfbef79e56b6f7089ef4590834fe86a5b5b6e8251f5ffd60",
+      "provenance": "Original unmodified dedicated test-frame capture from the accepted forwarded-SFTP phase"
+    },
+    {
+      "path": "sftp/macos-0.17.26-forwarded-originals/F-19-ONLY-EMPTY-DIR-DELETED.png",
+      "name": "F-19-ONLY-EMPTY-DIR-DELETED.png",
+      "bytes": 164696,
+      "sha256": "6ae023abaa8741befbb5f6a5f11c94b41d4ee5baabeeba632a7d682d93f1505e",
+      "provenance": "Original unmodified dedicated test-frame capture from the accepted forwarded-SFTP phase"
+    }
+  ],
+  "accepted_receipt": {
+    "name": "ROOT-MAC26-FORWARDED-SFTP-FUNCTIONAL-ACCEPTANCE.json",
+    "bytes": 1354,
+    "sha256": "fdf7593aa32dcb544e009bd1ef9d862496757377821f8c98e83294aa179a4759"
+  },
+  "source_packet": {
+    "name": "FINAL-MAC26-CONTROL-FORWARDED-SFTP-DOWNLOAD-DIRECTORY-PRESERVED.json",
+    "bytes": 14061,
+    "sha256": "2dbcc008d62199b94ed52dd527b11596812d625dd0947683615657002e7552c1"
+  },
+  "limits": [
+    "No direct LAN or Local Network permission-attribution acceptance; earlier direct failures remain open.",
+    "No upload, interruption/recovery, rename or chmod qualification in this component.",
+    "No universal display-scale, narrow responsive toolbar or newer-build qualification.",
+    "Original screenshots retain the pre-fix long transfer-row overlap; they are functional evidence, not proof of the forthcoming layout correction."
+  ]
+}
