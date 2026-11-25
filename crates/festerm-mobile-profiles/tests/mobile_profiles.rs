@@ -32,6 +32,213 @@ fn ssh(host: &str) -> ProfileKind {
     ProfileKind::Ssh(SshProfile::new(host, "me"))
 }
 
+fn files_destination(account: &str) -> festerm_mobile_profiles::DevTunnelFilesProfile {
+    festerm_mobile_profiles::DevTunnelFilesProfile {
+        account: account.to_owned(),
+        locator: "controlled-host.usw2".into(),
+        host_id: uuid::Uuid::new_v4().to_string(),
+        host_key_fingerprint: FP_A.into(),
+        installation: uuid::Uuid::new_v4().to_string(),
+        principal: uuid::Uuid::new_v4().to_string(),
+    }
+}
+
+#[test]
+fn files_profiles_roundtrip_without_authority_and_stay_inert_after_account_removal() {
+    use festerm_mobile_profiles::AccountProvider;
+    use festerm_secret_store::{SecretBytes, SecretStore};
+    let directory = dir();
+    let secrets = memory();
+    let mut store = ProfileStore::open(&directory, secrets.clone()).unwrap();
+    let credential = store
+        .store_secret(&SecretBytes::from_secret_string(
+            "test-only-account-secret".into(),
+        ))
+        .unwrap();
+    let account = store
+        .upsert_account(AccountProvider::Github, 42, "owner", credential.clone())
+        .unwrap();
+    let destination = files_destination(&account);
+    let kind = ProfileKind::DevTunnelFiles(destination.clone());
+    let id = store.create("Remote files", kind.clone()).unwrap();
+    let text = fs::read_to_string(directory.join(PROFILES_FILE)).unwrap();
+    assert!(!text.contains("test-only-account-secret"));
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let fields = value["profiles"][0]["kind"].as_object().unwrap();
+    assert_eq!(
+        fields.len(),
+        7,
+        "type plus six public destination fields only"
+    );
+    for forbidden in [
+        "credential",
+        "policy_epoch",
+        "scope",
+        "approval",
+        "session",
+        "stream",
+    ] {
+        assert!(!fields.contains_key(forbidden));
+    }
+    let mut reopened = ProfileStore::open(&directory, secrets.clone()).unwrap();
+    assert_eq!(reopened.profiles()[0].kind, kind);
+    reopened.delete(&id).unwrap();
+    assert!(
+        secrets.get(&credential.to_reference()).is_ok(),
+        "profile does not own the account credential"
+    );
+    reopened
+        .create(
+            "Remote files",
+            ProfileKind::DevTunnelFiles(destination.clone()),
+        )
+        .unwrap();
+    reopened.remove_account(&account).unwrap();
+    let reopened = ProfileStore::open(&directory, secrets.clone()).unwrap();
+    assert!(reopened.accounts().is_empty());
+    assert_eq!(
+        reopened.profiles()[0].kind,
+        ProfileKind::DevTunnelFiles(destination)
+    );
+    assert!(secrets.get(&credential.to_reference()).is_err());
+    let mut reopened = reopened;
+    assert!(matches!(
+        reopened.create(
+            "Unbound files",
+            ProfileKind::DevTunnelFiles(files_destination("github-999"))
+        ),
+        Err(ProfileError::UnknownAccount)
+    ));
+}
+
+#[test]
+fn files_profiles_reject_unbounded_unpinned_or_authority_shaped_metadata() {
+    use festerm_mobile_profiles::{AccountProvider, SecretRef};
+    let mut store = ProfileStore::open(&dir(), memory()).unwrap();
+    let account = store
+        .upsert_account(
+            AccountProvider::Github,
+            42,
+            "owner",
+            SecretRef::parse("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+        )
+        .unwrap();
+    let destination = files_destination(&account);
+    let valid = serde_json::to_value(ProfileKind::DevTunnelFiles(destination)).unwrap();
+    for (field, invalid) in [
+        ("account", "Bearer private-value".to_owned()),
+        ("locator", "https://untrusted.example/path".to_owned()),
+        ("locator", "x".repeat(202)),
+        ("host_id", "not-an-id".to_owned()),
+        (
+            "installation",
+            "550e8400-e29b-11d4-a716-446655440000".to_owned(),
+        ),
+        (
+            "principal",
+            "550E8400-E29B-41D4-A716-446655440000".to_owned(),
+        ),
+        ("host_key_fingerprint", "".to_owned()),
+        ("host_key_fingerprint", "SHA256:x".to_owned()),
+        ("host_key_fingerprint", format!("SHA256:{}", "A".repeat(44))),
+        ("host_key_fingerprint", format!("SHA256:{}", "_".repeat(43))),
+        ("host_key_fingerprint", format!("SHA256:{}", "-".repeat(43))),
+        (
+            "host_key_fingerprint",
+            format!("SHA256:{}=", "A".repeat(42)),
+        ),
+    ] {
+        let mut candidate = valid.clone();
+        candidate[field] = invalid.clone().into();
+        let kind = serde_json::from_value(candidate).unwrap();
+        let error = store.create("Rejected", kind).unwrap_err();
+        assert!(matches!(error, ProfileError::Validation(_)), "{field}");
+        assert!(!error.to_string().contains(&invalid) || invalid.is_empty());
+    }
+    for field in ["credential", "scope", "policy_epoch", "approval"] {
+        let mut candidate = valid.clone();
+        candidate[field] = "untrusted extra".into();
+        assert!(serde_json::from_value::<ProfileKind>(candidate).is_err());
+    }
+    assert!(store.profiles().is_empty());
+}
+
+#[test]
+fn v1_migration_preserves_existing_profile_account_and_recipe_metadata() {
+    use festerm_mobile_profiles::host_recipes::{
+        AccountReference, HostId, HostReference, MetadataCommand, PublicRecipe, Recipe,
+    };
+    use festerm_mobile_profiles::{AccountProvider, DevTunnelProfile, SftpProfile};
+    use festerm_secret_store::{SecretBytes, SecretStore};
+    let directory = dir();
+    let secrets = memory();
+    let mut store = ProfileStore::open(&directory, secrets.clone()).unwrap();
+    let credential = store
+        .store_secret(&SecretBytes::from_secret_string(
+            "migration-only-secret".into(),
+        ))
+        .unwrap();
+    let account = store
+        .upsert_account(AccountProvider::Github, 42, "owner", credential.clone())
+        .unwrap();
+    store.create("Existing SSH", ssh("existing.test")).unwrap();
+    store
+        .create(
+            "Existing tunnel",
+            ProfileKind::DevTunnel(DevTunnelProfile::named("old-host.usw2", Some(account))),
+        )
+        .unwrap();
+    store
+        .create(
+            "Existing SFTP",
+            ProfileKind::Sftp(SftpProfile::new("files.test", "owner")),
+        )
+        .unwrap();
+    let recipe = PublicRecipe::persistent(
+        "Existing recipe",
+        HostReference {
+            id: HostId::new(),
+            account: AccountReference::Github { account_id: 42 },
+        },
+        Recipe {
+            shell: None,
+            args: Vec::new(),
+            cwd: None,
+        },
+    )
+    .unwrap();
+    store
+        .apply_host_recipe_command(MetadataCommand::Save(recipe))
+        .unwrap();
+    let path = directory.join(PROFILES_FILE);
+    let mut before: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    before["version"] = 1.into();
+    let v1_bytes = serde_json::to_vec_pretty(&before).unwrap();
+    fs::write(&path, &v1_bytes).unwrap();
+    let mut reopened = ProfileStore::open(&directory, secrets.clone()).unwrap();
+    assert_eq!(reopened.load_report().migrated_from, Some(1));
+    assert_eq!(reopened.load_report().dropped_entries, 0);
+    assert!(!reopened.load_report().started_empty_after_corruption);
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        v1_bytes,
+        "opening does not rewrite the original"
+    );
+    let ids = reopened
+        .profiles()
+        .iter()
+        .map(|p| p.id.clone())
+        .collect::<Vec<_>>();
+    reopened.reorder(&ids).unwrap();
+    before["version"] = 2.into();
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        after, before,
+        "only the schema version changes on next save"
+    );
+    assert!(secrets.get(&credential.to_reference()).is_ok());
+}
+
 #[test]
 fn crud_order_recents_and_reopen() {
     let dir = dir();
