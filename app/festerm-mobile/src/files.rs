@@ -89,6 +89,9 @@ impl TransferRow {
 
 /// The transfer engine behind the Files screen.
 pub(crate) trait Transfers: Send + Sync {
+    fn connection_error(&self) -> Option<String> {
+        None
+    }
     fn rows(&self) -> Vec<TransferRow>;
     fn enqueue(
         &self,
@@ -442,6 +445,7 @@ pub(crate) enum Link {
 
 /// What a connector hands over once the SFTP channel is open.
 pub(crate) struct Ready {
+    pub remote_write: bool,
     pub remote: Arc<dyn PaneFs>,
     pub local: Arc<dyn PaneFs>,
     pub local_root: PathBuf,
@@ -478,6 +482,7 @@ pub(crate) enum FilesEvent {
 }
 
 pub(crate) struct FilesSession {
+    pub(crate) remote_write: bool,
     pub(crate) title: String,
     /// Protocol and target, e.g. `SFTP · dev@example.net`.
     pub(crate) subtitle: String,
@@ -507,6 +512,7 @@ impl FilesSession {
             title,
             subtitle,
             link: Link::Connecting("Connecting".to_owned()),
+            remote_write: false,
             remote: None,
             local: None,
             transfers: None,
@@ -538,6 +544,7 @@ impl FilesSession {
     }
 
     fn install(&mut self, ready: Ready, ctx: &egui::Context) {
+        self.remote_write = ready.remote_write;
         let remote_start = ready
             .start_dir
             .clone()
@@ -624,7 +631,16 @@ impl FilesSession {
         let _ = changed;
         if let Some(transfers) = self.transfers.clone() {
             self.rows = transfers.rows();
-            self.after_transfers(ctx, &mut events);
+            if let Some(message) = transfers.connection_error() {
+                self.link = Link::Failed(message);
+            }
+            if matches!(self.link, Link::Ready) {
+                self.after_transfers(ctx, &mut events);
+            } else if self.opening.take().is_some() {
+                // A completed remote preview is still an automatic disclosure.
+                // Retirement drops that intent, not the downloaded local file.
+                self.notice = None;
+            }
         }
         events
     }
@@ -751,6 +767,10 @@ impl FilesSession {
 
     /// Queues the selected files of one pane toward the other.
     pub(crate) fn start_transfer(&mut self, upload: bool) {
+        if upload && !self.remote_write {
+            self.notice = Some("Upload is unavailable in this read-only Files view".into());
+            return;
+        }
         let Some(transfers) = self.transfers.clone() else {
             return;
         };
@@ -947,6 +967,7 @@ mod tests {
 
     fn ready(transfers: Arc<FixtureTransfers>) -> Ready {
         Ready {
+            remote_write: true,
             remote: fixture_fs(PaneKind::Remote, "/srv"),
             local: fixture_fs(PaneKind::Local, ""),
             local_root: PathBuf::from("/nonexistent-festerm-files-test"),
@@ -981,6 +1002,131 @@ mod tests {
         pane.toggle("README.md");
         assert!(pane.selected_files().is_empty());
         assert_eq!(pane.crumbs("Documents")[1].0, "srv");
+    }
+
+    #[test]
+    fn files_read_only_capability_disables_upload_and_rejects_stale_dispatch() {
+        use egui_kittest::{
+            kittest::{By, Queryable},
+            Harness,
+        };
+        let ctx = egui::Context::default();
+        let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+        data.remote_write = false;
+        let mut session = FilesSession::ready("Files".into(), "Read-only".into(), data, &ctx);
+        settle(&mut session, &ctx);
+        session.local.as_mut().unwrap().toggle("README.md");
+        session.remote.as_mut().unwrap().toggle("README.md");
+        session.start_transfer(true);
+        assert_eq!(
+            session.notice.as_deref(),
+            Some("Upload is unavailable in this read-only Files view")
+        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, session: &mut FilesSession| {
+                    crate::files_ui::show(ui, session);
+                },
+                session,
+            );
+        harness.run();
+        harness.get(
+            By::new()
+                .label("Upload 1")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("Download 1")
+                .predicate(|node| !node.is_disabled()),
+        );
+        harness.state_mut().remote_write = true;
+        harness.run();
+        harness.get(
+            By::new()
+                .label("Upload 1")
+                .predicate(|node| !node.is_disabled()),
+        );
+    }
+
+    #[test]
+    fn files_retired_connection_never_opens_completed_remote_preview_but_keeps_local_file() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct RetirableTransfers {
+            fixture: FixtureTransfers,
+            retired: AtomicBool,
+        }
+        impl Transfers for RetirableTransfers {
+            fn connection_error(&self) -> Option<String> {
+                self.retired
+                    .load(Ordering::SeqCst)
+                    .then(|| "Connection closed".into())
+            }
+            fn rows(&self) -> Vec<TransferRow> {
+                self.fixture.rows()
+            }
+            fn enqueue(&self, _: Direction, _: &str, _: &str) -> Result<u64, String> {
+                Err("Not used".into())
+            }
+            fn cancel(&self, _: u64) {}
+            fn resolve(&self, _: u64, _: ConflictPolicy, _: bool) {}
+            fn clear_finished(&self) {}
+        }
+        let ctx = egui::Context::default();
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join(CACHE_DIR).join("1");
+        std::fs::create_dir_all(&cache).unwrap();
+        let bytes = b"# Public preview\n";
+        std::fs::write(cache.join("README.md"), bytes).unwrap();
+        std::fs::write(root.path().join("README.md"), bytes).unwrap();
+        let row = crate::files_fixture::transfer_rows(false)
+            .into_iter()
+            .find(|row| row.state == RowState::Done)
+            .unwrap();
+        let id = row.id;
+        let engine = Arc::new(RetirableTransfers {
+            fixture: FixtureTransfers::new(vec![row]),
+            retired: AtomicBool::new(false),
+        });
+        let make_session = || {
+            let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+            data.transfers = engine.clone();
+            data.local_root = root.path().to_owned();
+            data.local = Arc::new(festerm_sftp::LocalFs::new(root.path()).unwrap());
+            let mut session = FilesSession::ready("Files".into(), "Read-only".into(), data, &ctx);
+            session.cache_counter = 1;
+            session.opening = Some((id, "README.md".into(), "/README.md".into()));
+            session
+        };
+        let mut active = make_session();
+        assert!(matches!(
+            active.poll(&ctx).as_slice(),
+            [FilesEvent::OpenMarkdown { .. }]
+        ));
+        let mut retired = make_session();
+        engine.retired.store(true, Ordering::SeqCst);
+        assert!(
+            retired.poll(&ctx).is_empty(),
+            "retirement must suppress automatic disclosure"
+        );
+        assert!(matches!(retired.link, Link::Failed(_)));
+        assert!(retired.opening.is_none());
+        assert_eq!(std::fs::read(cache.join("README.md")).unwrap(), bytes);
+        engine.retired.store(false, Ordering::SeqCst);
+        assert!(
+            retired.poll(&ctx).is_empty(),
+            "pending preview must not replay"
+        );
+        settle(&mut retired, &ctx);
+        retired.local.as_mut().unwrap().toggle("README.md");
+        assert!(
+            matches!(
+                retired.open_markdown(false),
+                Some(FilesEvent::OpenMarkdown { .. })
+            ),
+            "explicit local preview is independent of retired remote authority"
+        );
     }
 
     #[test]

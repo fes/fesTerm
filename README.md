@@ -36,8 +36,9 @@ and streaming transfers. Desktop Dev Tunnels Files sessions reuse the SFTP
 file-manager presentation and queue for browse, upload/download, mkdir and
 bounded read-only previews. Separately reviewed deletion of files and empty
 folders requires an additional default-off host permission; old write grants
-never authorize it. Rename/chmod/link parity and Mobile integration remain
-separate work. The grant is off by default and can be changed/revoked on
+never authorize it. Rename/chmod/link parity remains separate work. The initial mobile
+`host-clients` Files view supports rooted read-only browse/download/Markdown
+preview; device-native qualification and mobile remote writes remain pending. The grant is off by default and can be changed/revoked on
 an existing host. A [pinned Mac-to-Linux native check](validation/dev-tunnels/linux-files-native-readwrite.json)
 qualifies a reviewed read/write grant, small upload/download, preview and mkdir
 with Delete off. The [signed 0.17.24 component record](validation/dev-tunnels/files-native-0.17.24.json)

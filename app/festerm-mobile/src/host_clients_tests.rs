@@ -4979,3 +4979,93 @@ fn mobile_terminate_review_is_named_cancel_default_and_has_safe_phone_targets() 
         assert!(harness.state().3);
     }
 }
+
+#[test]
+fn mobile_files_account_guard_retires_exact_account_and_lock_without_a_frame() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let first_id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "first", false);
+    let second_id = festerm_mobile_tunnels::testing::seed_account(&store, 8, "second", false);
+    let accounts = store.lock().unwrap().accounts().to_vec();
+    let first = accounts.iter().find(|a| a.id == first_id).unwrap().clone();
+    let second = accounts.iter().find(|a| a.id == second_id).unwrap().clone();
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    let token = app.sink.live.host.token(app.hosts.epoch);
+    let second_token = app.sink.live.host.token(app.hosts.epoch);
+    let first_guard = files_account_guard(store.clone(), first, token.clone());
+    let second_guard = files_account_guard(store.clone(), second, second_token.clone());
+    assert!(first_guard.check().is_ok() && second_guard.check().is_ok());
+    store.lock().unwrap().remove_account(&first_id).unwrap();
+    assert!(first_guard.check().is_err());
+    assert!(second_guard.check().is_ok());
+    app.sink.live.content_lock_callback()();
+    assert!(token.is_cancelled() && second_token.is_cancelled());
+    assert!(second_guard.check().is_err());
+}
+
+#[test]
+fn mobile_files_retirement_preserves_target_metadata_and_fences_host_replacement() {
+    let (_root, ordinary) = ordinary_fixture_context(7);
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let account_id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "first", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|a| a.id == account_id)
+        .unwrap()
+        .clone();
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    let token = app.sink.live.host.token(app.hosts.epoch);
+    let expected = ordinary.host_info().clone();
+    app.files_ctx.host = Some(crate::files_shell::HostFilesTarget {
+        account,
+        locator: "build.fixture".into(),
+        label: "Files fixture".into(),
+        expected: expected.clone(),
+    });
+    app.files_ctx.host_cancel = Some(token.clone());
+    app.invalidate_host_account("unrelated");
+    assert!(!token.is_cancelled());
+    app.invalidate_host_account(&account_id);
+    assert!(token.is_cancelled());
+    assert_eq!(
+        app.files_ctx.host.as_ref().unwrap().locator,
+        "build.fixture"
+    );
+    assert!(same_files_host(&expected, &expected));
+    let mut changed = expected.clone();
+    changed.installation = HostId::new();
+    assert!(!same_files_host(&expected, &changed));
+    let mut changed = expected.clone();
+    changed.principal = Default::default();
+    if changed.principal == expected.principal {
+        changed.route.host.host = HostId::new();
+    }
+    assert!(!same_files_host(&expected, &changed));
+    app.close_files();
+    assert!(app.files_ctx.host.is_none());
+}
+
+#[test]
+fn mobile_files_entry_uses_authenticated_inventory_independently_of_shell_creation() {
+    use egui_kittest::kittest::Queryable;
+    let (root, ordinary) = ordinary_fixture_context(7);
+    let (mut app, _) = ordinary_mobile_ui_fixture(ordinary, client_inventory(false), root.path());
+    let ctx = egui::Context::default();
+    app.host_action(&ctx, Action::SelectHost(0)).unwrap();
+    wait_for_discovery(&mut app, &ctx);
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(390.0, 844.0))
+        .build_ui_state(|ui, app: &mut MobileApp| app.show_hosts(ui.ctx()), app);
+    harness.run();
+    harness.get_by_label("Files");
+    assert!(harness.query_by_label("New host shell").is_none());
+    harness.state_mut().hosts.ordinary = None;
+    harness.run();
+    assert!(harness.query_by_label("Files").is_none());
+}

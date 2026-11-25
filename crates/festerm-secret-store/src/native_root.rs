@@ -1,8 +1,6 @@
 //! Native-created authority for the fixed HOST receipt child, not a path grant.
 use crate::SecretStoreError;
 use festerm_unix_security as unix;
-#[cfg(any(target_os = "ios", test))]
-use std::path::Component;
 use std::{fs::File, io, os::unix::fs::MetadataExt, path::Path};
 
 /// Pinned current-application storage. No path, descriptor, deserializer or
@@ -239,51 +237,8 @@ fn ios_selected_path(path: &Path) -> io::Result<std::path::PathBuf> {
 }
 
 #[cfg(any(target_os = "ios", test))]
-fn open_ios_traversal_root() -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let flags = nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    let flags = flags | nix::libc::O_SEARCH;
-    #[cfg(target_os = "linux")]
-    let flags = flags | nix::libc::O_PATH;
-    // Rust requires an access mode; Apple O_SEARCH (and Linux O_PATH in
-    // fixtures) selects search-only authority rather than directory reading.
-    let directory = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(flags)
-        .open("/")?;
-    let metadata = directory.metadata()?;
-    if !metadata.is_dir() || metadata.nlink() == 0 || metadata.uid() != 0 {
-        return Err(io::ErrorKind::PermissionDenied.into());
-    }
-    Ok(directory)
-}
-
-#[cfg(any(target_os = "ios", test))]
 fn open_ios_selected_directory(path: &Path) -> io::Result<File> {
-    // Only the documented native /var alias is normalized. All remaining
-    // components, including the selected app/profile root, stay no-follow.
-    let path = ios_selected_path(path)?;
-    let mut directory = open_ios_traversal_root()?;
-    let mut components = path.components().peekable();
-    while let Some(component) = components.next() {
-        match component {
-            Component::RootDir => {}
-            Component::Normal(name) => {
-                // OS-managed ancestors need search, not directory enumeration.
-                // The selected application/profile directory remains readable
-                // for metadata, private child creation and synchronization.
-                directory = if components.peek().is_some() {
-                    unix::open_directory_search_nofollow(&directory, Path::new(name))?
-                } else {
-                    unix::open_directory_read_nofollow(&directory, Path::new(name))?
-                };
-            }
-            _ => return Err(io::ErrorKind::PermissionDenied.into()),
-        }
-    }
-    Ok(directory)
+    unix::open_absolute_directory_read_nofollow(&ios_selected_path(path)?)
 }
 
 #[cfg(target_os = "ios")]

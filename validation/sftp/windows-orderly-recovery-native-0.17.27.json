@@ -1,0 +1,148 @@
+{
+  "scope": "Signed packaged Windows ARM64 0.17.27 SFTP orderly Cancel, normal restart, Inspect, confirmed remote Delete, and separate local acknowledgement.",
+  "cohort": {
+    "version": "0.17.27",
+    "platform": "Windows ARM64",
+    "source": "feddda297921e59434959097548812fb9653a9e0",
+    "producer_run": 45488939975,
+    "producer_attempt": 2,
+    "release_asset_ids": [
+      789142982,
+      789142983
+    ],
+    "native_authenticode_qualified": true,
+    "signed_main_sha256": "47ee99493144ccca99f33e7ebf68c66df59369c171830ae6ae7d0747e8e4150f",
+    "portable_runtime_eight_map_sha256": "7fde934da7308eedd0547acec3798edaec16125004624543b4ca98512d660f29"
+  },
+  "fixture": {
+    "server": "SFTPGo 2.7.6",
+    "transport": "loopback-only through existing lab SSH management forward",
+    "authentication": "transient synthetic password, no saved password",
+    "source_bytes": 8388608,
+    "source_sha256": "679428ac72b0562ea423484fffc36434d263d5de4a1b1f32a2abc75bbebc96f5",
+    "configured_upload_limit_KiB_per_s": 128,
+    "same_fingerprint_on_both_app_launches": true,
+    "independent_single_partial_growth_bytes": [
+      524288,
+      589824
+    ],
+    "independent_stable_partial_after_cancel_bytes": 4325376,
+    "final_file_absent": true
+  },
+  "observed": {
+    "one_ordinary_cancel_before_publication": true,
+    "both_normal_wm_close_exit_zero_job_and_tasks_drained": true,
+    "same_canonical_ledger_ordinary_report_counts_absent_then_one_then_zero": true,
+    "restart_report_visible_before_authentication": true,
+    "inspect_revealed_exact_partial": true,
+    "separate_confirmed_remote_delete_and_independent_empty_fixture": true,
+    "report_remained_after_remote_delete": true,
+    "separate_local_acknowledgement_cleared_report": true,
+    "both_forward_and_service_exit_zero_both_listeners_absent": true,
+    "protected_windows_host_files_settings_catalog_and_33_actors_preserved": true
+  },
+  "first_conditions": [
+    "A previous run connected then stopped before upload at its campaign resource guard. Both controls closed and the canonical ledger remained absent.",
+    "The first trust decision returned the app\u2019s rejection-or-expiry message and the attempted response reached its 30-second decision window. One subsequent ordinary retry accepted the same independently verified fixture fingerprint. This does not independently distinguish rejection from expiry.",
+    "The first pre-B fixture check expected workspace disabled. The app had saved only an inert Launcher tab; a finite check verified the same single SFTP profile, same fingerprint and no saved credential before B started.",
+    "Parallels returned several incomplete redraw frames while reading the screen. Fresh settled captures were taken without repeating the app action."
+  ],
+  "limits": [
+    "Native packaged orderly cancellation and normal restart of an upload before publication, using a controlled loopback SFTP fixture.",
+    "Forced crashes, actual server loss, disconnect during publication, a lost publication acknowledgement, direct LAN, and accessibility remain outside this qualification.",
+    "Raw VM frames and derived target-window images are private. Only the crop sizes, names, byte lengths and hashes accompany the public record.",
+    "The product left a private, empty canonical reports map after local acknowledgement. It received the report through the ordinary upload path, and no report was copied between app runs."
+  ],
+  "visual_assets_private": [
+    {
+      "observation": "Live upload before Cancel",
+      "name": "a/TRANSFER-ROW-OWNED-WINDOW.png",
+      "bytes": 186621,
+      "sha256": "ff1bd8097b9b59b1a382f88b793fb5bc1b093fc12e40e7bbfd7b0e11deab2737",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Cancelled upload and incomplete automatic cleanup",
+      "name": "a/CANCEL-ONCE-OWNED-WINDOW.png",
+      "bytes": 405229,
+      "sha256": "43ac2b579c3bc764d114c39ef8689164846807ceae1c4d5718d498b45cc535cf",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Matching saved report immediately after restart, before reconnect",
+      "name": "b/RESTART-OWNED-WINDOW.png",
+      "bytes": 352883,
+      "sha256": "a4e87cd9c420f98f6be16e28ebe32953215c65a9a4899973417f6ba770a8d92e",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Matching report selected the sole partial",
+      "name": "b/INSPECT-REMOTE-OWNED-WINDOW.png",
+      "bytes": 181184,
+      "sha256": "00b245a3b3e5ca7fae46ebac9492208374b8354e5a9e98277e986c1b0b7b8572",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Confirmation names only the expected remote partial",
+      "name": "b/REVIEW-DELETE-OWNED-WINDOW.png",
+      "bytes": 452932,
+      "sha256": "75c8d5bb83504284decd39cc295e40c63c88d4759064b851204c261fce4bf2c4",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Remote folder empty after explicit Delete",
+      "name": "b/REMOTE-EMPTY-AFTER-DELETE-OWNED-WINDOW.png",
+      "bytes": 181796,
+      "sha256": "b6b069b70703a8aa44bcb3f54ca51a3bb9f1882734b6665ad4cfbebdc1509e32",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Report remains after remote Delete",
+      "name": "b/REPORT-STILL-ONE-AFTER-DELETE-OWNED-WINDOW.png",
+      "bytes": 420041,
+      "sha256": "6420319244df41180cc41ce7bdd7d5a2fe53a83af84d25c50b1d387d97d98289",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "Separate local-only acknowledgement confirmation",
+      "name": "b/REVIEW-LOCAL-ACK-OWNED-WINDOW.png",
+      "bytes": 420734,
+      "sha256": "9626b928e9cb46db1d4d5bd400879ca8ff48c492b1d72bd521d9fd89011fbad2",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    },
+    {
+      "observation": "No saved reports after acknowledgement",
+      "name": "b/LEDGER-EMPTY-UI-OWNED-WINDOW.png",
+      "bytes": 426556,
+      "sha256": "4f04b424013840c19c0f4a5be65c7e837c9880346c63836907af13d4335607f2",
+      "crop_pixels": [
+        1504,
+        1032
+      ]
+    }
+  ]
+}

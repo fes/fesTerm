@@ -10,8 +10,21 @@ use super::*;
 #[derive(Default)]
 pub(super) struct FilesContext {
     spec: Option<SftpSpec>,
+    #[cfg(feature = "host-clients")]
+    pub(super) host: Option<HostFilesTarget>,
+    #[cfg(feature = "host-clients")]
+    pub(super) host_cancel: Option<std::sync::Arc<tokio_util::sync::CancellationToken>>,
     /// Opened from a saved SFTP profile rather than from a terminal tab.
     pub(super) only: bool,
+}
+
+#[cfg(feature = "host-clients")]
+#[derive(Clone)]
+pub(super) struct HostFilesTarget {
+    pub(super) account: festerm_mobile_profiles::TunnelAccount,
+    pub(super) locator: String,
+    pub(super) label: String,
+    pub(super) expected: festerm_tunnel_bridge::ordinary_auth::OrdinaryHostInfo,
 }
 
 impl MobileApp {
@@ -76,6 +89,10 @@ impl MobileApp {
             Box::new(connector),
         )));
         self.files_ctx.spec = Some(spec.clone());
+        #[cfg(feature = "host-clients")]
+        {
+            self.files_ctx.host = None;
+        }
         Ok(())
     }
 
@@ -85,12 +102,23 @@ impl MobileApp {
     }
 
     pub(super) fn close_files(&mut self) {
+        #[cfg(feature = "host-clients")]
+        if let Some(cancel) = self.files_ctx.host_cancel.take() {
+            cancel.cancel();
+        }
         self.files = None;
         self.files_ctx = FilesContext::default();
         self.markdown = None;
     }
 
     pub(super) fn retry_files(&mut self, ctx: &egui::Context) {
+        #[cfg(feature = "host-clients")]
+        if let Some(target) = self.files_ctx.host.clone() {
+            if let Err(error) = self.open_host_files_target(target, ctx) {
+                self.notice = Some(error);
+            }
+            return;
+        }
         let Some(spec) = self.files_ctx.spec.clone() else {
             return;
         };

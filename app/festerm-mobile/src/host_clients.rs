@@ -59,6 +59,38 @@ fn native_host_approval_root(
     Ok(Arc::new(root))
 }
 
+fn files_account_guard(
+    store: Arc<Mutex<festerm_mobile_profiles::ProfileStore>>,
+    account: TunnelAccount,
+    token: Arc<CancellationToken>,
+) -> host_client::ordinary::OrdinaryAccountGuard {
+    host_client::ordinary::OrdinaryAccountGuard::new(
+        token.as_ref().clone(),
+        Arc::new(move || {
+            if token.is_cancelled() {
+                return Err(festerm_host_protocol::ContractError::Stale);
+            }
+            let store = store
+                .lock()
+                .map_err(|_| festerm_host_protocol::ContractError::Denied)?;
+            if store.accounts().contains(&account) {
+                Ok(())
+            } else {
+                Err(festerm_host_protocol::ContractError::Stale)
+            }
+        }),
+    )
+}
+
+fn same_files_host(
+    expected: &festerm_tunnel_bridge::ordinary_auth::OrdinaryHostInfo,
+    current: &festerm_tunnel_bridge::ordinary_auth::OrdinaryHostInfo,
+) -> bool {
+    expected.route.host == current.route.host
+        && expected.installation == current.installation
+        && expected.principal == current.principal
+}
+
 // Called only by the existing foreground protected-original recovery job.
 fn recover_mobile_originals(
     #[cfg(not(target_os = "android"))] profile: &std::path::Path,
@@ -1304,6 +1336,7 @@ enum Action {
     CancelProfileHost,
     SelectSavedProfileHost(usize),
     BackHosts,
+    Files,
     SaveSession(usize),
     ConfirmSessionSave,
     CancelSessionSave,
@@ -1683,6 +1716,16 @@ impl MobileApp {
 
     pub(super) fn invalidate_host_account(&mut self, id: &str) {
         if self
+            .files_ctx
+            .host
+            .as_ref()
+            .is_some_and(|target| target.account.id == id)
+        {
+            if let Some(cancel) = &self.files_ctx.host_cancel {
+                cancel.cancel();
+            }
+        }
+        if self
             .hosts
             .reconnect
             .as_ref()
@@ -1727,6 +1770,16 @@ impl MobileApp {
     }
 
     pub(super) fn host_discovery_account_changed(&mut self, account: &str) {
+        if self
+            .files_ctx
+            .host
+            .as_ref()
+            .is_some_and(|target| target.account.id != account)
+        {
+            if let Some(cancel) = &self.files_ctx.host_cancel {
+                cancel.cancel();
+            }
+        }
         if self.hosts.open
             && self.hosts.discover_on_open
             && !self.hosts.editing
@@ -1800,6 +1853,107 @@ impl MobileApp {
         self.hosts.ordinary = Some(ordinary);
         self.hosts.inventory = Some(inventory);
         self.hosts.error = None;
+        Ok(())
+    }
+
+    pub(super) fn open_host_files_target(
+        &mut self,
+        target: super::files_shell::HostFilesTarget,
+        ctx: &egui::Context,
+    ) -> Result<(), String> {
+        use host_client::ordinary::OrdinaryKeyIndex;
+        if !self.host_foreground() || !ctx.input(|input| input.focused) {
+            return Err("Files requires the active unlocked application.".into());
+        }
+        service::locator(&target.locator).map_err(|_| "Invalid Files host locator")?;
+        let profiles = self
+            .profiles
+            .as_ref()
+            .ok_or("Account storage unavailable")?;
+        let store = profiles.store_handle();
+        if !store
+            .lock()
+            .map_err(|_| "Account storage unavailable")?
+            .accounts()
+            .contains(&target.account)
+        {
+            return Err("The original Files account changed.".into());
+        }
+        #[cfg(not(target_os = "android"))]
+        let root = profiles.host_approval_directory();
+        let local_root = super::sftp_link::documents_dir().ok_or("App Documents unavailable")?;
+        let identity_client = self
+            .tunnel_client()
+            .ok_or("Foreground account sign-in is not configured")?;
+        let token = self.sink.live.host.token(self.hosts.epoch);
+        let guard = files_account_guard(store, target.account.clone(), token.clone());
+        let publish = guard.clone();
+        let publish_guard = Arc::new(move || {
+            publish
+                .check()
+                .map_err(|_| festerm_sftp::SftpError::Cancelled)
+        });
+        let account = target.account.clone();
+        let locator = target.locator.clone();
+        let expected = target.expected.clone();
+        let budgets = self.hosts.budgets.clone();
+        let permit =
+            ConnectionPermit::reserve(&budgets).map_err(|_| "Too many active connections")?;
+        let connector = super::host_files::HostConnector::start(
+            local_root,
+            token.as_ref().clone(),
+            ctx,
+            publish_guard,
+            move |runtime, cancel| {
+                let identity = identity_client
+                    .prepare_account_identity(&account, cancel, &|| {
+                        guard
+                            .check()
+                            .map_err(|_| festerm_mobile_tunnels::TunnelError::Cancelled)
+                    })
+                    .map_err(|_| "Sign-in is unavailable for this account".to_owned())?;
+                drop(permit);
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                let index = OrdinaryKeyIndex::in_native_app_sandbox(native_host_approval_root(
+                    #[cfg(target_os = "ios")]
+                    &root,
+                )?);
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                let index = OrdinaryKeyIndex::in_app_sandbox(&root)
+                    .map_err(|_| "Protected sign-in storage is unavailable")?;
+                let files = runtime
+                    .block_on(host_client::ordinary::open_files(
+                        &identity,
+                        &locator,
+                        index,
+                        &budgets,
+                        guard.clone(),
+                        cancel,
+                        None,
+                    ))
+                    .map_err(|_| "Could not connect to files".to_owned())?
+                    .ok_or_else(|| "Files are disabled on this host".to_owned())?;
+                if !same_files_host(&expected, files.host_info()) {
+                    return Err("The selected host changed. Choose it again.".into());
+                }
+                guard.check().map_err(|_| "Connection cancelled")?;
+                Ok(files)
+            },
+        );
+        self.close_files();
+        self.files = Some(Box::new(super::files::FilesSession::connecting(
+            target.label.clone(),
+            "Dev Tunnels Files · Read-only".into(),
+            Box::new(connector),
+        )));
+        self.files_ctx.host = Some(target);
+        self.files_ctx.host_cancel = Some(token);
+        self.files_ctx.only = true;
+        self.park_active();
+        self.hosts.cancel();
+        self.hosts.open = false;
+        self.surface = Surface::Terminal;
+        self.switch_workspace(super::workspaces::Workspace::Files);
         Ok(())
     }
 
@@ -2879,6 +3033,9 @@ impl MobileApp {
                 })
                 .ok_or("Account selection expired. Open Settings to sign in.")?;
             if self.hosts.account != account.id {
+                if let Some(cancel) = &self.files_ctx.host_cancel {
+                    cancel.cancel();
+                }
                 self.hosts.clear_review();
                 self.hosts.hosts.clear();
                 self.hosts.discovered = false;
@@ -2911,6 +3068,31 @@ impl MobileApp {
                 self.hosts.host_collapsed = !self.hosts.host_collapsed;
             }
             return Ok(());
+        }
+        if matches!(action, Action::Files) {
+            if self.hosts.inventory.is_none() || self.hosts.ordinary.is_none() || self.hosts.busy()
+            {
+                return Err("Select an ordinary authenticated host before opening Files.".into());
+            }
+            let account = self.host_account().ok_or("Account unavailable")?;
+            let target = super::files_shell::HostFilesTarget {
+                account,
+                locator: self.hosts.locator.clone(),
+                expected: self
+                    .hosts
+                    .ordinary
+                    .as_ref()
+                    .ok_or("Host connection expired")?
+                    .host_info()
+                    .clone(),
+                label: self
+                    .hosts
+                    .selected
+                    .as_ref()
+                    .map(|r| r.name.clone())
+                    .unwrap_or_else(|| "Host files".into()),
+            };
+            return self.open_host_files_target(target, ctx);
         }
         if matches!(action, Action::QuickNew) {
             if !self.hosts.quick_creation_allowed() {

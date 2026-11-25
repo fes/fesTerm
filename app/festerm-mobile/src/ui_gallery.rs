@@ -272,6 +272,7 @@ fn fixture_files(rows: Vec<files::TransferRow>, ctx: &egui::Context) -> files::F
         "release-files".to_owned(),
         "SFTP · ops@files.example.net".to_owned(),
         files::Ready {
+            remote_write: true,
             remote: Arc::new(remote),
             local: Arc::new(local),
             local_root: PathBuf::from("/nonexistent-festerm-gallery"),

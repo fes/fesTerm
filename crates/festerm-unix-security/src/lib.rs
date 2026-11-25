@@ -722,7 +722,7 @@ mod imp {
         use nix::fcntl::OFlag;
 
         let mut flags = OFlag::O_DIRECTORY;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             flags |= OFlag::O_PATH;
         }
@@ -731,7 +731,12 @@ mod imp {
         {
             flags |= OFlag::from_bits_retain(nix::libc::O_SEARCH);
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        )))]
         {
             flags |= OFlag::O_RDONLY;
         }
@@ -744,6 +749,51 @@ mod imp {
                 "the path is not a directory",
             ))
         }
+    }
+
+    /// Opens an absolute directory without following any component. Ancestors
+    /// require search access only; the final selected directory is readable.
+    /// Callers normalize documented platform aliases before this operation.
+    pub fn open_absolute_directory_read_nofollow(path: &Path) -> io::Result<File> {
+        use nix::{
+            fcntl::{open, OFlag},
+            sys::stat::Mode,
+        };
+        use std::{os::unix::fs::MetadataExt, path::Component};
+        if !path.is_absolute() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let mut flags = OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            flags |= OFlag::O_PATH;
+        }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            flags |= OFlag::from_bits_retain(nix::libc::O_SEARCH);
+        }
+        let mut directory =
+            File::from(open(Path::new("/"), flags, Mode::empty()).map_err(io::Error::from)?);
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir() || metadata.nlink() == 0 || metadata.uid() != 0 {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        let mut components = path.components().peekable();
+        while let Some(component) = components.next() {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(name) => {
+                    directory = if components.peek().is_some() {
+                        open_directory_search_nofollow(&directory, Path::new(name))?
+                    } else {
+                        open_directory_read_nofollow(&directory, Path::new(name))?
+                    };
+                }
+                _ => return Err(io::ErrorKind::PermissionDenied.into()),
+            }
+        }
+        // The root-only case also returns a readable capability.
+        reopen_directory_read(&directory)
     }
 
     /// Reopens an exact directory capability with read access so its directory
@@ -1274,12 +1324,13 @@ pub use imp::{
     create_download_file, create_private_directory, current_user_home, current_user_id,
     current_user_shell, download_file_matches, is_current_user_only,
     is_current_user_only_executable, make_private, make_private_directory,
-    open_directory_read_nofollow, open_directory_search_nofollow, open_download_parent,
-    open_file_nofollow, open_private_file, preserve_security_metadata, remove_download_file,
-    remove_empty_private_directory, remove_private_staging_file, rename_noreplace,
-    reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
-    trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
+    open_absolute_directory_read_nofollow, open_directory_read_nofollow,
+    open_directory_search_nofollow, open_download_parent, open_file_nofollow, open_private_file,
+    preserve_security_metadata, remove_download_file, remove_empty_private_directory,
+    remove_private_staging_file, rename_noreplace, reopen_directory_read, replace_private_file,
+    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
+    trusted_packaged_executable_ancestor, trusted_private_storage_ancestor, writable_directory,
+    SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(target_os = "macos")]
@@ -1301,6 +1352,29 @@ mod tests {
         process,
         sync::atomic::{AtomicU64, Ordering},
     };
+
+    #[test]
+    fn absolute_directory_walk_rejects_aliases_and_preserves_search_only_ancestors() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let directory = TemporaryDirectory::new();
+        let root = fs::canonicalize(&directory.0).unwrap();
+        let parent = root.join("search-only");
+        let selected = parent.join("selected");
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&selected).unwrap();
+        let original = fs::metadata(&parent).unwrap().permissions();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o111)).unwrap();
+        let opened = open_absolute_directory_read_nofollow(&selected);
+        fs::set_permissions(&parent, original).unwrap();
+        assert!(opened.is_ok());
+        symlink(&parent, root.join("alias-parent")).unwrap();
+        symlink(&selected, root.join("alias-selected")).unwrap();
+        assert!(
+            open_absolute_directory_read_nofollow(&root.join("alias-parent/selected")).is_err()
+        );
+        assert!(open_absolute_directory_read_nofollow(&root.join("alias-selected")).is_err());
+        assert!(open_absolute_directory_read_nofollow(Path::new("relative")).is_err());
+    }
 
     #[test]
     fn download_parent_refuses_non_directory_and_fifo_without_opening_them() {

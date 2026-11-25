@@ -16,6 +16,8 @@ mod files_ui;
 mod forms;
 #[cfg(feature = "host-clients")]
 mod host_clients;
+#[cfg(feature = "host-clients")]
+mod host_files;
 mod host_setup;
 mod key_press;
 #[cfg(feature = "live-ssh")]
@@ -5194,6 +5196,7 @@ mod tests {
             "release-files".to_owned(),
             "SFTP · ops@files.example.net".to_owned(),
             files::Ready {
+                remote_write: true,
                 remote: fs(festerm_sftp::PaneKind::Remote, "/srv"),
                 local: fs(festerm_sftp::PaneKind::Local, ""),
                 local_root: std::path::PathBuf::from("/nonexistent-festerm-test"),

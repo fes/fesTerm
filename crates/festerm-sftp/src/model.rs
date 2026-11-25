@@ -128,7 +128,7 @@ pub struct Listing {
 }
 
 /// Applies hidden/filter/sort/result-bound handling to scanned entries.
-pub(crate) fn finish_listing(
+pub fn finish_listing(
     path: String,
     mut entries: Vec<Entry>,
     scan_truncated: bool,

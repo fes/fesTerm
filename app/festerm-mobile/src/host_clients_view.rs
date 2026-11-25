@@ -664,6 +664,9 @@ impl MobileApp {
             }
             return;
         }
+        if self.hosts.ordinary.is_some() && secondary(ui, "Files", !busy) {
+            *action = Some(Action::Files);
+        }
         let inventory = self.hosts.inventory.as_ref().expect("checked inventory");
         ui.horizontal(|ui| {
             let create = self.hosts.quick_creation_allowed();

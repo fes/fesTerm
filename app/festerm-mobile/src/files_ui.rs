@@ -601,7 +601,13 @@ fn transfer_buttons(ui: &mut Ui, session: &mut FilesSession) {
         } else {
             format!("Download {download_count}")
         };
-        let up = button_sized(ui, ButtonKind::Primary, &upload, upload_count > 0, size);
+        let up = button_sized(
+            ui,
+            ButtonKind::Primary,
+            &upload,
+            upload_count > 0 && session.remote_write,
+            size,
+        );
         let down = button_sized(
             ui,
             ButtonKind::Secondary,
@@ -762,7 +768,7 @@ fn connecting_body(ui: &mut Ui, session: &mut FilesSession, outcome: &mut FilesO
             );
             ui.add_space(space::LG);
             ui.allocate_ui(egui::vec2(220.0, 48.0), |ui| {
-                if button(ui, ButtonKind::Primary, "Try again", true).clicked() {
+                if button(ui, ButtonKind::Primary, "Reconnect", true).clicked() {
                     outcome.retry = true;
                 }
             });

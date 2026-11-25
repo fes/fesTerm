@@ -311,6 +311,32 @@ iOS pasteboard, and opens the exact embedded installer in a read-only
 monospace viewer with Copy script. The app never runs or fetches the script.
 Gallery states: `host-setup`, `host-setup-linux`, `host-script`.
 
+### Read-only Dev Tunnels Files
+
+With `host-clients`, an authenticated host inventory also offers **Files**,
+independently of shell-creation policy. It opens a separate ordinary Files
+channel, using the existing account, native key index and privacy lifetime;
+it never attaches or creates a shell. The existing stacked panes support rooted
+browse/stat, downloads up to 16 MiB into app Documents, and the existing bounded
+Markdown preview. Upload and all remote mutations remain unavailable in this
+first slice, even when the host advertises write permission. SFTP profiles retain
+their existing behavior.
+
+Downloads use retained local directory/file identities, conditional cleanup and
+no-replace publication. Existing files and replacement partials are preserved;
+uncertain ownership refuses publication/cleanup. These checks are negative
+fences, not immunity to hostile same-user filesystem races. Actual successful
+writes update byte progress. A closed/cancelled connection retains inert target
+metadata for explicit **Reconnect**; a fresh connection never replays transfers.
+Cancelling queued work skips only that item. Cancelling an active download may
+retire its Files connection; unrelated terminal sessions remain unchanged.
+Lock, suspension, account removal and target/account changes fence pending and
+established work. Retirement discards pending automatic previews, including a
+just-completed download; it preserves local files and explicit local preview.
+Native iOS/Android Files qualification and mobile read-write
+support remain separate pending work.
+There is no crash-resume or durable partial-file recovery ledger in this slice.
+
 ### Files and SFTP (ADR 0060)
 
 `files.rs` / `files_ui.rs` / `files_shell.rs` implement the Files screen

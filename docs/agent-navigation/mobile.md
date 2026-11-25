@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "39d8a71d41658e3d538843fdf1bb271eaf427dcd3e10d262b6afd5e34e7a6aed"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "4619308ef43584f74d21d205d7a043f010e83aaeff869e3757aefa5464c884c4"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -48,17 +48,17 @@ Caveats:
 
 ## Documents and files
 
-Use for: When native docs or files are previewed, edited, or saved?
+Use for: document authority and file browsing.
 
 - [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns source authorities, preview state, and dirty-save policy.
+
+- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Opens ordinary read-only Files with account/privacy fences, progress and retained local staging.
 
 Evidence:
 - [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs)
 
 Caveats:
-- Saved documents stay private and avoid overwriting provider originals.
-- Markdown preview and edit state are view-local; stale selections are rejected.
-- Open and import paths are bounded and sanitized before they reach writable local copies.
+- Private copies preserve originals; Markdown/edit state is view-local. Imports are bounded and sanitized.
 
 ## Live SSH shell
 
