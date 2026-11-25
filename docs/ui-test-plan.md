@@ -142,6 +142,15 @@ include it; rendering snapshots retain their existing Windows/non-Windows
 baselines. These are cache-stage checks, not GPU memory, RSS or native CPU
 acceptance. See the [allocation oracle](../validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle).
 
+One parameterized terminal-run regression compares actual suffix pixels against a
+prefix-only frame at 54×24 and 1×, both cold 11 pt and after 14→13→12→11 pt.
+Known public CWD/MCP rows cover normal, faint and concealed text with the
+observed RGB values and the default-prefix/suffix-style control. Terminal cells own wrapping; a shaped style run must not
+create an extra galley row that the terminal's one-row clip would hide. Existing
+wide-cell, hyperlink, selection and clipping tests retain those boundaries.
+This is automated renderer coverage; native qualification of the corrected GUI
+remains separate.
+
 The glyph-layout retirement oracle fills the unchanged 4,096-entry bound,
 refreshes a hot entry, and requires one capacity-crossing miss to preserve
 4,095 old entries while retiring the least-recently-used one. A churn fixture
