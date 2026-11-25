@@ -4007,36 +4007,7 @@ impl SftpFileManagerTab {
                     .show(ui, |ui| {
                         show_transfer_history_rows(ui, &self.transfer_drawer.items, |ui, item| {
                             ui.separator();
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(
-                                    RichText::new(item.request.source.display())
-                                        .font(font_for_text_role(SftpTextRole::TableBody))
-                                        .color(theme::TEXT_PRIMARY),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "→ {}",
-                                        item.destination
-                                            .as_ref()
-                                            .unwrap_or(&item.request.destination)
-                                            .display()
-                                    ))
-                                    .font(font_for_text_role(SftpTextRole::TableMetadata))
-                                    .color(theme::TEXT_SECONDARY),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(
-                                            RichText::new(transfer_state_label(&item.state))
-                                                .font(font_for_text_role(
-                                                    SftpTextRole::TransferMeta,
-                                                ))
-                                                .color(transfer_state_color(&item.state)),
-                                        );
-                                    },
-                                );
-                            });
+                            show_transfer_history_heading(ui, item);
                             if let Some(total) = item.total_bytes {
                                 let progress = if total == 0 {
                                     0.0
@@ -4964,6 +4935,57 @@ fn show_transfer_drawer_heading<Id: Copy + Eq + std::hash::Hash>(
         });
     });
     command
+}
+
+fn show_transfer_history_heading<Id>(ui: &mut Ui, item: &TransferHistoryItem<Id>) {
+    let state = ui.painter().layout_no_wrap(
+        transfer_state_label(&item.state).to_owned(),
+        font_for_text_role(SftpTextRole::TransferMeta),
+        transfer_state_color(&item.state),
+    );
+    let mut paths = egui::text::LayoutJob::default();
+    paths.append(
+        &item.request.source.display(),
+        0.0,
+        egui::TextFormat {
+            font_id: font_for_text_role(SftpTextRole::TableBody),
+            color: theme::TEXT_PRIMARY,
+            ..Default::default()
+        },
+    );
+    paths.append(
+        &format!(
+            " → {}",
+            item.destination
+                .as_ref()
+                .unwrap_or(&item.request.destination)
+                .display()
+        ),
+        0.0,
+        egui::TextFormat {
+            font_id: font_for_text_role(SftpTextRole::TableMetadata),
+            color: theme::TEXT_SECONDARY,
+            ..Default::default()
+        },
+    );
+    let path_width = ui.available_width() - state.size().x - ui.spacing().item_spacing.x;
+    if path_width < 80.0 {
+        // Keep the state visible even when a long path needs many wrapped lines.
+        ui.label(state);
+        ui.add(egui::Label::new(paths).wrap());
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(path_width, 0.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.set_min_width(path_width);
+                    ui.add(egui::Label::new(paths).wrap());
+                },
+            );
+            ui.label(state);
+        });
+    }
 }
 
 fn show_transfer_history_rows<Id: std::hash::Hash + std::fmt::Debug>(
@@ -7976,6 +7998,104 @@ pub(crate) mod tests {
         assert_eq!(history.retired_finished, 384);
         assert!(history.item_mut(0).is_none());
         assert!(history.item_mut(511).is_some());
+    }
+
+    #[test]
+    fn gui_sftp_transfer_paths_do_not_overlap_state() {
+        fn text_shapes<'a>(shape: &'a egui::Shape, out: &mut Vec<&'a egui::epaint::TextShape>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        text_shapes(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (width, long_paths) in [180.0, 320.0, 780.0, 1076.0]
+            .into_iter()
+            .flat_map(|width| [false, true].map(|long_paths| (width, long_paths)))
+        {
+            let mut tab = test_tab();
+            for event in festerm_ssh::gallery_transfer_events(false) {
+                tab.apply_transfer_event(event);
+            }
+            let id = tab.transfer_drawer.items[0].transfer_id;
+            tab.transfer_drawer = TransferDrawerState::default();
+            let mut request = history_request();
+            let repeats = if long_paths { 8 } else { 0 };
+            request.source = SftpPath::remote(format!(
+                "/source/{}/one.txt",
+                "long-source/".repeat(repeats)
+            ));
+            request.destination = SftpPath::local(format!(
+                "/target/{}/one.txt",
+                "long-target/".repeat(repeats)
+            ));
+            tab.transfer_drawer.upsert(id, request).state = SftpTransferState::Completed;
+            let context = egui::Context::default();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Frame::new()
+                        .inner_margin(16)
+                        .show(ui, |ui| tab.show_transfer_drawer(ui));
+                },
+            );
+            output.textures_delta.clear();
+            let mut texts = Vec::new();
+            for clipped in &output.shapes {
+                text_shapes(&clipped.shape, &mut texts);
+            }
+            let state = texts
+                .iter()
+                .find(|text| text.galley.job.text == "Completed")
+                .expect("state is painted");
+            let state_rect = state.visual_bounding_rect();
+            assert!(
+                state_rect.left() >= 28.0 - 1.0 && state_rect.right() <= width - 28.0 + 1.0,
+                "state stays within padded drawer at {width}: {state_rect:?}"
+            );
+            if width >= 320.0 {
+                assert!(
+                    (state_rect.right() - (width - 28.0)).abs() < 3.0,
+                    "state retains trailing alignment for short and wrapped paths at {width}: {state_rect:?}"
+                );
+            }
+            let paths: Vec<_> = texts
+                .iter()
+                .filter(|text| {
+                    text.galley.job.text.contains("/source/")
+                        || text.galley.job.text.contains("/target/")
+                })
+                .collect();
+            for token in ["/source/", "/target/"] {
+                assert!(
+                    paths
+                        .iter()
+                        .any(|path| path.galley.job.text.contains(token)),
+                    "both paths remain painted: {token} at {width}"
+                );
+            }
+            for path in paths {
+                let rect = path.visual_bounding_rect();
+                assert!(
+                    !rect.intersects(state_rect),
+                    "path overlaps state at {width}: {rect:?} / {state_rect:?}"
+                );
+                assert!(
+                    rect.left() >= 28.0 - 1.0 && rect.right() <= width - 28.0 + 1.0,
+                    "path stays within padded drawer at {width}: {rect:?}"
+                );
+            }
+        }
     }
 
     #[test]

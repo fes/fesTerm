@@ -104,7 +104,7 @@ release. Historical local references and supporting SDK routes stay attributed.
 | Android → macOS | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-off.json) | [Functional; visual text open](../validation/dev-tunnels/android-client-mac-native-on.json) |
 | iOS → Linux | [Functional, attributed composite](../validation/dev-tunnels/ios-client-linux-native-off.json) | [Functional, explicit ON/OFF composition](../validation/dev-tunnels/ios-client-linux-native-on.json) |
 | iOS → Windows | [Functional, attributed composite](../validation/dev-tunnels/ios-client-windows-native-off.json) | [Functional, mixed cohorts](../validation/dev-tunnels/ios-client-windows-native-on.json) |
-| iOS → macOS | [Functional; current pairs agree](../validation/dev-tunnels/ios-client-mac-native-off.json) | [Functional; ON navigation variance retained](../validation/dev-tunnels/ios-client-mac-native-on.json) |
+| iOS → macOS | [Functional; current pairs agree](../validation/dev-tunnels/ios-client-mac-native-off.json) | [Functional; reviewed ON pairs agree](../validation/dev-tunnels/ios-client-mac-native-on.json) |
 
 The first two iOS functional records are [Linux OFF](../validation/dev-tunnels/ios-client-linux-native-off.json)
 and [Windows ON](../validation/dev-tunnels/ios-client-windows-native-on.json). They
@@ -138,16 +138,17 @@ adds one persistent login-shell creation at HOME, System and app-key input,
 foreground reopening and a new saved AttachOnly profile. Both raw pairs agree
 except for case labels and elapsed time, including PENDIN changes and descriptor
 restoration. With the local font at its default 14 points, the full CWD suffix,
-MCP wording and body wrapping agree with the corresponding ON iOS frames. Tall local
-navigation shows Pull requests; remote navigation shows Issues plus an arrow.
-That navigation variance remains open. The historical Android 11-point text
+MCP wording and body wrapping agree with the corresponding ON iOS frames. Both
+exact tall originals show Pull requests followed by an arrow; later review
+corrected the earlier omission description without a new native run. The historical Android 11-point text
 differences remain unexplained; this case does not establish identical overall
 visuals, pixel identity or a fix based on unsetting environment variables.
 The [Mac OFF case 24](../validation/dev-tunnels/ios-client-mac-native-off.json)
 completes the functional matrix using the existing saved target under OFF49,
 with actual input, foreground reopening and two fresh query/CLI pairs. Current
-OFF body text, CWD, MCP wording, navigation, wrapping and palette agree at both grids. Older ON
-navigation and Android text differences remain unexplained. Supporting OFF45
+OFF body text, CWD, MCP wording, navigation, wrapping and palette agree at both grids. The earlier ON
+navigation description was corrected from its exact originals; historical Android
+text differences remain unexplained. Supporting OFF45
 SDK proof is separately attributed and was not replayed. Original ON51 and
 all 18 actors, catalog prefix `7ec3`, 27 operations, metadata and cleanup were verified at
 the closed case boundary. A later TestFlight build-memory booking is separate.

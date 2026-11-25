@@ -615,6 +615,8 @@ aggregate/per-item byte fractions against a distinct palette track, including
 zero and completed progress. The production paint regression
 `gui_sftp_transfer_drawer_fits_and_paints_proportional_progress` checks finite
 panel bounds, padding and both painted fill ratios at narrow and desktop widths.
+`gui_sftp_transfer_paths_do_not_overlap_state` checks reserved trailing status,
+wrapped paths and a stacked fallback without overlapping glyph bounds or losing padding.
 Headless gallery captures complement those geometry checks; native DPI and
 live-transfer usability remain manual.
 

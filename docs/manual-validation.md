@@ -1175,8 +1175,8 @@ boundary remains unproved. No final-release status is inferred. The matrix now
 has all twenty-four pinned functional cases accepted (desktop 12/12, Android6/6,
 iOS6/6), with no partial or unstarted cases after the separately attributed
 Android and iOS records below. Historical
-Android 11-point text variance and historical iOS ON tall-navigation variance remain
-open; these counts do not establish identical overall TUI output. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
+Android 11-point text variance remains open. The earlier iOS ON tall-navigation
+description was corrected by reviewing its exact originals; these counts do not establish identical overall TUI output. The [Mac-client/Windows-server creation-ON record](../validation/dev-tunnels/mac-client-windows-native.json)
 adds one named persistent shell, a saved generation-pinned AttachOnly shortcut,
 normal reconnect and two fresh74×20/70×19 Copilot/query/environment pairs.
 It composes MacGUI19, Windows localGUI19 and signed WindowsHOST/daemon15; all
@@ -3048,12 +3048,16 @@ the earlier unqualified profile-picker attempt and original harness refusals are
 retained in the attributed private receipts. The screenshots predate the
 breadcrumb correction and do not qualify it.
 
+The [packaged Mac26 forwarded-SFTP component](../validation/sftp/macos-forwarded-native-controls-0.17.26.json) qualifies a 24-byte download, Unicode/spaced folder creation and reviewed Delete Cancel/Confirm with normal cleanup. It uses a temporary loopback SSH forward; direct LAN and the narrow toolbar remain unqualified. Its original images retain the long-path/status overlap and do not qualify the later layout fix.
+
+The [packaged Windows24 direct-SFTP component](../validation/sftp/windows-direct-native-controls-0.17.24.json) separately qualifies an exact 24-byte download, Unicode/spaced directory creation and Delete Cancel/Confirm over the direct VM LAN route. The disposable key and temporary public grant were removed after normal app/job drain; original three-VM state was preserved. Full-background screenshots remain private. Narrow layout and interruption/recovery are not qualified by this component.
+
 ### SFTP GUI backlog and transfer history
 
 For `SFTPG-02`, the production drawer paint regression checks both percent and
 byte bars at 320/640/1180 logical-pixel widths and 0/25/50/100% progress: finite
 panel bounds, retained inner padding, contrasting remaining tracks and correct
-filled widths. Review the normal and narrow transfer gallery captures; native
+filled widths. The long-path paint regression also checks non-overlapping state/path glyph bounds inside the padded drawer at 180/320/780/1076 logical pixels, including the stacked fallback. Review the normal and narrow transfer gallery captures; native
 Windows/macOS/Linux DPI, short-window scrolling and live-transfer visual
 usability remain manual. This layout fix does not change transfer admission,
 collision decisions or partial-file ownership.
@@ -6500,15 +6504,15 @@ numeric OS/child-exit codes, and explicit unavailable lifecycle/daemon/endpoint
 attribution. Ordinary startup has no trusted caller-issued generation, so it must
 not guess one or display another actor's ring. Close the Inspector, visit another
 tab and return: it must stay closed and retain only that failed attempt's facts.
-A replacement/reconnect generation must not retain them. Use **Copy startup
+A replacement/reconnect generation must not retain them. The [signed Mac27 native Copy component](../validation/local-startup-diagnostics-native-macos-0.17.27.json) qualifies one actual Copy/readback and same-tab Inspector retention after a controlled local startup failure, with original HOST/session state preserved and normal drain. It does not qualify remote startup history or other-OS native clipboard behavior. Use **Copy startup
 diagnostics** to copy only that typed snapshot; it is separate from **Copy redacted
 routing report**. Confirm no generic error, path, command, stderr or recording
 content is copied, and the control disappears without typed evidence. Rendered
 route/clipboard and absent/sibling/replacement fixtures are automated; native
-clipboard delivery remains pending. There is no automatic retry/restart or remote
+clipboard delivery outside the pinned Mac27 component remains pending. There is no automatic retry/restart or remote
 HOST diagnostic delivery. Portable tests cover privacy,
 bounded noncreating reads, actual controlled child failure and UI isolation;
-actual native pre-Ready classification/rendering remains pending.
+native pre-Ready classification/rendering outside the attributed accepted components remains pending.
 
 HOSTSETUP-01 / HOST-04 / DIAG-01: qualify the dedicated macOS diagnostic fence
 with a fresh pre-command frame proving no existing prompt, one authenticated
@@ -7203,7 +7207,8 @@ config/vault/credential-reference/private SDK logs are published.
 Current totals are 24/24 pinned functional cases (desktop 12/12, Android6/6,
 iOS6/6), with no partial or unstarted cases. All six Android and six iOS cases
 are accepted on their attributed producers. Historical Android text variance
-and ON navigation variance remain unexplained; the current OFF pairs agree.
+remains unexplained; current iOS ON and OFF pairs agree after correcting the
+earlier ON navigation description from its exact originals.
 
 
 ### iOS→Linux OFF pinned functional case19
@@ -7349,7 +7354,7 @@ identical overall TUI output, one combined-release qualification or additional
 native keyboard coverage.
 
 
-### iOS→Mac ON pinned functional case 23; navigation variance open
+### iOS→Mac ON pinned functional case 23; original-image review correction
 
 DT-02 / MOB-06 / HOST-02: the [case 23 record](../validation/dev-tunnels/ios-client-mac-native-on.json)
 adds one persistent creation under ON47: session `5e40`, generation
@@ -7366,10 +7371,10 @@ upgrade and TestFlight qualification are not part of this case.
 
 Four public original screenshots and four raw reports show that the current
 local default 14-point CWD label, including suffix `r22`, MCP wording, body wrapping
-and palette agree with the corresponding iOS frames at both grids. Tall local
-top navigation shows Pull requests; remote navigation shows Issues plus an arrow.
-That variance remains open. Identical navigation, pixel identity and identical
-overall TUI output are not claimed. Historical Android 11-point CWD/MCP differences
+and palette agree with the corresponding iOS frames at both grids. Later review
+of the exact tall originals confirms that both show Pull requests and an arrow;
+the earlier omission description was mistaken. This is an evidence-description
+correction without a new native run, not a product fix or a pixel-identity claim. Historical Android 11-point CWD/MCP differences
 remain unexplained and are not relabeled fixed. Both isolated local GUIs initially
 launched sh as a login shell, then explicitly used exec to replace it with a zsh
 login shell in the same owned PTY. No environment-unset normalization or alternate
@@ -7403,8 +7408,8 @@ ten singleton observations, 202 bytes, DSR1,1, six actual environment values,
 PENDIN and terminal/descriptor restoration. Four original screenshots and four
 raw reports are public. Current OFF body text, full CWD, MCP wording, navigation,
 wrapping and palette agree at both grids; both tall images include Pull requests.
-Older ON navigation and Android 11-point text differences remain unexplained,
-not relabeled fixed. No pixel identity or identical overall TUI output is claimed.
+The older ON navigation description was corrected by reviewing its exact originals.
+Android 11-point text differences remain unexplained and are not relabeled fixed. No pixel identity or identical overall TUI output is claimed.
 The local OFF PNGs are byte-identical to the corresponding ON local PNGs, with
 separate fresh OFF source captures, CLI identities, raw reports and phase proofs
 retained. No crop, reconstruction or private production/control capture is used.
