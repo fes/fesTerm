@@ -3050,6 +3050,8 @@ breadcrumb correction and do not qualify it.
 
 The [packaged Mac26 forwarded-SFTP component](../validation/sftp/macos-forwarded-native-controls-0.17.26.json) qualifies a 24-byte download, Unicode/spaced folder creation and reviewed Delete Cancel/Confirm with normal cleanup. It uses a temporary loopback SSH forward; direct LAN and the narrow toolbar remain unqualified. Its original images retain the long-path/status overlap and do not qualify the later layout fix.
 
+The [packaged Windows24 direct-SFTP component](../validation/sftp/windows-direct-native-controls-0.17.24.json) separately qualifies an exact 24-byte download, Unicode/spaced directory creation and Delete Cancel/Confirm over the direct VM LAN route. The disposable key and temporary public grant were removed after normal app/job drain; original three-VM state was preserved. Full-background screenshots remain private. Narrow layout and interruption/recovery are not qualified by this component.
+
 ### SFTP GUI backlog and transfer history
 
 For `SFTPG-02`, the production drawer paint regression checks both percent and

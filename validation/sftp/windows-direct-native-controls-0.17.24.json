@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "component": "Windows desktop graphical SFTP over direct LAN",
+  "status": "Scoped native workflow passed",
+  "client": {
+    "version": "0.17.24",
+    "source_sha": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+    "cohort": "Cached genuine signed Windows ARM64 GUI24",
+    "main_sha256": "6de56b407bab846004929b8c962eca2ac9bfda81e34c5fdd1c1488013d983d30",
+    "runtime_closed_file_map_sha256": "1e8c6705f590c3101ac08b05f8bdc93faf8ba7c9876bb5a96a825940eda4dc04"
+  },
+  "observed": {
+    "private_key_import": "Ordinary Windows chooser imported one key created for this test, with masked GUI display.",
+    "host_verification": "One direct application-owned SSH socket had the exact reviewed source and server. The first ED25519 confirmation matched the pinned server fingerprint. Accept Once proceeded after the source-bound temporary public grant was active.",
+    "download": {
+      "bytes": 24,
+      "sha256": "129cf94ae221185db12c4d487002ebcdf0772ce427b9ea12b75661b8973037e0",
+      "destination_leaf_count": 1,
+      "partial_file_present": false
+    },
+    "directory": {
+      "name": "Café test folder",
+      "normal_create": true,
+      "empty": true,
+      "first_delete_cancel_kept_same_inode": true,
+      "second_review_confirm_removed_only_owned_folder": true,
+      "existing_download_source_preserved": true
+    }
+  },
+  "cleanup": {
+    "normal_gui_exit_code": 0,
+    "gui_job_and_input_drained": true,
+    "owned_tasks_and_direct_socket_gone": true,
+    "exact_generated_key_pair_retired_by_handle": true,
+    "private_key_contents_exported": false,
+    "temporary_public_grant_removed": true,
+    "original_authorized_keys_bytes": 97,
+    "original_authorized_keys_byte_exact": true,
+    "cleanup_watchdog_and_scoped_sftp_absent": true,
+    "preserved_host_epochs": {
+      "windows": 82,
+      "linux": 95,
+      "macos": 51
+    },
+    "protected_actor_counts": {
+      "windows": 33,
+      "linux": 26,
+      "macos": 18
+    }
+  },
+  "first_observations_retained": [
+    "The first keygen command refused before dispatch because the controller path was malformed. One actual Windows OpenSSH key generation succeeded. Its default leaf ACLs required the planned tightening on the exact generated files before import.",
+    "Capture and picker controller refusals included incomplete guest frames, an ambiguous implicit window index, a modifierless Home-key validation error, one partial double-click selection, and native transport observer errors. Exact visible target state was established before effectful actions.",
+    "The first Unicode input refused at the foreground guard before sending text. A later raw UTF-8 draft displayed mojibake through the Windows PowerShell 5.1 controller and was never submitted. The exact same literal, transported as ASCII JSON with a Unicode escape, was reviewed visibly before the sole Create."
+  ],
+  "scope_limits": [
+    "Ordinary two-pane layout only. Narrow responsive geometry and interruption/recovery were outside this Windows increment.",
+    "The Linux grant was source- and time-limited and forced SFTP with a controlled starting directory. The directory setting was not a filesystem jail.",
+    "The result uses the signed Windows GUI24 cohort and does not qualify later package versions or direct macOS LAN behavior."
+  ],
+  "private_screenshots": [
+    {
+      "name": "W-20-FIRST-HOST-KEY-PAUSE.png",
+      "sha256": "59e88f6df55714ed32ef2236a29f39ea692dc1c8d500908fa941e073d87813b1",
+      "bytes": 114511,
+      "availability": "Retained privately for local review"
+    },
+    {
+      "name": "W-23-FIRST-DIRECT-AUTHENTICATED-BROWSER.png",
+      "sha256": "d8168097ebbedd259324e4164f4d03d2299961c36be36dad403cb2b0b04bfd4c",
+      "bytes": 171575,
+      "availability": "Retained privately for local review"
+    },
+    {
+      "name": "W-30B-COMPLETED-DIRECT-DOWNLOAD.png",
+      "sha256": "eb8995297fdf9af88105c4bf1f240cba2e9f34356a16c2eb715af4fff4508681",
+      "bytes": 148775,
+      "availability": "Retained privately for local review"
+    },
+    {
+      "name": "W-32J-EXACT-CORRECTLY-DECODED-PROPOSAL.png",
+      "sha256": "cc316b681fc006f3a6d74ec808787952b3ca44ec8f28c653d6cb485c6d4ab1ca",
+      "bytes": 328127,
+      "availability": "Retained privately for local review"
+    },
+    {
+      "name": "W-34B-FIRST-EXACT-EMPTY-DIR-REVIEW.png",
+      "sha256": "d389c7fc384e8688db232d174a977dc89dd3e4f6968cc9dc42e233ff2c0475ea",
+      "bytes": 331250,
+      "availability": "Retained privately for local review"
+    },
+    {
+      "name": "W-36B-SECOND-EXACT-EMPTY-DIR-REVIEW.png",
+      "sha256": "bf3535ec1e3deab6a79c2de1079e8aa881aa5d1a6a5d3f1c5bba103590b91d57",
+      "bytes": 331671,
+      "availability": "Retained privately for local review"
+    },
+    {
+      "name": "W-37B-ONLY-EMPTY-DIR-GONE.png",
+      "sha256": "8078f64afadb8606cc6093b192c996ea8a964f069577435bb377daef6d733bfa",
+      "bytes": 159370,
+      "availability": "Retained privately for local review"
+    }
+  ],
+  "accepted_receipt": {
+    "name": "ROOT-WINDOWS24-SFTP-FUNCTIONAL-ACCEPTANCE.json",
+    "bytes": 1106,
+    "sha256": "95039d8d023ec1a1e87c51d9ad1ff8e40046c4078d1eac147b3716bff36f5e72"
+  },
+  "source_packet": {
+    "name": "FINAL-WINDOWS24-DIRECT-SFTP-DOWNLOAD-DIRECTORY-PRESERVED.json",
+    "bytes": 14286,
+    "sha256": "4f19eaa9daa5728fbccb75b36c76982c71e7d735574fbba95295d4dc16e2adf9"
+  }
+}
