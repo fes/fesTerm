@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "277c8b1c2bd18b6bb8f933c33934a7e1719afee4b738bddde08a415bcc4cc2c2"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "49847c4cdb79b949b972404b16c97d11e1439df9dc36193076986e67fce8bfda"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

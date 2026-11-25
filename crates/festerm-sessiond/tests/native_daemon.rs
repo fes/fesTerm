@@ -2860,6 +2860,7 @@ fn native_startup_evidence_is_bounded_typed_and_read_only() {
             stage: festerm_sessiond::lifecycle::FailureStage::ShellSpawn,
             os_code: Some(5),
             recovery: None,
+            registration: None,
         },
     )
     .unwrap();

@@ -34,10 +34,62 @@ pub enum Event {
         os_code: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         recovery: Option<RecoveryFailureCategory>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        registration: Option<RegistrationFailure>,
     },
     Shutdown {
         success: bool,
     },
+}
+
+/// A failed starter operation, never a socket path or an error string.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RegistrationFailure {
+    pub operation: RegistrationOperation,
+    pub kind: RegistrationErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationOperation {
+    SocketPath,
+    RegistryRead,
+    ChildPoll,
+    ChildExited,
+    Timeout,
+    #[serde(other)]
+    Unclassified,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationErrorKind {
+    NotFound,
+    PermissionDenied,
+    WouldBlock,
+    InvalidInput,
+    InvalidData,
+    Interrupted,
+    TimedOut,
+    Other,
+    #[serde(other)]
+    Unclassified,
+}
+
+impl RegistrationErrorKind {
+    pub fn from_io_kind(kind: io::ErrorKind) -> Self {
+        match kind {
+            io::ErrorKind::NotFound => Self::NotFound,
+            io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            io::ErrorKind::WouldBlock => Self::WouldBlock,
+            io::ErrorKind::InvalidInput => Self::InvalidInput,
+            io::ErrorKind::InvalidData => Self::InvalidData,
+            io::ErrorKind::Interrupted => Self::Interrupted,
+            io::ErrorKind::TimedOut => Self::TimedOut,
+            io::ErrorKind::Other => Self::Other,
+            _ => Self::Unclassified,
+        }
+    }
 }
 
 /// Finite recovery-encoder evidence, never terminal content or an error string.
@@ -243,6 +295,7 @@ mod tests {
             stage: FailureStage::Daemon,
             os_code: None,
             recovery: Some(RecoveryFailureCategory::Validation),
+            registration: None,
         };
         let bytes = serde_json::to_vec(&event).unwrap();
         let legacy: LegacyEvent = serde_json::from_slice(&bytes).unwrap();
@@ -254,6 +307,7 @@ mod tests {
                 stage: FailureStage::Daemon,
                 os_code: None,
                 recovery: None,
+                registration: None,
             }
         );
         let future: Event = serde_json::from_str(
@@ -266,6 +320,7 @@ mod tests {
                 stage: FailureStage::Daemon,
                 os_code: None,
                 recovery: Some(RecoveryFailureCategory::Unclassified),
+                registration: None,
             }
         );
 
@@ -291,6 +346,96 @@ mod tests {
     }
 
     #[test]
+    fn registration_failure_is_optional_forward_compatible_and_stop_safe() {
+        #[derive(Deserialize, Serialize)]
+        #[serde(rename_all = "snake_case")]
+        enum LegacyEvent {
+            Failure {
+                stage: FailureStage,
+                os_code: Option<i32>,
+            },
+        }
+        #[derive(Deserialize, Serialize)]
+        #[serde(deny_unknown_fields)]
+        struct LegacyEntry {
+            timestamp_ms: u128,
+            pid: u32,
+            generation: u128,
+            event: LegacyEvent,
+        }
+        let event = Event::Failure {
+            stage: FailureStage::Registration,
+            os_code: None,
+            recovery: None,
+            registration: Some(RegistrationFailure {
+                operation: RegistrationOperation::RegistryRead,
+                kind: RegistrationErrorKind::PermissionDenied,
+            }),
+        };
+        let entry = Entry {
+            timestamp_ms: 1,
+            pid: 7,
+            generation: 9,
+            event: event.clone(),
+        };
+        let bytes = serde_json::to_vec(&entry).unwrap();
+        let legacy: LegacyEntry = serde_json::from_slice(&bytes).unwrap();
+        let rewritten: Entry =
+            serde_json::from_slice(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(
+            rewritten.event,
+            Event::Failure {
+                stage: FailureStage::Registration,
+                os_code: None,
+                recovery: None,
+                registration: None,
+            }
+        );
+        let future: Event = serde_json::from_str(
+            r#"{"failure":{"stage":"registration","os_code":null,"registration":{"operation":"future_operation","kind":"future_kind"}}}"#,
+        ).unwrap();
+        assert_eq!(
+            future,
+            Event::Failure {
+                stage: FailureStage::Registration,
+                os_code: None,
+                recovery: None,
+                registration: Some(RegistrationFailure {
+                    operation: RegistrationOperation::Unclassified,
+                    kind: RegistrationErrorKind::Unclassified,
+                }),
+            }
+        );
+        let root = private_storage::test_directory();
+        let identity = NativeSessionIdentity {
+            name: "registration".into(),
+            pid: 7,
+            created_at_unix_ms: 9,
+            endpoint: "unused".into(),
+        };
+        record(&root, &identity, Event::StopRequested).unwrap();
+        record(&root, &identity, event.clone()).unwrap();
+        record(&root, &identity, future).unwrap();
+        let observed = history(&root, &identity).unwrap();
+        assert_eq!(observed[1].event, event);
+        assert!(!unexpected_exit(&observed));
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value.as_object().unwrap().len(),
+            4,
+            "no new top-level Entry field"
+        );
+        assert_eq!(
+            value["event"]["failure"]["registration"]
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn starter_diagnostics_are_numeric_bounded_and_never_daemon_identity() {
         let root = private_storage::test_directory();
         let identity = NativeSessionIdentity {
@@ -309,6 +454,7 @@ mod tests {
                     stage: FailureStage::IndependentSpawn,
                     os_code: Some(5),
                     recovery: None,
+                    registration: None,
                 },
             )
             .unwrap();
@@ -336,6 +482,7 @@ mod tests {
                 stage: FailureStage::IndependentSpawn,
                 os_code: Some(5),
                 recovery: None,
+                registration: None,
             }
         );
         assert_eq!(
