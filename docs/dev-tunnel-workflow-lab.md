@@ -208,6 +208,13 @@ non-TTY or misrouted. A fresh OFF local image can be byte-identical to ON;
 separate CLI/window/capture provenance is retained. Functional acceptance
 does not close exact body-text/pixel identity or combined-release qualification.
 
+A [separate corrected Mac control](../validation/terminal-styled-run-wrap-native-macos-pr920.json)
+verified the full CWD suffix `r22` and full MCP connected label at 54×24,
+11 points and 1× scale after the styled-run wrapping correction in
+[#920](https://github.com/fes/fesTerm/pull/920). This was a development GUI
+whose source tree matches the merge. Public release 0.17.27 predates the
+correction. The historical Android captures retain their original results.
+
 The final Mac→Windows OFF case uses signed GUI/HOST21, its retained native15
 daemon and separately pinned local19 references. The genuine stopped HOST15→21
 update and separate Enable40 reached authoritative Listening, preserving all27

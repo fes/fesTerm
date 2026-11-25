@@ -1,0 +1,129 @@
+{
+  "record_version": 1,
+  "status": "Accepted native local startup diagnostics display, Copy and Inspector retention on the pinned Linux cohort",
+  "cohort": {
+    "GUI_version": "0.17.27",
+    "source": "feddda297921e59434959097548812fb9653a9e0",
+    "release_run": 45488939975,
+    "release_attempt": 2,
+    "producer": "Public ARM64 Debian release payload. Two exact extracted AArch64 ELF64 executables ran in a temporary test runtime.",
+    "package": {
+      "asset": 789142796,
+      "bytes": 57456954,
+      "sha256": "790d13ee829a871c5638923a0cb6eab1acbea661127193fa26dc00ee2a0f332a",
+      "detached_signature_available": false
+    },
+    "executables": {
+      "festerm": {
+        "bytes": 118973840,
+        "sha256": "ab2f26236c4814b6066bf49756422074b2ca3d32701185f93dc388283b51fbee"
+      },
+      "festerm-sessiond": {
+        "bytes": 3501056,
+        "sha256": "344ffa81e2c3ccbeb08f5c9005a34a2cfa3da54526a9b642b3af412d25ba723a"
+      }
+    },
+    "system_install": false
+  },
+  "workflow": {
+    "profile": "Fresh isolated persistent local profile with a deliberately nonexistent public executable",
+    "verified_local_connects": 1,
+    "public_sentinel_verified": true,
+    "Copy_startup_diagnostics": 1,
+    "post_Copy_clipboard_reads": 1,
+    "Inspector_retention": "After closing and reopening Inspector, the same failed tab still showed the typed snapshot. The second capture required no additional Copy.",
+    "routing_recording": false
+  },
+  "copied_typed_snapshot": {
+    "producer": "The shipped Copy startup diagnostics formatter in the exact Linux GUI",
+    "typed_snapshot_match": true,
+    "bytes": 187,
+    "sha256": "fbc6609a49549c03ec1253e812f0306b8338b8597072adc9b805be98cfab2bcc",
+    "read_count": 1,
+    "bounded_bytes": 4096,
+    "deadline_seconds": 5,
+    "raw_clipboard_emitted": false,
+    "phase": "ChildExit",
+    "starter_pid": 2676927,
+    "generation": null,
+    "os_error": null,
+    "child_exit": 1,
+    "daemon_endpoint": "unavailable",
+    "lifecycle": "unavailable: starter attribution incomplete",
+    "verification": "The exact complete shipped formatter for the typed fields visible in the original screenshot yielded the same byte count and SHA-256 as the single full native read. The comparison used the original bytes without normalization."
+  },
+  "first_observations_retained": [
+    "The initial full display frame was torn. The exact owned X11 window capture replaced it as evidence without another Connect.",
+    "The first typed checker returned FORMAT_REFUSED against a mistyped starter PID of 2679627. The original Inspector shows 2676927. The exact formatter comparison above uses the single original read with no further clipboard action.",
+    "The initial final 13-file check compared integer mode to octal text. A corrected read-only comparison verified every original file."
+  ],
+  "normal_cleanup": {
+    "GUI_exit": 0,
+    "supervisor_and_clipboard_helper_drained": true,
+    "owned_unit_inactive_empty": true,
+    "private_registry_absent_or_empty": true,
+    "temporary_runtime_pair_removed": true,
+    "original_GUI24_restored": true,
+    "original_runtime_files_verified": 13,
+    "restoration_debt": false
+  },
+  "preservation": {
+    "Linux_policy_epoch": 95,
+    "protected_actors": 26,
+    "catalog_operations": 50,
+    "policy_actors_catalog_and_fixtures_unchanged": true
+  },
+  "screenshots": {
+    "publication": "Exact complete owned-window originals with no edits or desktop background",
+    "originals": [
+      {
+        "name": "06B-LINUX27-TYPED-SNAPSHOT-FULL.png",
+        "bytes": 95654,
+        "sha256": "6051e8f75cd2276e1d22d84ad24d848343a2ad3aa605519645b61167d3423ac7",
+        "file": "local-startup-diagnostics-native-linux-0.17.27/typed-startup-diagnostics.png",
+        "dimensions_px": [
+          752,
+          516
+        ],
+        "description": "Typed startup diagnostics on the failed local tab"
+      },
+      {
+        "name": "11B-LINUX27-SAME-FAILED-TAB-INSPECTOR-REOPEN.png",
+        "bytes": 97691,
+        "sha256": "77b82a126f9a1897292a4c0b4a703032cbb1c6a9e1f43172ead2970439b828ac",
+        "file": "local-startup-diagnostics-native-linux-0.17.27/same-failed-tab-inspector-reopened.png",
+        "dimensions_px": [
+          752,
+          516
+        ],
+        "description": "The same failed tab after reopening Inspector"
+      }
+    ]
+  },
+  "private_provenance": [
+    {
+      "name": "09-READ-ONLY-TYPED-COPY-ONCE.stdout",
+      "bytes": 198,
+      "sha256": "1d04349997951337b62df3a81ca2c1fe7ace139253bed0844d60290ad3c25a6c"
+    },
+    {
+      "name": "09B-EXACT-OFFLINE-TYPED-COPY-PROOF.json",
+      "bytes": 1039,
+      "sha256": "82d79d5088b29bd101f9821be6f266132ddec3849bd078a0f8cc471f0f9cc987"
+    },
+    {
+      "name": "FINAL-LINUX27-NATIVE-COPY-AND-ORIGINAL-RELEASE24-RESTORE.json",
+      "bytes": 9312,
+      "sha256": "1dcd156649c0c1ae92d9959e8a51e196ecaec5849e854a82c1450c36c8b85570"
+    },
+    {
+      "name": "ROOT-NATIVE-LINUX-COPY-ACCEPTANCE.json",
+      "bytes": 1021,
+      "sha256": "1d2e7ae44c0cdd9f538298879448897ba65ddefb7c19847bbafd858dcb574867"
+    }
+  ],
+  "limits": [
+    "The test qualifies a parent starter ChildExit snapshot for one deliberately failed local start on the attributed Linux cohort.",
+    "Remote startup history, daemon or shell-child attribution, routing-report Copy and other cohorts remain outside this qualification."
+  ]
+}

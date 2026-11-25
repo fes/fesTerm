@@ -1,0 +1,57 @@
+{
+  "record_version": 1,
+  "status": "UNQUALIFIED native local startup diagnostics display, Copy and Inspector retention on Windows",
+  "cohort": {
+    "GUI_version": "0.17.27",
+    "source": "feddda297921e59434959097548812fb9653a9e0",
+    "producer": "Public signed Windows ARM64 portable GUI, verified with native Authenticode before execution",
+    "app_MAIN_bytes": 89965840,
+    "app_MAIN_sha256": "47ee99493144ccca99f33e7ebf68c66df59369c171830ae6ae7d0747e8e4150f",
+    "native_helper_source": "f1e6a9afcce34694e47893e1b4eacdf445fb0218"
+  },
+  "observed": {
+    "sole_isolated_local_profile_visible": true,
+    "stock_main_window_selector_passed": true,
+    "stock_Focus_observed": true,
+    "foreground_persisted_to_next_observation": false,
+    "verified_local_connects": 0,
+    "startup_failure_display_verified": false,
+    "Inspector_retention_verified": false,
+    "Copy_verified": false,
+    "clipboard_writes": 0,
+    "clipboard_content_reads": 0
+  },
+  "first_observations_retained": [
+    "The first stock Observe had two OEM-encoded middle dots that failed the UTF-8 check. The complete lossless decode passed both OEM round-trip checks and stock schema validation.",
+    "The stock profile-menu click opened the menu. A subsequent stock screenshot wrapper returned a Parallels invalid-argument error and zero bytes. Its generated request was overwritten while choosing a fresh output path. The first result and command were retained. A separate existing private screen capture showed the menu.",
+    "The popup Connect attempt refused hit ownership before input. One ordinary direct saved-profile row attempt returned a Parallels invalid-argument error and no native result bytes. The postframe still showed the original popup and no new tab. Test input delivery and the product startup outcome remain unverified."
+  ],
+  "helper_followup": {
+    "pull_request": "https://github.com/fes/vm-evidence-lab/pull/8",
+    "merged_source": "a961569bdc27d866792a009e537b02b7036d2faf",
+    "scope": "The Windows interaction helper now writes UTF-8 result JSON. Main CI passed on Windows, macOS and Linux.",
+    "installed_in_test_guest": false,
+    "native_input_status": "Parallels input delivery remains unverified. The output encoding change does not address that input path."
+  },
+  "normal_cleanup": {
+    "GUI_exit": 0,
+    "owned_Job_empty": true,
+    "owned_tasks_and_input_drained": true,
+    "protected_actors_preserved": 33,
+    "catalog_operations_preserved": 29,
+    "cleanup_debt": false
+  },
+  "private_provenance": [
+    {
+      "name": "FINAL-WINDOWS27-R2-NATIVE-SELECTOR-PASS-COPY-UNQUALIFIED.json",
+      "bytes": 8613,
+      "sha256": "ba40af9fc6bff53996c1b3c5fe25b6cce003ae95906b210b046c6f4a0d26975c"
+    },
+    {
+      "name": "NATIVE-WINDOWS27-PORTABLE-HANDOFF.json",
+      "bytes": 5142,
+      "sha256": "c83b2946951bd37363106bdc18c0b25ad484007efaa8c13f4d9a938f1f73979d"
+    }
+  ],
+  "privacy": "Review originals remain private. This record contains no screenshot or clipboard payload."
+}

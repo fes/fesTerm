@@ -1,0 +1,51 @@
+{
+  "record_version": 1,
+  "status": "Accepted one corrected native Mac local 11-point visual control",
+  "cohort": {
+    "source": "fc10a651d6ccaf967fd0e30b3142080734e4b9ba",
+    "tree": "9f650396140d808fbfbb9ac011ba55db6f459575",
+    "merged_source": "3d249f713e75f5a0456ae80a9bb4cbac1e96e447",
+    "producer": "Standard ad hoc development GUI, version 0.17.27",
+    "public_release_contains_fix": false,
+    "app_MAIN_sha256": "38238f9b5bbee9493c6c9e246176da6ace6e74de37fdd8ba3df718a76ef3c3e2",
+    "Copilot_version": "1.0.112",
+    "grid_cols_rows": [
+      54,
+      24
+    ],
+    "font_points": 11,
+    "scale": 1,
+    "window_points": [
+      375,
+      439
+    ]
+  },
+  "observed": {
+    "full_CWD_r22_visible": true,
+    "full_MCP_connected_visible": true,
+    "normal_CLI_shell_GUI_and_carrier_drain": true,
+    "original_display_mode_and_protected_Mac_state_restored": true
+  },
+  "limits": [
+    "This run qualifies the native local painting correction at its measured grid. Historical Android captures keep their original result.",
+    "One exact owned-window capture attempt produced no image. The independently viewed full-frame original is private.",
+    "Other grids and release cohorts, global pixel identity and unrelated controls remain outside this qualification."
+  ],
+  "private_visual_provenance": {
+    "name": "C-05-CORRECTED-AUTH-IDLE-PRIVATE.png",
+    "bytes": 2101239,
+    "sha256": "7f4135cef09ce20c67e68aa415018e096ad2925487537472ae83a0ef4697341f"
+  },
+  "private_provenance": [
+    {
+      "name": "FINAL-CORRECTED-MAC-11PT-NATIVE-CONTROL-AND-POSITIVE-DRAIN.json",
+      "bytes": 12251,
+      "sha256": "79ec0cce94b6a82568324a01e457d7215ae4d1d78d2d06e426ba9b526e3ed841"
+    },
+    {
+      "name": "ROOT-CORRECTED-NATIVE-VISUAL-ACCEPTANCE.json",
+      "bytes": 896,
+      "sha256": "1b2d8d209f8c9c4f9f3da38ac744d13d5a34ef92ec60ff8e6271bacf1e0ac7cd"
+    }
+  ]
+}

@@ -6516,12 +6516,26 @@ numeric OS/child-exit codes, and explicit unavailable lifecycle/daemon/endpoint
 attribution. Ordinary startup has no trusted caller-issued generation, so it must
 not guess one or display another actor's ring. Close the Inspector, visit another
 tab and return: it must stay closed and retain only that failed attempt's facts.
-A replacement/reconnect generation must not retain them. The [signed Mac27 native Copy component](../validation/local-startup-diagnostics-native-macos-0.17.27.json) qualifies one actual Copy/readback and same-tab Inspector retention after a controlled local startup failure, with original HOST/session state preserved and normal drain. It does not qualify remote startup history or other-OS native clipboard behavior. Use **Copy startup
+A replacement/reconnect generation must not retain them. The
+[signed Mac 0.17.27](../validation/local-startup-diagnostics-native-macos-0.17.27.json)
+and [Linux ARM64 0.17.27](../validation/local-startup-diagnostics-native-linux-0.17.27.json)
+components each verify one native Copy/readback and same-tab Inspector retention
+after a controlled local startup failure. On Linux, the single full read was 187
+bytes and its SHA-256 matched the shipped formatter for the typed fields visible
+in the [original owned-window capture](../validation/local-startup-diagnostics-native-linux-0.17.27/typed-startup-diagnostics.png).
+The first checker refused because of a transcribed PID. The corrected proof
+used that same read. The [reopened Inspector](../validation/local-startup-diagnostics-native-linux-0.17.27/same-failed-tab-inspector-reopened.png)
+retained the same report. The original Linux runtime and protected state were
+restored after normal drain. On [Windows 0.17.27](../validation/local-startup-diagnostics-native-windows-0.17.27.json),
+the updated helper selected the main window, but a local Connect remained
+unverified after input-control refusals. The Windows startup display, Copy and
+Inspector retention remain unqualified. Use **Copy startup
 diagnostics** to copy only that typed snapshot; it is separate from **Copy redacted
 routing report**. Confirm no generic error, path, command, stderr or recording
 content is copied, and the control disappears without typed evidence. Rendered
-route/clipboard and absent/sibling/replacement fixtures are automated; native
-clipboard delivery outside the pinned Mac27 component remains pending. There is no automatic retry/restart or remote
+route/clipboard and absent/sibling/replacement fixtures are automated. Native
+clipboard delivery outside the two pinned cohorts remains pending. There is no
+automatic retry/restart or remote
 HOST diagnostic delivery. Portable tests cover privacy,
 bounded noncreating reads, actual controlled child failure and UI isolation;
 native pre-Ready classification/rendering outside the attributed accepted components remains pending.
