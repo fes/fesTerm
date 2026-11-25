@@ -1,0 +1,116 @@
+{
+  "scope": "Signed packaged macOS 0.17.27 SFTP orderly Cancel, a normal restart, inspection, confirmed Delete, and separate local acknowledgement over a controlled loopback forward.",
+  "cohort": {
+    "version": "0.17.27",
+    "source": "feddda297921e59434959097548812fb9653a9e0",
+    "signed_main_sha256": "f55f82ee79e4fb228a2982e87d982b72098c1936fedde8165238cc4e1d81791e",
+    "producer_run": 45488939975,
+    "artifact": 14969881256,
+    "observed_window_points": [
+      1000,
+      838
+    ],
+    "scale_factor": 1
+  },
+  "fixture": {
+    "server": "SFTPGo 2.7.6",
+    "auth": "transient synthetic password",
+    "transport": "isolated loopback, forwarded via existing dedicated lab management SSH",
+    "source_bytes": 8388608,
+    "source_sha256": "679428ac72b0562ea423484fffc36434d263d5de4a1b1f32a2abc75bbebc96f5",
+    "configured_upload_limit_KiB_per_s": 128,
+    "partial_growth_bytes": [
+      524288,
+      589824
+    ],
+    "stable_partial_after_cancel_bytes": 2359296,
+    "final_absent": true
+  },
+  "observed": {
+    "cancelled_ui": true,
+    "incomplete_cleanup_notice_explained_unconfirmed_partial_ownership": true,
+    "durable_matching_report_before_reconnect": true,
+    "inspection_selected_sole_expected_partial": true,
+    "confirmed_delete_only_partial_and_independent_absence": true,
+    "report_remained_after_remote_delete": true,
+    "separate_local_acknowledgement_cleared_report": true,
+    "normal_GUI_exit_and_helpers_drained_both": true,
+    "original_display_and_protected_Mac_HOST_Files_state_preserved": true,
+    "both_listeners_absent_fixture_empty": true
+  },
+  "first_conditions": [
+    "First SFTPGo launch exited 1 before opening a listener because the packaged SMTP templates were absent. The two required stock templates were extracted from the same authenticated archive. The normal serve continuation used the existing test clock and unchanged service configuration.",
+    "The stock screenshot request lacked Screen Recording permission. Used the existing Parallels capture route to retain target-window crops with binding and actual dimensions. No new permission was granted."
+  ],
+  "limits": [
+    "No forced-process crash, lost publication completion acknowledgement, Windows recovery, or direct LAN transport exercised.",
+    "Local reports and temporary data used an isolated owned root. Production Files settings, OS authorization and existing app credentials were unchanged.",
+    "The images are derived target-window crops bound to the active signed-app PID/window. The full guest frames were transient and were not retained. The evidence qualifies native function, with no claim about full-desktop or pixel fidelity."
+  ],
+  "visual_assets_private": [
+    {
+      "name": "a-OPEN.png",
+      "bytes": 57398,
+      "sha256": "0f87b800958e1ac7e92873db1e22f6b6ae9cb6f5e1c640305ebad96e19abcb09",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "a-UPLOAD.png",
+      "bytes": 79339,
+      "sha256": "6bd288e74357f5710e8f640c13f12c34948c35e8227106ceb694f30f217627d0",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "a-CANCEL-BEFORE-PUBLICATION.png",
+      "bytes": 223651,
+      "sha256": "59fffb74cb4e982c89fa04f6bf6be2f6d11eaaddfdaa4ee4eb67f3268ea54dde",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-RESTART.png",
+      "bytes": 153388,
+      "sha256": "9e327e17b89f331ed1e1508de864c894318787dd137b977b3dd9b65ea42e19ed",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-INSPECT-REMOTE.png",
+      "bytes": 63333,
+      "sha256": "a4ef9242c8266f8c6623ddb103edfd15a2a2ef836b5f1c0e49bf4e1483175cef",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-REVIEW-DELETE.png",
+      "bytes": 228097,
+      "sha256": "508d8a3ca3b70935b0b0320ba300f74d691e7d9c4b45f09d539fc2835ace50f9",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-CONFIRM-DELETE.png",
+      "bytes": 60614,
+      "sha256": "a8cb0705a043c68a7c4f62e29b66144f3f6c40395ab6558f9ed241f77f901ada",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-REVIEW-AFTER-DELETE.png",
+      "bytes": 227536,
+      "sha256": "883c0cb4251eb6576b96789455169fa86c21d7ae54303c5ad87f7ca002609dfb",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-REVIEW-ACK.png",
+      "bytes": 236716,
+      "sha256": "3b337ac5d53a0fa28710b0397eab9e00f2b690d325dfd7cb77db02af8ad024c1",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    },
+    {
+      "name": "b-ACK-LOCAL-ONLY.png",
+      "bytes": 215491,
+      "sha256": "ccb797ecb58eb5f44e2a9ca99fbff4a7615ec1604a66607043fbcf40d6a89c3a",
+      "capture": "exact 1\u00d7 target-window crop from dedicated VM; no separate published screenshot yet"
+    }
+  ],
+  "visual_provenance": {
+    "initial_and_restarted_processes_shared_the_same_private_production_ledger": true,
+    "Images": "Parallels guest captures cropped to the mapped target rectangle, 1000 \u00d7 838 at 1\u00d7. No annotations or resizing."
+  }
+}

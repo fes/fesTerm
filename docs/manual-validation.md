@@ -2896,9 +2896,10 @@ fresh lifecycle scope, Off/read-only, stale/pinned scope, account cancellation,
 sibling isolation and aggregate permits without daemon/Control inventory.
 Scripted account cutover prevents upload chunks/finish and preserves uncertain
 late finish without replay. These fixtures do not authenticate with the real
-provider or native vault. Real relay/provider and signed native file-role/
-grant/revocation qualification, top-level desktop/iOS file-manager entry and
-local staging/publication qualification remain pending. Before marking DT-07
+provider or native vault. The separately published Desktop records below cover
+selected real-provider, native grant and file-manager paths on attributed
+cohorts. Mobile Files and wider staging, publication and revocation qualification
+remain open. Before marking DT-07
 client integration accepted, validate those separate boundaries with owned
 roots, including cancellation and uncertain publication without replay. These
 source fixtures do not change existing native evidence or complete #778.
@@ -2906,12 +2907,19 @@ source fixtures do not change existing native evidence or complete #778.
 ### Desktop Dev Tunnels Files client
 
 `DTFILES-01`–`04` / DT-07 cover the Desktop composition separately from the
-portable connector. Qualification remains pending: use signed owned hosts on
-Windows/macOS/Linux with no daemon session, then normal account/host selection,
-Off/read-only/write grants, both transfer directions, recursive bounded plans,
-mkdir, browsing-stream previews and exact reviewed replacement. Exercise
-create/Keep Both races, explicit Skip/cancel, owner-close while Finish is held,
-account/scope retirement, late completions and disconnected workspace restore.
+portable connector. Desktop 0.17.27 includes the host's reviewed folder
+grant and the client’s Dev Tunnels Files profile. The [graphical components](../validation/dev-tunnels/files-native-0.17.24.json)
+record pinned native transfer, mkdir and preview results across Linux, macOS and
+Windows hosts. The [provider boundary components](../validation/dev-tunnels/files-provider-native-components.json)
+add read-only and write-with-Delete-off refusals on those three host platforms.
+Each record identifies its exact GUI, HOST and SDK sources and retains its
+first results.
+
+The remaining combined-release qualification includes the no-daemon host
+baseline, broader recursive bounded plans and exact reviewed replacement.
+Exercise create/Keep Both races, explicit Skip/cancel, owner-close while Finish
+is held, account/scope retirement, late completions and disconnected workspace
+restore.
 Do not retry an unobserved publication. Confirm that remote delete is unavailable under an old write-only grant,
 rename and permissions remain unavailable, and old terminal/Control behavior is
 unchanged.
@@ -2928,10 +2936,15 @@ and the wider #778 queue remain open.
 
 ### Reviewed Desktop Files deletion
 
-DTFILES-04 / DT-05 / DT-07 native and packaged qualification remains pending.
-With owned roots only, verify the separate default-off delete toggle, read/write
-prerequisite, exact root/read/write/delete foreground review and Disabled-only
-changes. Existing write-only grants must not delete. The separate authenticated
+DTFILES-04 / DT-05 / DT-07 have pinned native file and empty-folder
+Cancel/Confirm evidence on [Linux](../validation/dev-tunnels/linux-files-native-reviewed-delete.json)
+and [macOS and Windows](../validation/dev-tunnels/files-native-0.17.24.json).
+The [provider boundary components](../validation/dev-tunnels/files-provider-native-components.json)
+also record Delete refusal when write was granted with Delete off. The broader
+multi-entry and packaged matrix remains open. With owned roots only, verify the
+separate default-off delete toggle, read/write prerequisite, exact
+root/read/write/delete foreground review and Disabled-only changes. Existing
+write-only grants must not delete. The separate authenticated
 static helper feature probe must refuse unsupported helpers before setup/update
 effects; it proves compiled support, never a permission grant or endpoint readiness.
 
@@ -3025,7 +3038,7 @@ qualification remain under the existing SFTP scenarios on each desktop OS.
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | SFTP-04 | On Local and an owned SFTP Remote, use New directory with a Unicode/spaced child name, invalid traversal/reserved names and an existing destination. Review actual side/endpoint/parent. Select owned files, symlinks and empty folders; Delete must focus Cancel and list exact paths, with no operation before confirmation. Cancel leaves them intact. Confirm removes only reviewed leaves, preserves link targets and refuses non-empty directories. Change selection/folder/connection during review; it must refuse rather than retarget. Saturate command admission, lose the connection during an operation and close the owner: inspect explicit partial/uncertain results, refresh/reselect/reconfirm without automatic replay. Local operations must still work while Remote awaits retry. | Automated owned filesystem/UI and in-process SFTP + native functional/visual/accessibility pending | Production modal geometry covers 320/460 logical-pixel windows with long folder/target names and retained button padding. Portable tests cover child admission/no-overwrite, real Local file/empty-dir/link semantics, observed changed-target refusal, stale directory events/selection/connection, both production buttons/dialogs and inert Cancel/full admission. The in-process SFTP fixture covers LSTAT and one link removal preserving target bytes. Native OS permissions, packaged keyboard/screen-reader/DPI behavior, real remote disconnect/partial-batch presentation and concurrent external path replacement remain manual; no atomic inode-conditional delete or rollback claim. |
-| SFTP-05 | Using owned GUI SFTP fixtures, interrupt an upload after exclusive OPEN and during publication, then restart the packaged app. Review the saved verified endpoint, temporary path and optional final path without connecting. Copy the report, close/reopen the list and dismiss a live notice; verify retention. With another window/process owning an active upload, acknowledgement must refuse; after owner exit, confirm local acknowledgement and verify no server operation. Fill the bounded report store and verify new upload refusal before OPEN without evicting old reports. | Portable report store/process-kill, protocol/headless checks and a pinned Linux development-cohort native component; wider native qualification pending | Automated checks cover atomic checkpoint refusal, zero OPEN and zero publication effects, cancellation, retained uncertainty, no-overwrite local reports, capacity/byte limits, endpoint separation, active cross-process locks, crash/reopen, report-only central UI actions and unchanged Completed after retirement failure. Packaged Windows/macOS/Linux restart, real server loss, short-window path/copy readability, multiwindow interaction and accessibility remain manual. Reports do not establish safe remote delete or resume. Explicitly inspect a saved report with no connected SFTP tab, the wrong selected endpoint/key, an active owner, and a changed generation: require clear guidance or refusal and no new connection. With the exact selected connected endpoint, inspect a normalized absolute parent, and require copy/manual guidance for relative, drive-only or ambiguous server paths, then require the exact unique visible regular file to be selected and revealed without changing the filter. Missing, duplicate, directory, symlink, other or filtered targets must clear unrelated selection and retain the report with guidance. Navigate while the report reloads or its listing is pending, including away and back: late inspection must not replace newer folder/history/selection. Separately review ordinary confirmed Delete and explicit local acknowledgement. One pinned Linux development-cohort kill/restart → report → same-key inspection → manual confirmed deletion → separate local acknowledgement passes in the native record below. Packaged all-platform qualification, physical keyboard/accessibility, actual server failure and path-replacement behavior remain open. |
+| SFTP-05 | Using owned GUI SFTP fixtures, interrupt an upload after exclusive OPEN and during publication, then restart the packaged app. Review the saved verified endpoint, temporary path and optional final path without connecting. Copy the report, close/reopen the list and dismiss a live notice; verify retention. With another window/process owning an active upload, acknowledgement must refuse; after owner exit, confirm local acknowledgement and verify no server operation. Fill the bounded report store and verify new upload refusal before OPEN without evicting old reports. | Portable report store/process-kill, protocol/headless checks and pinned Linux development / packaged macOS orderly-recovery components; wider native qualification pending | Automated checks cover atomic checkpoint refusal, zero OPEN and zero publication effects, cancellation, retained uncertainty, no-overwrite local reports, capacity/byte limits, endpoint separation, active cross-process locks, crash/reopen, report-only central UI actions and unchanged Completed after retirement failure. Other packaged restart/failure cohorts, real server loss, short-window path/copy readability, multiwindow interaction and accessibility remain manual. Reports do not establish safe remote delete or resume. Explicitly inspect a saved report with no connected SFTP tab, the wrong selected endpoint/key, an active owner, and a changed generation: require clear guidance or refusal and no new connection. With the exact selected connected endpoint, inspect a normalized absolute parent, and require copy/manual guidance for relative, drive-only or ambiguous server paths, then require the exact unique visible regular file to be selected and revealed without changing the filter. Missing, duplicate, directory, symlink, other or filtered targets must clear unrelated selection and retain the report with guidance. Navigate while the report reloads or its listing is pending, including away and back: late inspection must not replace newer folder/history/selection. Separately review ordinary confirmed Delete and explicit local acknowledgement. One pinned Linux development-cohort kill/restart → report → same-key inspection → manual confirmed deletion → separate local acknowledgement passes in the native record below. Packaged all-platform qualification, physical keyboard/accessibility, actual server failure and path-replacement behavior remain open. |
 
 ### Linux SFTP native component record
 
@@ -3049,6 +3062,10 @@ retained in the attributed private receipts. The screenshots predate the
 breadcrumb correction and do not qualify it.
 
 The [packaged Mac26 forwarded-SFTP component](../validation/sftp/macos-forwarded-native-controls-0.17.26.json) qualifies a 24-byte download, Unicode/spaced folder creation and reviewed Delete Cancel/Confirm with normal cleanup. It uses a temporary loopback SSH forward; direct LAN and the narrow toolbar remain unqualified. Its original images retain the long-path/status overlap and do not qualify the later layout fix.
+
+The [signed Mac27 orderly-recovery component](../validation/sftp/macos-orderly-recovery-native-0.17.27.json) qualifies ordinary Cancel and normal restart against an isolated forwarded SFTP fixture. An 8 MiB upload left a stable 2,359,296-byte partial and no final file. The restarted app showed its original report before reconnecting; Inspect selected the partial, a separately confirmed Delete removed it, and separate local acknowledgement cleared the retained report. Both app instances exited normally. The original display was restored, and the protected host state was preserved.
+
+This component does not qualify abrupt process failure, lost publication completion, server loss, Windows recovery or direct LAN transport. Its retained validation images are derived target-window crops; full guest frames were not retained. It does not qualify full-desktop or pixel fidelity.
 
 The [packaged Windows24 direct-SFTP component](../validation/sftp/windows-direct-native-controls-0.17.24.json) separately qualifies an exact 24-byte download, Unicode/spaced directory creation and Delete Cancel/Confirm over the direct VM LAN route. The disposable key and temporary public grant were removed after normal app/job drain; original three-VM state was preserved. Full-background screenshots remain private. Narrow layout and interruption/recovery are not qualified by this component.
 
@@ -6526,10 +6543,12 @@ in the [original owned-window capture](../validation/local-startup-diagnostics-n
 The first checker refused because of a transcribed PID. The corrected proof
 used that same read. The [reopened Inspector](../validation/local-startup-diagnostics-native-linux-0.17.27/same-failed-tab-inspector-reopened.png)
 retained the same report. The original Linux runtime and protected state were
-restored after normal drain. On [Windows 0.17.27](../validation/local-startup-diagnostics-native-windows-0.17.27.json),
-the updated helper selected the main window, but a local Connect remained
-unverified after input-control refusals. The Windows startup display, Copy and
-Inspector retention remain unqualified. Use **Copy startup
+restored after normal drain. The [signed Windows ARM64 0.17.27 run](../validation/local-startup-diagnostics-native-windows-0.17.27.json)
+verified the Local startup failure display and one **Copy startup diagnostics**
+activation. The single bounded read matched the 184-byte typed report after the
+clipboard sequence advanced. Windows returned a null clipboard owner HWND, and
+the reader verified the signed process and bound foreground window. Same-tab
+Inspector reopen remains pending on Windows. Use **Copy startup
 diagnostics** to copy only that typed snapshot; it is separate from **Copy redacted
 routing report**. Confirm no generic error, path, command, stderr or recording
 content is copied, and the control disappears without typed evidence. Rendered
@@ -6538,7 +6557,7 @@ Tab navigation at 375×378 now has an automated typed-failure regression that
 requires the focused Copy control to be visible before Enter dispatches its
 existing action, then lets an ordinary wheel scroll away while focus remains.
 Native keyboard-scroll behavior remains part of TI-06. Native
-clipboard delivery outside the two pinned cohorts remains pending. There is no
+clipboard delivery outside these pinned cohorts remains pending. There is no
 automatic retry/restart or remote
 HOST diagnostic delivery. Portable tests cover privacy,
 bounded noncreating reads, actual controlled child failure and UI isolation;
@@ -6836,8 +6855,16 @@ not logged, so this controlled regression does not identify that failure's cause
 For HOST-03, the controlled real-lock regression
 `end_completion_survives_real_native_registry_contention_after_stop` reproduces
 an old terminal Unknown after Stop committed. The corrected completion path
-waits only for actual registry-lock Busy under the original request deadline,
-then freshly proves absence and End permission. The companion
+waits for actual registry-lock Busy under the original request deadline,
+then freshly proves absence and End permission. The regression
+`end_waits_for_exit_when_native_cleanup_precedes_process_exit` also covers an
+already-stopped exact generation whose readable registry no longer has its row,
+whose lifetime leaf is absent, and whose PID is still present. That cleanup gap
+stays pending within the same deadline; it never proves absence or issues another
+Stop. Generic lookup, aliases and an absent registry remain Unknown in this gap.
+The main-branch Linux native test observed an early Unknown; it did not record the
+precise internal branch. This controlled regression reproduces a matching source
+race without claiming that historical branch attribution. The companion
 `end_completion_registry_wait_keeps_deadline_cancellation_and_unknowns` checks
 original-budget expiry, cancellation, malformed registry data, an aliased lock,
 and a missing lock without creating it or changing the stopped record.
@@ -7452,6 +7479,15 @@ at temporary mode 20/1×. Remote Large/Normal, physical scale and chrome differ.
 This is not public 0.17.27/TestFlight or physical-device input qualification; built-in
 UIKit software-keyboard visibility remains unqualified.
 
+The [Simulator keyboard menu follow-up](../validation/dev-tunnels/ios-keyboard-simulator-menu-0.17.26.json)
+reopened the same saved Mac HOST51 session and visibly reached Device → Keyboard.
+Toggle Software Keyboard returned success from Accessibility. The UIKit keys
+remained hidden in both the immediate and settled frames, so no key input or
+keyboard handoff ran. Ordinary Disconnect preserved the same generation, all
+18 protected actors, the 27-operation catalog and all seven iOS metadata leaves.
+All Simulators shut down. Verify that the UIKit keys are visible on a physical
+iOS device before running the Built-in and Terminal keyboard handoff.
+
 Original ON51 reached Listening on the first Enable. All 18 actors, catalog prefix `7ec3` with
 27 operations, detached writer 11 at HOME and all seven iOS metadata leaves were
 preserved; all 13 Simulators were Shutdown. Windows82 resumed with the same
@@ -7524,3 +7560,22 @@ An actual guest Python 3.12 cold import failed without it (one bytecode file)
 and passed with it (no bytecode); native and process APIs were forbidden. This
 qualifies only that caller correction, not the original failed phase. No native
 replay, resize/drag or other-DPI qualification is implied.
+
+
+### Native narrow desktop host inventory
+
+The [narrow inventory record](../validation/dev-tunnels/desktop-narrow-inventory-native.json)
+qualifies signed Mac GUI0.17.26 against the distinct Linux HOST0.17.24 at policy95.
+At 375×838 logical pixels and 1× scale, the retained account populated the host
+directory and one ordinary host selection displayed existing session rows. The
+Running row and Refresh sessions, Save as profile, Connect and Terminate controls
+fit inside the narrow pane. No session target or session action was selected.
+Normal GUI/helper/supervisor drain, original display and geometry restoration,
+account/profile preservation and both hosts' actor/catalog checks passed.
+
+The full original remains private because it includes unrelated background
+windows; its name, size, hash and local review availability are recorded. Creation
+forms, other cohorts/scales and mobile pixel identity remain outside this check.
+The earlier Mac self-host Busy refusal remains unexplained under #922. A temporary
+375×378 ordinary-wheel UI fixture passed once and was removed; it is diagnostic
+evidence, not a retained automated regression.

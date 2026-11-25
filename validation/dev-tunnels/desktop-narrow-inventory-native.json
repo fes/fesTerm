@@ -1,0 +1,88 @@
+{
+  "record_version": 1,
+  "status": "pinned native narrow desktop host directory and populated session pane passed",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "date_utc": "2026-11-25",
+  "not_a_new_matrix_case": true,
+  "cohorts": {
+    "client": {
+      "platform": "macOS arm64 dedicated guest",
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "genuine_signed_bundle": true
+    },
+    "server": {
+      "platform": "Linux arm64 dedicated guest",
+      "version": "0.17.24",
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "policy_epoch": 95,
+      "native_registration_epoch": 64,
+      "creation_allowed": false
+    }
+  },
+  "viewport": {
+    "window_width_logical": 375,
+    "window_height_logical": 838,
+    "scale": 1,
+    "screen_logical": [
+      2152,
+      946
+    ]
+  },
+  "observations": [
+    "The retained account populated the host directory.",
+    "One ordinary selection of the verified distinct Linux host displayed its session inventory.",
+    "An existing generic persistent session showed Running, with Refresh sessions, Save as profile, Connect and Terminate controls visible inside the narrow pane. A further existing session row was also visible.",
+    "Only layout was inspected; no session target was selected and none of those session controls was activated."
+  ],
+  "preservation": {
+    "normal_gui_exit0": true,
+    "owned_helpers_empty": true,
+    "GUI_and_display_supervision_removed": true,
+    "original_display_restored": {
+      "logical": [
+        1076,
+        473
+      ],
+      "pixels": [
+        2152,
+        946
+      ],
+      "scale": 2
+    },
+    "original_window_preference_restored": [
+      0,
+      30,
+      1076,
+      901
+    ],
+    "retained_configuration_exact_prephase_after_restoration": true,
+    "account_profile_recipe_usage_and_update_metadata_preserved": true,
+    "mac_host_policy_epoch": 51,
+    "mac_protected_actors": 18,
+    "linux_protected_actors": 26,
+    "both_host_catalogs_policies_and_existing_detached_writers_preserved": true,
+    "fixed_resource_floor_held": true
+  },
+  "evidence": {
+    "selected_host_inventory_original": {
+      "name": "L-05-LINUX-SELECTED-PRIVATE.png",
+      "bytes": 1921727,
+      "sha256": "2de3cdae202e5350f89eb3eb3111bbf7029c934c0398e2229b8619c3e9aa7145",
+      "public_image": false,
+      "availability": "retained locally; private original available for authorized review",
+      "reason_private": "full VM capture includes unrelated background windows"
+    },
+    "private_acceptance": {
+      "name": "ROOT-DISTINCT-LINUX-NARROW-INVENTORY-ACCEPTANCE.json",
+      "sha256": "d301b802fb097af21242cffd5d3db9e01bab02b934ee28bb9dbd261a36dc990f"
+    }
+  },
+  "limits": [
+    "Creation forms, terminal connections, other desktop cohorts, other scales and literal mobile pixel identity are not qualified by this record.",
+    "The earlier Mac self-host Busy refusal is preserved separately under issue #922; its cause is unproved. Distinct Linux success does not explain it.",
+    "The existing UI fixture was temporarily adapted to inject an ordinary wheel at 375\u00d7378: one selected test passed and the temporary source was restored. This is diagnostic evidence, not a retained automated regression.",
+    "Earlier ineffective native drag and unobserved native scrolling remain separate input limits, not demonstrated product defects.",
+    "No runtime code, helper, account, permission or build changed; no current combined-release claim is made."
+  ]
+}

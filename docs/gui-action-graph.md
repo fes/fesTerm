@@ -2098,7 +2098,9 @@ Busy/unknown/denied/offline/stale/pending/corrupt never means absence. Originals
 retain sixteen entries per purpose/64KiB, with no startup sign-in/retry or
 ambiguous selection. Only a correlated Ended automatically prunes an exact End/confirmed
 created generation, including a discarded UI completion; StopRequested remains
-uncertain. Close/Disconnect is correlated to the original native lifetime;
+uncertain. If native cleanup removes the registry entry and lifetime lease
+before the PID exits, the exact End continues observing within its original
+deadline. Close/Disconnect is correlated to the original native lifetime;
 stale detach cannot mutate its replacement, and temporary lease/grace remains
 host-owned. Protected reopen/settlement and seventeen-Ended slot regressions
 remain distinct from actual-vault/device cold-start/GUI/accessibility/usability.

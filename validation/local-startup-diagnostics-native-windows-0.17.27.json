@@ -1,37 +1,50 @@
 {
   "record_version": 1,
-  "status": "UNQUALIFIED native local startup diagnostics display, Copy and Inspector retention on Windows",
+  "status": "Accepted native Local startup failure display and Copy on the pinned Windows 0.17.27 cohort",
   "cohort": {
     "GUI_version": "0.17.27",
     "source": "feddda297921e59434959097548812fb9653a9e0",
     "producer": "Public signed Windows ARM64 portable GUI, verified with native Authenticode before execution",
     "app_MAIN_bytes": 89965840,
     "app_MAIN_sha256": "47ee99493144ccca99f33e7ebf68c66df59369c171830ae6ae7d0747e8e4150f",
-    "native_helper_source": "f1e6a9afcce34694e47893e1b4eacdf445fb0218"
+    "window_observation": "Existing Windows Interactive Session 1 task and application-window module through ReadLine SSH"
   },
-  "observed": {
-    "sole_isolated_local_profile_visible": true,
-    "stock_main_window_selector_passed": true,
-    "stock_Focus_observed": true,
-    "foreground_persisted_to_next_observation": false,
-    "verified_local_connects": 0,
-    "startup_failure_display_verified": false,
-    "Inspector_retention_verified": false,
-    "Copy_verified": false,
-    "clipboard_writes": 0,
-    "clipboard_content_reads": 0
+  "workflow": {
+    "profile": "One isolated persistent Local profile with a deliberately nonexistent public executable",
+    "startup_attempts": 1,
+    "startup_failure_display_verified": true,
+    "Copy_startup_diagnostics_activations": 1,
+    "post_copy_clipboard_reads": 1,
+    "prior_clipboard_payload_reads": 0,
+    "sentinel_writes": 0,
+    "Inspector_retention_verified": false
   },
+  "copied_typed_snapshot": {
+    "phase": "ChildExit",
+    "starter_pid": 4220,
+    "generation": null,
+    "os": null,
+    "child_exit": 1,
+    "daemon_endpoint": "unavailable",
+    "lifecycle": "unavailable: starter attribution incomplete",
+    "utf8_bytes": 184,
+    "sha256": "beb70f1f94d63c14db4c616660cd9de79090c42f465d6a20ba103e54c1edbd8d",
+    "bounded_bytes": 4096,
+    "typed_snapshot_match": true,
+    "sequence_advanced": true,
+    "clipboard_owner_hwnd": null,
+    "attribution": "The Windows clipboard owner HWND was null. The typed reader verified the exact signed source, the bound foreground window and the advanced sequence."
+  },
+  "independent_startup_evidence": "The retained application tail recorded the public startup failure. A separate lifecycle journal recorded a startup child exit with code 1 on actor PID 4220.",
   "first_observations_retained": [
-    "The first stock Observe had two OEM-encoded middle dots that failed the UTF-8 check. The complete lossless decode passed both OEM round-trip checks and stock schema validation.",
-    "The stock profile-menu click opened the menu. A subsequent stock screenshot wrapper returned a Parallels invalid-argument error and zero bytes. Its generated request was overwritten while choosing a fresh output path. The first result and command were retained. A separate existing private screen capture showed the menu.",
-    "The popup Connect attempt refused hit ownership before input. One ordinary direct saved-profile row attempt returned a Parallels invalid-argument error and no native result bytes. The postframe still showed the original popup and no new tab. Test input delivery and the product startup outcome remain unverified."
+    "The first stock Observe emitted two OEM-encoded middle dots. The complete lossless decode passed both OEM round-trip checks and stock schema validation.",
+    "Earlier stock screenshot and direct-row attempts returned Parallels invalid-argument errors and no native result. The popup Connect action refused hit ownership before input.",
+    "In the first keyboard run that reached the Copy control, a stale test supervisor action hash stopped clipboard arming before the reader ran. A fresh run with the corrected pins completed the one Copy and typed read."
   ],
   "helper_followup": {
     "pull_request": "https://github.com/fes/vm-evidence-lab/pull/8",
     "merged_source": "a961569bdc27d866792a009e537b02b7036d2faf",
-    "scope": "The Windows interaction helper now writes UTF-8 result JSON. Main CI passed on Windows, macOS and Linux.",
-    "installed_in_test_guest": false,
-    "native_input_status": "Parallels input delivery remains unverified. The output encoding change does not address that input path."
+    "scope": "The separate Windows helper UTF-8 output fix passed CI and was not deployed in this run."
   },
   "normal_cleanup": {
     "GUI_exit": 0,
@@ -43,6 +56,16 @@
   },
   "private_provenance": [
     {
+      "name": "FINAL-WINDOWS27-KEYBOARD-R6-NATIVE-TYPED-COPY-PASS.json",
+      "bytes": 12032,
+      "sha256": "a50434d5655f560732d250170cb23a8be364cf3ed77c2a84aa9b7ddc666184fa"
+    },
+    {
+      "name": "FINAL-WINDOWS27-KEYBOARD-R5-COPY-FOCUS-ARM-PIN-REFUSAL-POSITIVE-CLOSURE.json",
+      "bytes": 9497,
+      "sha256": "7194576ff54bfb77cba9404e641b414353002bbcc901e52208f2159721ca8107"
+    },
+    {
       "name": "FINAL-WINDOWS27-R2-NATIVE-SELECTOR-PASS-COPY-UNQUALIFIED.json",
       "bytes": 8613,
       "sha256": "ba40af9fc6bff53996c1b3c5fe25b6cce003ae95906b210b046c6f4a0d26975c"
@@ -53,5 +76,6 @@
       "sha256": "c83b2946951bd37363106bdc18c0b25ad484007efaa8c13f4d9a938f1f73979d"
     }
   ],
-  "privacy": "Review originals remain private. This record contains no screenshot or clipboard payload."
+  "limits": "Covers the pinned Windows ARM64 0.17.27 Local failure and Copy. Same-tab Inspector reopen, other failure categories and other builds remain outside the observed scope.",
+  "privacy": "This record contains finite typed fields and digests only. Full desktop frames, application and lifecycle originals, and clipboard payloads are not published."
 }

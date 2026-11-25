@@ -1268,6 +1268,67 @@ mod end_confirmation_tests {
     }
 
     #[test]
+    fn end_waits_for_exit_when_native_cleanup_precedes_process_exit() {
+        let (_directory, control, owner, target) = ending_fixture();
+        let tx = control.transaction().unwrap();
+        let record = &tx.state.sessions[&target.logical];
+        let native = record.native().unwrap();
+        let fingerprint = record.fingerprint.clone();
+        drop(tx);
+
+        // The native daemon releases its lifetime lease, removes the file
+        // and publishes the empty registry during cleanup, before exiting.
+        // Use this process as the still-present PID to pin that exact window.
+        let lifetime = control.root.join(format!(
+            "lease-{}-{}",
+            native.pid, native.created_at_unix_ms
+        ));
+        std::fs::remove_file(&lifetime).unwrap();
+        let directory = storage::private_directory(&control.root, false).unwrap();
+        storage::write_new_private(&directory, Path::new("registry.json"), b"{}").unwrap();
+        assert!(crate::process_alive(native.pid));
+        assert!(detached::host_generation_state(&control.root, &native, &fingerprint).is_err());
+
+        let before = std::fs::read(control.root.join(STATE_FILE)).unwrap();
+        let observe = || {
+            control.observe_end(&owner, &target, &mut |_| -> Result<(), ControlError> {
+                panic!("a still-present native PID must not authorize End completion")
+            })
+        };
+        let cancelled = AtomicBool::new(false);
+        let result = SessionControl::wait_for_end(
+            Instant::now() + Duration::from_secs(2),
+            &cancelled,
+            || {
+                let result = observe();
+                assert_eq!(result, Err(ControlError::Busy));
+                cancelled.store(true, Ordering::Release);
+                result
+            },
+        );
+        assert_eq!(result, Err(ControlError::Cancelled));
+
+        // Only the observed cleanup shape can wait. An alias at the exact
+        // lifetime path or a missing registry document must stay Unknown.
+        std::os::unix::fs::symlink("never-follow-this", &lifetime).unwrap();
+        assert_eq!(observe(), Err(ControlError::Unknown));
+        std::fs::remove_file(control.root.join("registry.json")).unwrap();
+        std::fs::remove_file(lifetime).unwrap();
+        assert_eq!(observe(), Err(ControlError::Unknown));
+        assert_eq!(
+            std::fs::read(control.root.join(STATE_FILE)).unwrap(),
+            before
+        );
+        let lease = LeaseGuard::acquire(&control.root, target.generation)
+            .unwrap()
+            .read()
+            .unwrap();
+        assert!(lease.stopped);
+        assert_eq!(lease.grant.revision.get(), 3);
+        assert_eq!(lease.grant.state, LogicalState::Unknown);
+    }
+
+    #[test]
     fn end_completion_registry_wait_keeps_deadline_cancellation_and_unknowns() {
         for case in [
             "cancel",
@@ -2234,7 +2295,8 @@ impl SessionControl {
             let state = if end_observation {
                 detached::host_generation_state_for_end(&self.root, &identity, &record.fingerprint)
                     .map_err(|error| match error {
-                        detached::EndObservationError::RegistryBusy => ControlError::Busy,
+                        detached::EndObservationError::RegistryBusy
+                        | detached::EndObservationError::ExitPending => ControlError::Busy,
                         detached::EndObservationError::Unknown => ControlError::Unknown,
                     })
             } else {

@@ -1,0 +1,51 @@
+{
+  "record_version": 1,
+  "status": "simulator_keyboard_visibility_unqualified",
+  "source_native_packet_sha256": "580e002e40405042096fb70b04365f334f2e1e8dc098eb4edcb77ba8b4bdccd2",
+  "cohort": {
+    "version": "0.17.26",
+    "cached_binary": "8389",
+    "app_source_commit": "0e86be3040f5ce82c3b7c56a452951318ccf317a",
+    "app_source_tree": "22dad36b212d66e3de24781f8c60677e6724d829",
+    "simulator_os": "iOS 27.2",
+    "Mac_host_policy_epoch": 51
+  },
+  "observations": {
+    "DeviceHub_actually_frontmost_with_exact_lab_window": true,
+    "built_in_app_show_control_R8_action_passed": true,
+    "Device_and_Keyboard_menus_visibly_opened": true,
+    "single_named_Toggle_Software_Keyboard_AXPress_zero": true,
+    "UIKit_keys_visible_immediate_and_settled": [
+      false,
+      false
+    ],
+    "system_key_actions": 0,
+    "custom_key_actions": 0,
+    "app_keyboard_kind_switch_actions": 0,
+    "app_input_submissions": 0,
+    "interpretation": "The screenshots do not establish whether the menu dispatch or the software-keyboard presentation caused the hidden result.",
+    "terminal_menu_built_in_selected": true,
+    "terminal_menu_attempted_input_bytes": 0
+  },
+  "closure": {
+    "normal_disconnect": true,
+    "product_runner_supervisor_gone": true,
+    "all_13_simulators_shutdown": true,
+    "same_iOS_app_and_seven_metadata": true,
+    "Mac_HOST51_detached_same_generation": true,
+    "Mac_HOST51_observed_writer": [
+      19,
+      20,
+      21
+    ],
+    "Mac_HOST51_preserved_actors": 18,
+    "Mac_HOST51_catalog_operations": 27
+  },
+  "prerequisite": "Observe the built-in UIKit software keys on a physical iOS device or after a concrete Simulator condition changes, then qualify c/Backspace and Built-in/Terminal handoff.",
+  "qualification_limits": [
+    "Cached iOS 0.17.26 Simulator build only",
+    "System/custom key handoff was not run because the UIKit software keyboard stayed hidden",
+    "No physical-device, TestFlight or newer-release result"
+  ],
+  "assets": []
+}
