@@ -333,13 +333,15 @@ pub fn lock_legacy_start_in(
 
 fn registry(directory: &File) -> Result<SessionRegistry, PersistentSessionError> {
     let _lock = lock(open_lock(directory, Path::new("registry.lock"))?, false)?;
-    registry_contents(directory)
+    Ok(registry_contents(directory)?.unwrap_or_default())
 }
 
-fn registry_contents(directory: &File) -> Result<SessionRegistry, PersistentSessionError> {
+fn registry_contents(directory: &File) -> Result<Option<SessionRegistry>, PersistentSessionError> {
     match storage::read_private(directory, Path::new("registry.json"), REGISTRY_LIMIT) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| refused("invalid native registry")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SessionRegistry::default()),
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| refused("invalid native registry")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(storage_error(error)),
     }
 }
@@ -837,17 +839,25 @@ pub(crate) fn host_generation_state(
 ) -> Result<bool, PersistentSessionError> {
     let directory = storage::private_directory(root, false).map_err(storage_error)?;
     let records = registry(&directory)?;
-    generation_state(root, &directory, &records, selected, expected)
+    match generation_state(root, &directory, &records, selected, expected)? {
+        GenerationState::Live => Ok(true),
+        GenerationState::Absent => Ok(false),
+        GenerationState::MissingLeaseWithPresentPid => {
+            Err(refused("native generation outcome is unknown"))
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) enum EndObservationError {
     RegistryBusy,
+    ExitPending,
     Unknown,
 }
 
-/// End already owns an absolute deadline. Preserve only actual registry-lock
-/// contention for its existing observation wait; no native operation is retried.
+/// End already owns an absolute deadline. Preserve actual registry-lock
+/// contention and the gap between registry cleanup and PID exit for its wait.
+/// No native operation is retried.
 pub(crate) fn host_generation_state_for_end(
     root: &Path,
     selected: &NativeSessionIdentity,
@@ -868,8 +878,27 @@ pub(crate) fn host_generation_state_for_end(
         })?;
         registry_contents(&directory).map_err(|_| EndObservationError::Unknown)?
     };
-    generation_state(root, &directory, &records, selected, expected)
-        .map_err(|_| EndObservationError::Unknown)
+    let registry_present = records.is_some();
+    let records = records.unwrap_or_default();
+    match generation_state(root, &directory, &records, selected, expected)
+        .map_err(|_| EndObservationError::Unknown)?
+    {
+        GenerationState::Live => Ok(true),
+        GenerationState::Absent => Ok(false),
+        // The daemon can remove its lifetime lease and publish the registry
+        // update before its PID exits. Neither this window nor a possibly
+        // reused PID proves absence; only an already stopped End can wait.
+        GenerationState::MissingLeaseWithPresentPid if registry_present => {
+            Err(EndObservationError::ExitPending)
+        }
+        GenerationState::MissingLeaseWithPresentPid => Err(EndObservationError::Unknown),
+    }
+}
+
+enum GenerationState {
+    Live,
+    Absent,
+    MissingLeaseWithPresentPid,
 }
 
 fn generation_state(
@@ -878,14 +907,14 @@ fn generation_state(
     records: &SessionRegistry,
     selected: &NativeSessionIdentity,
     expected: &str,
-) -> Result<bool, PersistentSessionError> {
+) -> Result<GenerationState, PersistentSessionError> {
     match matching_record(records, &selected.name)? {
         Some(record) if NativeSessionIdentity::from_record(record) == *selected => {
             if !verified_live(root, directory, record)? {
-                return Ok(false);
+                return Ok(GenerationState::Absent);
             }
             check_evidence(record, expected)?;
-            Ok(true)
+            Ok(GenerationState::Live)
         }
         Some(_) => Err(refused(
             "logical generation was replaced outside its reservation",
@@ -894,13 +923,15 @@ fn generation_state(
             let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
             match storage::open_private_file(directory, Path::new(&name), false) {
                 Ok(lease) => match FileExt::try_lock_shared(&*storage::UnlockOnDrop(lease)) {
-                    Ok(()) => Ok(false),
+                    Ok(()) => Ok(GenerationState::Absent),
                     Err(_) => Err(refused("native generation outcome is unknown")),
                 },
-                Err(error)
-                    if error.kind() == io::ErrorKind::NotFound && !process_alive(selected.pid) =>
-                {
-                    Ok(false)
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if process_alive(selected.pid) {
+                        Ok(GenerationState::MissingLeaseWithPresentPid)
+                    } else {
+                        Ok(GenerationState::Absent)
+                    }
                 }
                 Err(_) => Err(refused("native generation outcome is unknown")),
             }

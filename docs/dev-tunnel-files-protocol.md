@@ -6,8 +6,11 @@ sequential `file_client::Client` engine. Desktop composition uses ordinary
 `open_files_reviewed` (browsing/review) plus pinned `open_files` (transfers)
 and the existing SFTP file-manager presentation and queue for browse,
 upload/download, mkdir and bounded read-only previews. Reviewed deletion uses the separate Open3 extension below; rooted v1 write
-consent never authorizes deletion. Rename, links and chmod remain unavailable. Mobile
-integration and native/provider Desktop qualification remain pending. Portable
+consent never authorizes deletion. Rename, links and chmod remain unavailable.
+The [pinned Desktop graphical components](../validation/dev-tunnels/files-native-0.17.24.json)
+and [provider boundary components](../validation/dev-tunnels/files-provider-native-components.json)
+record scoped results across the three host platforms. Mobile integration and
+broader combined-release Desktop qualification remain open. Portable
 Rust DTOs/constants are in `file_protocol.rs`. Do not send these operations as
 terminal input, invoke a remote shell, or fall back to SFTP/local files.
 
@@ -187,7 +190,8 @@ Real signed HOST policy changes and desktop/iOS UI remain separate native gates.
 
 ## Reviewed DELETE extension
 
-**Source implementation; native/packaged qualification pending.** Ordinary Files role2 and the initial kind34
+The [reviewed native deletion record](manual-validation.md#reviewed-desktop-files-deletion)
+links accepted components and the remaining packaged checks. Ordinary Files role2 and the initial kind34
 HOST description2/capabilities1 stay unchanged. Legacy rooted v1, HostOpen2 and
 its Ready/operation bytes stay unchanged; Open2 refuses the new operations even
 when protected delete consent exists. No new auth role/crypto domain is added.
