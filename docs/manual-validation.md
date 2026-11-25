@@ -6958,6 +6958,12 @@ The separate revoked-generation fixture forces actual local-End lease contention
 before releasing it and uses the existing bounded Busy retry for the same exact
 owner/target, requiring StopRequested and retaining revocation/reconsent checks.
 The observed CI Busy is preserved; this adds no production stop/retry behavior.
+The native temporary-terminal fixture's final post-Detach poll treats only the
+exact native 500-ms registry-lock contention result as unavailable, never absent.
+Its original five-second wait and 25-ms tick remain; an authoritative empty read
+completes it and corrupt/other errors still fail immediately. A real held-lock,
+release and corrupt-checkpoint regression covers that distinction. Earlier Stale
+cleanup messages in the first CI failure are retained without a causal claim.
 
 
 ### First confirmed remote Terminate completion

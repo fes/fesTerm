@@ -6789,6 +6789,7 @@
         "abandoned_fair_turn_cannot_block_other_terminals",
         "native_two_adopted_terminals_route_exact_bytes_without_inventory_frontends",
         "native_temporary_detach_and_pending_cancellation_keep_lease_meanings_distinct",
+        "final_registry_observation_requires_empty_and_refuses_corruption",
         "native_revocation_tears_down_slow_output_without_stopping_persistent_shell",
         "native_takeover_waits_for_adoption_and_stale_generation_cannot_attach",
         "native_active_writer_refuses_non_takeover_before_pending_takeover_and_retains_adoption_fences",
