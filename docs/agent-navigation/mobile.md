@@ -82,7 +82,7 @@ Caveats:
 Use for: How does Android wire geometry, input, secrets, and callbacks into Rust?
 
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, and secret services.
-- [Android editor ownership](../../app/festerm-android/java/io/github/fes/festerm/FestermActivity.java) — Pre-IME plain-key routing and context epochs keep redundant editor wrappers from retiring served input.
+- [Android editor ownership and Back](../../app/festerm-android/java/io/github/fes/festerm/FestermActivity.java) — Owns editor epochs; modern and legacy Back share Escape-or-background policy.
 
 Caveats:
 - Java forwards platform input and services; shared Rust retains UI and session policy.

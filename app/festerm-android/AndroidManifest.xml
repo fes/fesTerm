@@ -16,6 +16,7 @@
     </queries>
     <application android:label="fesTerm" android:icon="@drawable/ic_launcher"
         android:hasCode="true" android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="false" android:extractNativeLibs="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.NoActionBar">

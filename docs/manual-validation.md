@@ -2156,6 +2156,18 @@ saved. These remain native/manual checks.
 
 ## Android shared mobile port (ADR 0073)
 
+MOB-02/MOB-06 modern Back native qualification remains UNRUN. The application
+manifest explicitly enables API 33+ Back callbacks, including API 33–34 where
+the default is disabled. API 33+ registers an Activity callback at default
+priority, sharing the existing Escape-or-background policy with the API 29–32
+legacy override and unregistering on destruction.
+On the candidate APK, verify real system Back hides a fully visible IME first;
+with the IME hidden, verify active-editor Escape occurs once, and hidden keyboard
+mode backgrounds the task with a working ordinary launcher return. Retain API
+29–32 runtime checks separately. The earlier splash after launcher return has
+an unknown cause; this callback change does not establish a splash or Activity
+recreation fix. Java compilation cannot qualify dispatcher ordering or lifecycle.
+
 The owner-requested Android host reuses the implemented iOS application.
 The existing MOB action IDs apply to both hosts; **iOS evidence never qualifies
 Android**. Build/setup instructions and intentional differences are in
