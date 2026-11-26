@@ -124,64 +124,19 @@ impl Location {
         }
     }
     #[cfg(target_os = "macos")]
-    fn private_parent(&self, relative: &Path) -> io::Result<Option<Dir>> {
+    fn private_parent(
+        &self,
+        relative: &Path,
+    ) -> io::Result<Option<festerm_unix_security::PrivateDataParent>> {
         let expected = self.current()?.try_clone()?.into_std_file();
-        let mut directory = Dir::from_std_file(
-            festerm_unix_security::open_absolute_directory_read_nofollow(Path::new("/"))?,
-        );
-        let configured = self
-            .path
-            .components()
-            .filter(|part| matches!(part, Component::Normal(_)))
-            .count();
-        let absolute = self.path.join(relative);
-        let mut depth = 0;
-        loop {
-            let file = directory.try_clone()?.into_std_file();
-            if !festerm_unix_security::ownership_enforcing_data_filesystem(&file)?
-                || !festerm_unix_security::private_storage_ancestor_qualified(&file)?
-            {
-                return Ok(None);
-            }
-            // Reuse the unchanged strict predicate on this same actual handle.
-            trusted(&directory)?;
-            if depth == configured && !same_object(&file, &expected)? {
-                return Err(io::ErrorKind::PermissionDenied.into());
-            }
-            let Some(part) = absolute
-                .components()
-                .filter_map(|part| {
-                    if let Component::Normal(name) = part {
-                        Some(name)
-                    } else {
-                        None
-                    }
-                })
-                .nth(depth)
-            else {
-                break;
-            };
-            directory = directory.open_dir_nofollow(part)?;
-            depth += 1;
-        }
-        let (fresh, _parents) = self.directory(relative)?;
-        if !same_object(
-            &fresh.into_std_file(),
-            &directory.try_clone()?.into_std_file(),
-        )? {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        Ok(Some(directory))
+        festerm_unix_security::qualify_private_data_parent(&self.path, &expected, relative)
     }
     pub(super) fn file(&self, relative: &Path) -> io::Result<(File, Vec<File>)> {
         let root = self.current()?.try_clone()?.into_std_file();
         #[cfg(target_os = "macos")]
         if let Some(parent) = self.private_parent(relative.parent().unwrap_or(Path::new("")))? {
             let name = relative.file_name().ok_or_else(invalid)?;
-            let file = festerm_unix_security::open_trusted_data_file(
-                &parent.into_std_file(),
-                Path::new(name),
-            )?;
+            let file = parent.open_file(Path::new(name))?;
             return Ok((file, Vec::new())); // No ordinary retry after trusted acquisition.
         }
         #[cfg(unix)]

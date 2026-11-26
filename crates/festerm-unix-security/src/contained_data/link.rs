@@ -3,13 +3,15 @@ use super::*;
 
 /// A metadata-only link pin. Neither the target nor the native handle is public.
 /// Revalidation is a sequential snapshot check, not an atomic whole-path proof.
-/// macOS currently admits only the qualified local APFS NODEV boundary; this
-/// helper has no complete-private-chain admission token or fallback.
+/// The ordinary macOS constructor requires local APFS NODEV; the separate
+/// opaque private-parent entry retains and refreshes its complete-chain proof.
 pub struct RetainedDataLink {
     parent: File,
     name: CString,
     file: File,
     target: Vec<u8>,
+    #[cfg(target_os = "macos")]
+    private_parent: Option<PrivateDataParent>,
 }
 impl RetainedDataLink {
     pub fn target(&self) -> &[u8] {
@@ -19,11 +21,25 @@ impl RetainedDataLink {
     /// Check the original no-follow name and payload again. A parent moved out
     /// of a grant must additionally be refused by the caller's rooted fences.
     pub fn revalidate(&self) -> io::Result<()> {
-        let current = open_link(&self.parent, &self.name)?;
-        if !same_data_object(&self.file, &current)?
-            || payload(&self.file)? != self.target
-            || payload(&current)? != self.target
-        {
+        self.revalidate_checked(&mut || Ok(()))
+    }
+    /// Debit the caller's current shared budget during every native proof
+    /// refresh and leaf operation; no independent pool or callback is retained.
+    pub fn revalidate_checked(&self, check: &mut dyn FnMut() -> io::Result<()>) -> io::Result<()> {
+        let current = open_link_admitted(
+            &self.parent,
+            &self.name,
+            #[cfg(target_os = "macos")]
+            self.private_parent.as_ref(),
+            check,
+            || {},
+        )?;
+        check()?;
+        if !same_data_object(&self.file, &current)? || payload(&self.file)? != self.target {
+            return Err(refused());
+        }
+        check()?;
+        if payload(&current)? != self.target {
             return Err(refused());
         }
         Ok(())
@@ -33,11 +49,7 @@ impl RetainedDataLink {
 /// Pin exactly one link beneath an already retained parent, without following
 /// it or opening its target. The returned bytes are not traversal authority.
 pub fn pin_data_link(parent: &File, name: &Path) -> io::Result<RetainedDataLink> {
-    crate::imp::one_component(name)?;
-    if name.as_os_str().as_bytes().contains(&b'/') {
-        return Err(io::ErrorKind::InvalidInput.into());
-    }
-    let name = relative(name)?;
+    let name = link_name(name)?;
     let parent = parent.try_clone()?;
     let file = open_link(&parent, &name)?;
     let target = payload(&file)?;
@@ -46,8 +58,42 @@ pub fn pin_data_link(parent: &File, name: &Path) -> io::Result<RetainedDataLink>
         name,
         file,
         target,
+        #[cfg(target_os = "macos")]
+        private_parent: None,
     };
     pin.revalidate()?;
+    Ok(pin)
+}
+
+pub(super) fn link_name(name: &Path) -> io::Result<CString> {
+    crate::imp::one_component(name)?;
+    if name.as_os_str().as_bytes().contains(&b'/') {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    relative(name)
+}
+#[cfg(target_os = "macos")]
+pub(super) fn pin_private_data_link(
+    proof: PrivateDataParent,
+    resolved_parent: &File,
+    name: &Path,
+    check: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<RetainedDataLink> {
+    let name = link_name(name)?;
+    check()?;
+    proof.require_parent(resolved_parent)?;
+    let parent = proof.parent_clone()?;
+    let file = open_link_admitted(&parent, &name, Some(&proof), check, || {})?;
+    check()?;
+    let target = payload(&file)?;
+    let pin = RetainedDataLink {
+        parent,
+        name,
+        file,
+        target,
+        private_parent: Some(proof),
+    };
+    pin.revalidate_checked(check)?;
     Ok(pin)
 }
 
@@ -59,15 +105,38 @@ fn open_link_after_metadata(
     name: &CString,
     after_metadata: impl FnOnce(),
 ) -> io::Result<File> {
+    open_link_admitted(
+        parent,
+        name,
+        #[cfg(target_os = "macos")]
+        None,
+        &mut || Ok(()),
+        after_metadata,
+    )
+}
+fn open_link_admitted(
+    parent: &File,
+    name: &CString,
+    #[cfg(target_os = "macos")] private_parent: Option<&PrivateDataParent>,
+    check: &mut dyn FnMut() -> io::Result<()>,
+    after_metadata: impl FnOnce(),
+) -> io::Result<File> {
     #[cfg(target_os = "macos")]
     mac_available()?;
     if !parent.metadata()?.is_dir() {
         return Err(refused());
     }
     #[cfg(target_os = "macos")]
-    qualified(parent, true)?;
+    if let Some(proof) = private_parent {
+        proof.refresh(check)?;
+        check()?;
+        proof.require_parent(parent)?;
+    } else {
+        qualified(parent, true)?;
+    }
     #[cfg(target_os = "linux")]
     qualified(parent, false)?;
+    check()?;
     let mut initial = std::mem::MaybeUninit::<libc::stat>::uninit();
     if unsafe {
         libc::fstatat(
@@ -81,10 +150,13 @@ fn open_link_after_metadata(
         return Err(io::Error::last_os_error());
     }
     let initial = unsafe { initial.assume_init() };
-    if initial.st_mode & libc::S_IFMT != libc::S_IFLNK {
+    if initial.st_mode & libc::S_IFMT != libc::S_IFLNK
+        || i128::from(initial.st_dev) != i128::from(parent.metadata()?.dev())
+    {
         return Err(refused());
     }
     after_metadata();
+    check()?;
     #[cfg(target_os = "linux")]
     let file = {
         let mut how: libc::open_how = unsafe { std::mem::zeroed() };
@@ -128,7 +200,13 @@ fn open_link_after_metadata(
         return Err(refused());
     }
     #[cfg(target_os = "macos")]
-    qualified(&file, true)?;
+    if private_parent.is_some() {
+        if !ownership_enforcing_data_filesystem(&file)? {
+            return Err(refused());
+        }
+    } else {
+        qualified(&file, true)?;
+    }
     #[cfg(target_os = "linux")]
     qualified(&file, false)?;
     Ok(file)
@@ -398,5 +476,158 @@ mod tests {
         let parent = File::open(&base.0).unwrap();
         let error = payload(&parent).unwrap_err();
         assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_data_parent_link_home_snapshot_and_resolver_parent_match() {
+        let Some(base) = private_parent::home_fixture() else {
+            return;
+        };
+        let allowed = base.0.join("allowed");
+        let inside = allowed.join("inside");
+        std::fs::create_dir(&allowed).unwrap();
+        std::fs::create_dir(&inside).unwrap();
+        symlink("target-a", inside.join("alias")).unwrap();
+        let root = File::open(&allowed).unwrap();
+        let parent = File::open(&inside).unwrap();
+        assert_eq!(
+            pin_data_link(&parent, Path::new("alias"))
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::Unsupported,
+            "owned actual HOME prerequisite must be nonNODEV"
+        );
+        let proof = qualify_private_data_parent(&allowed, &root, Path::new("inside"))
+            .unwrap()
+            .unwrap();
+        let wrong = File::open(&allowed).unwrap();
+        assert_eq!(
+            proof
+                .pin_link(&wrong, Path::new("alias"))
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            qualify_private_data_parent(&allowed, &parent, Path::new("inside"))
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let proof = qualify_private_data_parent(&allowed, &root, Path::new("inside"))
+            .unwrap()
+            .unwrap();
+        let pin = proof.pin_link(&parent, Path::new("alias")).unwrap();
+        assert_eq!(pin.target(), b"target-a");
+        pin.revalidate().unwrap();
+        std::fs::rename(inside.join("alias"), inside.join("retained-a")).unwrap();
+        symlink("target-b", inside.join("alias")).unwrap();
+        assert_eq!(pin.target(), b"target-a");
+        assert_eq!(payload(&pin.file).unwrap(), b"target-a");
+        assert_eq!(
+            pin.revalidate().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        eprintln!("private_data_parent: qualified nonNODEV HOME link positive and alias substitution refusal");
+        private_parent::finish_home_fixture(base);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_data_parent_refresh_root_parent_and_ancestor_changes_precede_leaf_open() {
+        use std::os::unix::fs::PermissionsExt;
+        for change in ["root", "parent", "mode"] {
+            let Some(base) = private_parent::home_fixture() else {
+                return;
+            };
+            let allowed = base.0.join("allowed");
+            let inside = allowed.join("inside");
+            std::fs::create_dir(&allowed).unwrap();
+            std::fs::create_dir(&inside).unwrap();
+            symlink("target-a", inside.join("alias")).unwrap();
+            let root = File::open(&allowed).unwrap();
+            let parent = File::open(&inside).unwrap();
+            let proof = qualify_private_data_parent(&allowed, &root, Path::new("inside"))
+                .unwrap()
+                .unwrap();
+            let pin = proof.pin_link(&parent, Path::new("alias")).unwrap();
+            match change {
+                "root" => {
+                    std::fs::rename(&allowed, base.0.join("moved-root")).unwrap();
+                    std::fs::create_dir(&allowed).unwrap();
+                }
+                "parent" => {
+                    std::fs::rename(&inside, base.0.join("moved-parent")).unwrap();
+                    std::fs::create_dir(&inside).unwrap();
+                }
+                "mode" => {
+                    std::fs::set_permissions(&allowed, std::fs::Permissions::from_mode(0o777))
+                        .unwrap()
+                }
+                _ => unreachable!(),
+            }
+            let mut reached_leaf = false;
+            let result = open_link_admitted(
+                &pin.parent,
+                &pin.name,
+                pin.private_parent.as_ref(),
+                &mut || Ok(()),
+                || reached_leaf = true,
+            );
+            assert!(result.is_err());
+            assert!(!reached_leaf, "refresh failure precedes leaf metadata/open");
+            assert!(pin.revalidate().is_err());
+            assert_eq!(payload(&pin.file).unwrap(), b"target-a");
+            if change == "mode" {
+                assert!(
+                    qualify_private_data_parent(&allowed, &root, Path::new("inside"))
+                        .unwrap()
+                        .is_none()
+                );
+                std::fs::set_permissions(&allowed, std::fs::Permissions::from_mode(0o755)).unwrap();
+                pin.revalidate().unwrap();
+            }
+            private_parent::finish_home_fixture(base);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_data_parent_fifo_substitution_is_nonblocking_and_terminal() {
+        let Some(base) = private_parent::home_fixture() else {
+            return;
+        };
+        symlink("target-a", base.0.join("alias")).unwrap();
+        let root = File::open(&base.0).unwrap();
+        let proof = qualify_private_data_parent(&base.0, &root, Path::new(""))
+            .unwrap()
+            .unwrap();
+        let mut swapped = false;
+        let result = open_link_admitted(
+            &root,
+            &CString::new("alias").unwrap(),
+            Some(&proof),
+            &mut || Ok(()),
+            || {
+                std::fs::remove_file(base.0.join("alias")).unwrap();
+                nix::unistd::mkfifo(
+                    &base.0.join("alias"),
+                    nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+                )
+                .unwrap();
+                swapped = true;
+            },
+        );
+        assert!(swapped);
+        assert_eq!(
+            result.err().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(std::fs::symlink_metadata(base.0.join("alias"))
+            .unwrap()
+            .file_type()
+            .is_fifo());
+        private_parent::finish_home_fixture(base);
     }
 }

@@ -17,7 +17,10 @@ pub use contained_data::{
     qualify_data_mutation_ancestor, same_data_object, RetainedDataLink,
 };
 #[cfg(target_os = "macos")]
-pub use contained_data::{open_trusted_data_file, ownership_enforcing_data_filesystem};
+pub use contained_data::{
+    ownership_enforcing_data_filesystem, qualify_private_data_parent,
+    qualify_private_data_parent_checked, PrivateDataParent,
+};
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
 pub fn open_contained_data_directory(

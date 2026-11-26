@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "3a4577137577578a0d69b43b070b9f35fdb544ce0ca4d96cd4ba57fdd70beda3"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "913f18cfd12fe920c0e05fa53aa09fa19b479bba45ca1144dd57ca3be00c8da5"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -63,6 +63,7 @@ Use for: Private publication and link metadata.
 - [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks private ownership.
 - [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a private DACL file.
 - [`pin_data_link`](../../crates/festerm-unix-security/src/contained_data/link.rs) — Metadata only.
+- [`qualify_private_data_parent`](../../crates/festerm-unix-security/src/contained_data/private_parent.rs) — Binds the complete Mac private chain.
 - [`open_ios_selected_directory`](../../crates/festerm-secret-store/src/native_root.rs) — Checks the selected root.
 
 Evidence:
