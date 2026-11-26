@@ -607,6 +607,9 @@ fn report_with_run_history(
     let snapshot = store
         .snapshot()
         .map_err(|error| observation_failure(error, ObservationBoundary::Scope))?;
+    let bound_enable_discard = CloudHostAdapter::new(store)
+        .review_bound_enable_discard(&snapshot)
+        .ok();
     let cleanup = if snapshot.phase == Phase::CleanupPending {
         CloudHostAdapter::new(store)
             .pending_cleanup_context(&snapshot)
@@ -633,6 +636,7 @@ fn report_with_run_history(
         .flatten();
     Ok(Report {
         release,
+        bound_enable_discard,
         last_run,
         runtime_history: controller::runtime_diagnostics::read(store, root),
         scope: Scope::Present(snapshot.into()),
@@ -1008,6 +1012,16 @@ impl Native {
                 }
                 public_owner(&mut result, owner)?;
                 Ok(result)
+            }
+            Operation::DiscardBoundEnable => {
+                let reviewed = request
+                    .bound_enable_discard
+                    .as_ref()
+                    .ok_or(Failure::Reconciliation)?;
+                CloudHostAdapter::new(store)
+                    .discard_bound_enable(reviewed, cancel)
+                    .map_err(failure)?;
+                report(Some(store), &request.root)
             }
             Operation::Reconcile => {
                 let runtime = runtime()?;

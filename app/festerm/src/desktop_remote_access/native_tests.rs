@@ -12,6 +12,7 @@ fn request(root: &Path, operation: Operation, expected: Scope) -> Request {
         owner_revision: None,
         sharing: None,
         release: None,
+        bound_enable_discard: None,
     }
 }
 
@@ -222,6 +223,7 @@ fn desktop_remote_access_native_stale_epoch_refuses_before_vault_manager_or_netw
         Operation::InspectOwner,
         Operation::ObserveNative,
         Operation::Reconcile,
+        Operation::DiscardBoundEnable,
     ] {
         assert!(matches!(
             execute(request(
@@ -1984,6 +1986,119 @@ fn desktop_remote_access_enable_completion_history_enrichment_preserves_committe
                 None
             },
             "{case}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn desktop_remote_access_native_bound_enable_discard_needs_no_new_helper_or_cloud_auth() {
+    use festerm_tunnel_bridge::host_identity::HostIdentity;
+    use festerm_tunnel_client::host::{
+        CreateAccess, CreateProtocol, Receipt, Resource, HOST_LABEL, HOST_PORT,
+    };
+    use std::os::unix::fs::MetadataExt;
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let directory = storage::private_directory(&path, false).unwrap();
+    let identity =
+        HostIdentity::load_or_create_from_private_directory(&directory, Path::new("host-identity"))
+            .unwrap();
+    let resource = Resource {
+        tunnel_id: "festerm-local-fixture".into(),
+        cluster: "fixture-cluster".into(),
+        account_id: 42,
+        ownership_label: "festerm-owned-0123456789abcdef0123456789abcdef".into(),
+        labels: vec![
+            HOST_LABEL.into(),
+            "festerm-owned-0123456789abcdef0123456789abcdef".into(),
+        ],
+        port: HOST_PORT,
+        create_protocol: CreateProtocol::Auto,
+        create_access: CreateAccess::OwnerDefault,
+    };
+    resource.validate().unwrap();
+    let receipt = Receipt {
+        resource: resource.clone(),
+        created: "2026-11-09T00:00:00Z".into(),
+    };
+    let binding = festerm_host_setup::lifecycle::Binding {
+        host_id: identity.host_id(),
+        account: "github:42".into(),
+        qualified_tunnel: resource.qualified_id(),
+        cloud_incarnation: receipt.created.clone(),
+        host_key_fingerprint: identity.fingerprint().unwrap(),
+    };
+    let first = store
+        .request_enable(&store.snapshot().unwrap().settings)
+        .unwrap();
+    store.record_provisioned(&first, binding.clone()).unwrap();
+    store.revoke().unwrap();
+    store
+        .confirm_stopped(store.snapshot().unwrap().epoch, &binding)
+        .unwrap();
+    let next = store
+        .request_enable(&store.snapshot().unwrap().settings)
+        .unwrap();
+    store.revoke().unwrap();
+    let expected = store.snapshot().unwrap();
+    let cloud = serde_json::to_vec(&serde_json::json!({"version":1,"installation":expected.installation,"origin":"desktop",
+        "os_user":format!("uid:{}", std::fs::metadata(&path).unwrap().uid()),"ticket":next,"account_id":42,
+        "credential":festerm_secret_store::SecretReference::generate().to_persisted_string(),"authenticated":true,
+        "host_id":identity.host_id(),"fingerprint":identity.fingerprint().unwrap(),"resource":resource,
+        "creation_name":"retained original","submitted":true,"receipt":receipt})).unwrap();
+    storage::replace_private(&directory, Path::new("host-cloud.json"), &cloud).unwrap();
+    storage::open_private_file(&directory, Path::new("host-cloud.lock"), true).unwrap();
+    let _proof = CloudHostAdapter::new(&store)
+        .review_bound_enable_discard(&expected)
+        .unwrap();
+    let observed = report(Some(&store), &path).unwrap();
+    let mut work = request(
+        &path,
+        Operation::DiscardBoundEnable,
+        Scope::Present(expected.clone().into()),
+    );
+    work.bound_enable_discard = observed.bound_enable_discard;
+    work.draft.manual_bundle = true;
+    work.draft.archive = "must-not-be-opened".into();
+    let result = Native
+        .execute_with(
+            work,
+            &CancellationToken::new(),
+            mpsc::sync_channel(1).0,
+            |_, _| -> Result<(), Failure> { panic!("local discard must not acquire a new helper") },
+            |_, _| panic!("local discard must not publish a helper"),
+        )
+        .unwrap();
+    assert!(
+        result.failure.is_none(),
+        "native discard failed: {:?}",
+        result.failure
+    );
+    let Scope::Present(stopped) = result.scope else {
+        panic!("missing local result")
+    };
+    assert_eq!(stopped.phase, Phase::StopRequested);
+    assert_eq!(stopped.epoch, expected.epoch);
+    assert_eq!(stopped.binding, expected.binding);
+    assert_eq!(stopped.settings, expected.settings);
+    assert!(stopped.pending_ticket().is_none());
+    assert_eq!(
+        storage::read_private(&directory, Path::new("host-cloud.json"), 16 * 1024)
+            .unwrap()
+            .as_slice(),
+        cloud
+    );
+    for unchanged in [
+        "native-service.json",
+        "owner-enrollment.json",
+        "signed-release-cache",
+        "daemon",
+    ] {
+        assert!(
+            !path.join(unchanged).exists(),
+            "must not create {unchanged}"
         );
     }
 }

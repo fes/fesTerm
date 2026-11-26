@@ -2950,3 +2950,55 @@ fn host_enable_long_files_review_reveals_footer_once_and_cancel_is_safe_default(
         assert!(harness.state().0.pending.is_none());
     }
 }
+
+#[test]
+fn desktop_remote_access_bound_enable_discard_requires_local_proof_before_review() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(move |_: Request, _: &CancellationToken| {
+        recorded.fetch_add(1, Ordering::SeqCst);
+        panic!("missing proof must not admit a worker")
+    })));
+    controller.view.scope = provisioned_scope();
+    let context = egui::Context::default();
+    controller.action(Action::Review(Operation::DiscardBoundEnable), &context);
+    assert!(controller.view.review.is_none());
+    assert_eq!(controller.view.failure, Some(Failure::Reconciliation));
+    controller.action(Action::Confirm, &context);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn desktop_remote_access_bound_enable_discard_review_preserves_off_and_separate_actions() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 1600.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (
+                View {
+                    scope: provisioned_scope(),
+                    access_requested: Some(false),
+                    review: Some(Operation::DiscardBoundEnable),
+                    ..View::default()
+                },
+                None,
+            ),
+        );
+    harness.run();
+    harness.get_by_label("Discard interrupted setup?");
+    harness.get_by_label("Keep remote access off and preserve this host and its sessions. This clears the interrupted setup; it does not stop the host or check its cloud status. Review Disable next, then Enable to sign in again.");
+    harness.get_by_label("Discard interrupted setup").click();
+    harness.run();
+    assert!(matches!(harness.state().1, Some(Action::Confirm)));
+    assert_eq!(
+        harness.state().0.review,
+        Some(Operation::DiscardBoundEnable)
+    );
+    assert_eq!(harness.state().0.access_requested, Some(false));
+    assert!(!Operation::DiscardBoundEnable.needs_cancel_fence());
+}

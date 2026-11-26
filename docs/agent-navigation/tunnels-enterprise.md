@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "8f7c1d77328e03393e8e5fe2ce44e73acee505ccb4cc089ef308539382b2df60"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "e1b5cc61ebaef79fdf3ddd263a26b1f12325ca088baf441cc3163ad05d0c6f57"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -29,7 +29,7 @@ Use for: Owner approval and initial HOST runtime preparation.
 
 - [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs)
 - [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs)
-- [`foreground`](../../crates/festerm-host-setup/src/cloud.rs)
+- [Foreground and bound setup discard](../../crates/festerm-host-setup/src/cloud.rs)
 
 Evidence:
 - [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs)
@@ -73,7 +73,7 @@ Caveats:
 
 Use for: Exact Desktop start through the registered helper.
 
-- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds full scope and parent lifetime. A Busy parent read keeps the child transport deadline.
+- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds scope/parent lifetime; Busy retains the child deadline.
 - [`StartStage`](../../crates/festerm-host-setup/src/services/start_diagnostics.rs)
 
 Evidence:

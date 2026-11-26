@@ -433,6 +433,47 @@ impl Store {
         })
     }
 
+    /// Deny-only completion of a separately reviewed retained-bound cancellation.
+    /// The cloud guard runs under this same lifecycle lease before publication.
+    #[cfg(feature = "cloud")]
+    pub(crate) fn discard_bound_enable_if_current(
+        &self,
+        expected: &Snapshot,
+        verify: impl FnOnce(&File, &Snapshot) -> io::Result<()>,
+    ) -> io::Result<Snapshot> {
+        self.discard_bound_enable_using(expected, verify, |directory, bytes| {
+            storage::replace_private(directory, Path::new(RECORD), bytes)
+        })
+    }
+
+    #[cfg(feature = "cloud")]
+    fn discard_bound_enable_using(
+        &self,
+        expected: &Snapshot,
+        verify: impl FnOnce(&File, &Snapshot) -> io::Result<()>,
+        publish: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+    ) -> io::Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut current = self.read()?;
+        if &current != expected
+            || current.phase != Phase::Reconciling
+            || current.binding.is_none()
+            || current
+                .pending
+                .as_ref()
+                .is_none_or(|ticket| ticket.epoch >= current.epoch)
+        {
+            return Err(refused("host.bound_enable_discard_scope_changed"));
+        }
+        verify(&self.directory, &current)?;
+        current.pending = None;
+        current.phase = Phase::StopRequested;
+        current.validate(self.origin)?;
+        let bytes = serde_json::to_vec(&current).map_err(|_| refused("host.invalid_journal"))?;
+        publish(&self.directory, &bytes)?;
+        Ok(current)
+    }
+
     /// Commit only exact endpoint-adapter-verified identities. A late completion
     /// is retained for cleanup and cannot restore consent.
     pub fn record_provisioned(&self, ticket: &Ticket, binding: Binding) -> io::Result<Phase> {
@@ -706,6 +747,51 @@ mod tests {
         let root = storage::private_test_directory();
         let store = Store::create(&root.path().join("host"), Origin::Headless, settings()).unwrap();
         (root, store)
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn host_bound_enable_discard_preserves_uncertain_publication_without_replay() {
+        for published in [false, true] {
+            let (_root, store) = fixture();
+            let first = store.request_enable(&settings()).unwrap();
+            let exact = binding();
+            store.record_provisioned(&first, exact.clone()).unwrap();
+            store.revoke().unwrap();
+            let stopped = store.snapshot().unwrap();
+            store.confirm_stopped(stopped.epoch, &exact).unwrap();
+            store.request_enable(&settings()).unwrap();
+            store.revoke().unwrap();
+            let expected = store.snapshot().unwrap();
+            let error = store
+                .discard_bound_enable_using(
+                    &expected,
+                    |_, _| Ok(()),
+                    |directory, bytes| {
+                        if published {
+                            storage::replace_private(directory, Path::new(RECORD), bytes)?;
+                        }
+                        Err(io::Error::from_raw_os_error(5))
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(5));
+            let current = store.snapshot().unwrap();
+            assert_eq!(current.epoch, expected.epoch);
+            assert_eq!(current.binding, expected.binding);
+            assert_eq!(current.settings, expected.settings);
+            if published {
+                assert_eq!(current.phase, Phase::StopRequested);
+                assert!(current.pending_ticket().is_none());
+                assert!(store
+                    .discard_bound_enable_if_current(&expected, |_, _| panic!(
+                        "stale publication must not replay"
+                    ))
+                    .is_err());
+            } else {
+                assert_eq!(current, expected);
+            }
+        }
     }
 
     #[cfg(feature = "cloud")]

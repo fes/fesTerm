@@ -344,6 +344,11 @@ pub(crate) fn show(
             if action_button(ui, ActionButtonRole::Secondary, "Refresh local status").clicked() {
                 action = Some(Action::Refresh);
             }
+            if view.bound_enable_discard.is_some()
+                && action_button(ui, ActionButtonRole::Secondary, "Review interrupted setup…").clicked()
+            {
+                action = Some(Action::Review(Operation::DiscardBoundEnable));
+            }
             for (operation, label) in [
                 (Operation::ObserveNative, "Observe native process…"),
                 (Operation::InspectOwner, "Review native owner context…"),
@@ -405,6 +410,15 @@ pub(crate) fn show(
                 ui.strong(title);
                 if operation == Operation::Reconcile {
                     settings_note(ui, "Recovery can retire an unsupported request only after verifying that its cloud host is absent. Review Enable again afterward.");
+                }
+                if operation == Operation::DiscardBoundEnable {
+                    if let Scope::Present(snapshot) = &view.scope {
+                        ui.label(format!("Retained host: {}", snapshot.settings.friendly_name));
+                        if let Some(binding) = &snapshot.binding {
+                            ui.label(format!("Retained account: {}", binding.account));
+                        }
+                    }
+                    settings_note(ui, "Keep remote access off and preserve this host and its sessions. This clears the interrupted setup; it does not stop the host or check its cloud status. Review Disable next, then Enable to sign in again.");
                 }
                 match operation {
                     Operation::Enable => {
@@ -541,18 +555,11 @@ pub(crate) fn show(
     if draft != view.draft {
         action = Some(Action::Edit(draft));
     }
-    if view.busy
-        && action_button(
-            ui,
-            ActionButtonRole::Secondary,
-            "Cancel and fence mutating work",
-        )
-        .clicked()
-    {
+    if view.busy && action_button(ui, ActionButtonRole::Secondary, "Cancel operation").clicked() {
         action = Some(Action::Cancel);
     }
     if view.cancelling {
-        ui.label("Revoking / draining. New work remains blocked until actual workers finish.");
+        ui.label("Canceling. Please wait before starting another operation.");
     }
     if view.cleanup.is_some()
         || matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::CleanupPending)
@@ -729,6 +736,9 @@ fn confirmation_labels(operation: Operation, draft: &Draft) -> (&'static str, &'
         Operation::Refresh => ("Refresh local status?", "Refresh status"),
         Operation::InspectOwner => ("Review device access?", "Review access"),
         Operation::Reconcile => ("Recover host setup?", "Recover setup"),
+        Operation::DiscardBoundEnable => {
+            ("Discard interrupted setup?", "Discard interrupted setup")
+        }
         Operation::ApproveOwner => ("Approve this device?", "Approve device"),
         Operation::Start => ("Start remote access?", "Start host"),
         Operation::Update => ("Update host components?", "Update host"),

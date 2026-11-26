@@ -2429,6 +2429,17 @@ An old `final_fence` Busy plus Listening remains ambiguous and is not a repaired
 first-result qualification.
 
 
+HOST-04 **Review interrupted setup…** is a separate explicit local discard
+review for a cancelled, retained-bound Enable. Show the committed host/account,
+keep access off, and clear only a fully proven current pending intent to
+StopRequested at the same revoked epoch. Full snapshot/cloud-byte CAS, cloud
+operation exclusion and a one-use review refuse stale, unbound, missing or
+foreign facts without credential/provider/native actions. Preserve all retained
+resource/receipt/settings/identity/archive facts. Normal Disable still needs
+exact native-stop proof; fresh Enable/sign-in is a later separate review.
+Uncertain publication remains an error requiring fresh observation and review;
+there is no rollback, replay, automatic Start, new cloud resource or session end.
+
 HOST-04/06 Update host review: the header action reveals the existing review once
 and focuses Not now. Enter cancels; ordinary scrolling remains free while it is
 pending, and cancel/reopen reveals again. No acquisition or worker starts from

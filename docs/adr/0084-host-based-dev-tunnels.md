@@ -402,6 +402,28 @@ On first enable, shared setup code stages missing verified components, guides
 foreground sign-in, registers the background host and reports readiness. It does
 not create a shell. No copy/paste installer or connection JSON is required.
 
+An interrupted Enable for an already bound host has a separate, explicitly
+reviewed **Discard interrupted setup** action. It is local and deny-only:
+compare the complete current snapshot and exact cloud journal bytes, require a
+submitted supported-protocol resource with a full pinned receipt matching the
+retained host/account/OS-user/identity and pending ticket, exclude retired or
+competing cloud work, then clear only that pending intent to StopRequested at
+the same revoked epoch. Preserve all cloud journal, credential-reference,
+identity, settings and initial-authorization archive bytes. Stored authenticated
+metadata and receipts are not current provider presence or readiness evidence.
+No credential store, provider, Create/Delete, adoption or native Start/Stop is
+invoked. The live local review is one-use; stale/cancelled or uncertain
+publication cannot replay it. Missing/mismatched/unbound facts retain existing
+reconciliation; the unbound uncertainty-release guard is unchanged.
+
+Normal Disable must separately prove exact native stop before Disabled. Only a
+later separately reviewed Enable may use existing same-account DeviceFlow and
+the retained receipt; a missing resource never becomes new creation or foreign
+receipt adoption. On macOS, missing original Desktop credentials retain their
+existing fresh-credential refusal; other platforms keep their existing sign-in
+policy. This GUI-local path does not require a new HOST helper before recovery;
+old registered helpers retain their existing authenticated stop contract.
+
 When hosting is absent, an eligible local persistent profile offers a short
 "Enable remote access in Settings to share this session" link rather than
 launching a wizard. Navigating away preserves unrelated edits. Setup success
@@ -940,6 +962,14 @@ boot-start, temporary-lease or upgrade behavior. No live credentials or service
 changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
+
+HOST-04 interrupted bound setup discard has portable protected-file CAS,
+one-use review, cancellation/busy/uncertain-publication, malformed/foreign
+receipt and no-provider/credential/helper-effect coverage. Separate fixtures
+cover existing version27 registered-manager stop and the subsequent explicit
+Enable's pinned-absence/foreign-incarnation refusal. GUI fixtures cover review
+copy/proof gating and the local backend without acquiring a helper. These are
+component/source evidence, not signed GUI28/HOST27 native recovery acceptance.
 
 The optional [native terminal capability collector](../native-terminal-capability-probe.md)
 supports HOST-02/03 matched-grid Copilot validation with actual POSIX terminal

@@ -1220,6 +1220,38 @@ fn host_process_recovery_existing_receipts_and_missing_legacy_files_keep_exact_p
 
 #[test]
 #[cfg(unix)]
+fn native_service_manager_stop_registered_version27_preserves_receipt() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let manager = services(root.path(), &store, Platform::Macos);
+    let old = trusted::version_fixture(root.path(), "0.17.27");
+    manager.install(&old, snapshot.epoch).unwrap();
+    manager.start_with(&old, snapshot.epoch, || Ok(())).unwrap();
+    let registered = manager.registration().unwrap().1.unwrap();
+    store.revoke().unwrap();
+    let stopped = store.snapshot().unwrap();
+    let observed = manager.stop(stopped.epoch).unwrap();
+    assert_eq!(observed.epoch, stopped.epoch);
+    assert!(matches!(
+        observed.process,
+        ProcessState::Stopped | ProcessState::Absent
+    ));
+    let retained = manager.registration().unwrap().1.unwrap();
+    assert_eq!(retained.executable, registered.executable);
+    assert_eq!(retained.digest, registered.digest);
+    assert_eq!(retained.provenance, registered.provenance);
+    assert_eq!(old.version(), "0.17.27");
+    store
+        .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+    assert_eq!(store.snapshot().unwrap().epoch, stopped.epoch);
+}
+
+#[test]
+#[cfg(unix)]
 fn host_process_recovery_older_bundle_cannot_create_new_restart_authority() {
     let root = storage::private_test_directory();
     let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
