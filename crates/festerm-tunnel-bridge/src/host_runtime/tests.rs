@@ -314,6 +314,27 @@ async fn authenticated_runtime_policy_busy_retries_both_phases_and_rechecks_actu
     }
 }
 
+// Real SSH I/O and blocking policy workers must progress without Tokio's
+// paused clock automatically jumping to an unrelated pending timer. This
+// fixture-only watchdog bounds scheduler progress, not authentication authority.
+async fn drive_paused_authentication_io<T>(
+    work: impl std::future::Future<Output = T>,
+) -> Result<T, &'static str> {
+    let until = std::time::Instant::now() + Duration::from_secs(2);
+    tokio::pin!(work);
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut work => return Ok(result),
+            _ = tokio::task::yield_now() => {
+                if std::time::Instant::now() >= until {
+                    return Err("paused authentication I/O did not settle");
+                }
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn authenticated_runtime_policy_busy_refusal_uses_one_deadline_for_both_phases() {
     use std::sync::atomic::Ordering::SeqCst;
@@ -322,46 +343,94 @@ async fn authenticated_runtime_policy_busy_refusal_uses_one_deadline_for_both_ph
         let (runtime, source) =
             busy_runtime(&fixture, if after_challenge { 0 } else { usize::MAX });
         let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
-        let (client, stream, ssh) = fixture.pair().await;
+        let (mut client, stream, ssh) = fixture.pair().await;
         let host = runtime.clone();
+        // Pair the real SSH transport before freezing just this auth exchange.
+        tokio::time::pause();
         let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        let refusal_at = deadline - AUTH_REFUSAL_RESERVE;
+        let cancel = CancellationToken::new();
+        let server_cancel = cancel.clone();
         let host_permit = Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap());
-        let server = tokio::spawn(async move {
+        let mut server = tokio::spawn(async move {
             tokio::time::timeout_at(
                 deadline,
-                host.authenticate(stream, host_permit, deadline, CancellationToken::new()),
+                host.authenticate(stream, host_permit, deadline, server_cancel),
             )
             .await
             .expect("policy contention restarted or exhausted the authentication deadline")
         });
-        let vault = fixture.vault.clone();
-        let key = fixture.key.clone();
-        let approved = fixture.approved.clone();
-        let result = authenticate_client_using(
-            client,
-            permit,
-            StreamRole::Control,
-            CancellationToken::new(),
-            move |stream, challenge| {
-                if after_challenge {
-                    std::thread::sleep(Duration::from_millis(200));
-                    source.remaining.store(usize::MAX, SeqCst);
-                }
-                stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
-            },
-        )
+        let result = drive_paused_authentication_io(async {
+            if after_challenge {
+                let frame = read_frame(&mut client, permit.budgets()).await?;
+                let Authentication::Challenge { challenge } = frame.decode()? else {
+                    return Err(Error::Contract(ContractError::Malformed));
+                };
+                drop(frame);
+                // Spend part of the original budget between the two phases.
+                tokio::time::advance(Duration::from_millis(200)).await;
+                source.remaining.store(usize::MAX, SeqCst);
+                let proof = client
+                    .prove_owner_fixture(
+                        fixture.vault.as_ref(),
+                        &fixture.key,
+                        &fixture.approved,
+                        &challenge,
+                    )
+                    .map_err(|_| Error::Contract(ContractError::Denied))?;
+                write_frame(
+                    &mut client,
+                    permit.budgets(),
+                    &Authentication::Proof { proof },
+                )
+                .await?;
+            }
+            // Observe actual policy contention before advancing to its boundary.
+            while source.simulated_busy.load(SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            tokio::time::advance(refusal_at - tokio::time::Instant::now()).await;
+            let frame = read_frame(&mut client, permit.budgets()).await?;
+            let response: Authentication = frame.decode()?;
+            Ok::<_, Error>((response, tokio::time::Instant::now()))
+        })
         .await;
-        assert!(matches!(
-            result,
-            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
-        ));
-        assert!(matches!(
-            server.await.unwrap(),
-            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
-        ));
-        assert!(client_budget_drained(&runtime));
+        // Always unfreeze and retire owned work before asserting its outcome,
+        // including watchdog failures or a broken deadline implementation.
+        cancel.cancel();
+        tokio::time::resume();
+        drop(client);
+        drop(permit);
+        let server_result = tokio::time::timeout(Duration::from_secs(2), &mut server).await;
+        if server_result.is_err() {
+            server.abort();
+            let _ = server.await;
+        }
+        let drained = tokio::time::timeout(Duration::from_secs(2), async {
+            while !client_budget_drained(&runtime) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
         ssh.abort();
         let _ = ssh.await;
+        let (response, observed_at) = result.expect("paused fixture watchdog").unwrap();
+        assert!(matches!(
+            response,
+            Authentication::Refused {
+                reason: festerm_host_protocol::Refusal::Busy,
+            }
+        ));
+        assert_eq!(
+            observed_at, refusal_at,
+            "both phases use the original deadline"
+        );
+        assert!(matches!(
+            server_result.unwrap().unwrap(),
+            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+        ));
+        drained.expect("authentication policy work did not release its client charge");
+        assert!(client_budget_drained(&runtime));
     }
 }
 
