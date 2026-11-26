@@ -258,6 +258,7 @@ fn run(
         local_root,
         transfers: Arc::new(ManagerTransfers::new(manager)),
         start_dir,
+        initial_remote_listing: None,
     })
 }
 

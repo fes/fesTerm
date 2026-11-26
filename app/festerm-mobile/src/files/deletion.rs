@@ -77,6 +77,7 @@ impl FilesSession {
     }
     pub(crate) fn deletion_available(&self) -> bool {
         self.is_ready()
+            && self.remote_mutations_available()
             && self
                 .transfers
                 .as_ref()

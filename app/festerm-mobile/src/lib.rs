@@ -5286,6 +5286,7 @@ mod tests {
                     local_root: std::path::PathBuf::from("/nonexistent-festerm-test"),
                     transfers: Arc::new(FixtureTransfers::new(Vec::new())),
                     start_dir: None,
+                    initial_remote_listing: None,
                 },
                 &ctx,
             );

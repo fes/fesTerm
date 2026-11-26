@@ -7,6 +7,42 @@ mod private_diagnostic;
 #[cfg(unix)]
 pub use private_diagnostic::private_storage_diagnostic;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod contained_data;
+#[cfg(target_os = "linux")]
+pub use contained_data::open_mutation_file_nofollow;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub use contained_data::{
+    open_contained_data_directory, open_contained_data_file, qualify_data_mutation_ancestor,
+    same_data_object,
+};
+#[cfg(target_os = "macos")]
+pub use contained_data::{open_trusted_data_file, ownership_enforcing_data_filesystem};
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+pub fn open_contained_data_directory(
+    _: &std::fs::File,
+    _: &std::path::Path,
+) -> std::io::Result<std::fs::File> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+pub fn open_contained_data_file(
+    _: &std::fs::File,
+    _: &std::path::Path,
+) -> std::io::Result<std::fs::File> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+pub fn qualify_data_mutation_ancestor(_: &std::fs::File) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+pub fn same_data_object(_: &std::fs::File, _: &std::fs::File) -> std::io::Result<bool> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
 #[cfg(unix)]
 mod imp {
     use crate::private_diagnostic::{private_error, private_postcondition, Operation};
@@ -375,7 +411,7 @@ mod imp {
         private_error(Operation::Chmod, io::Error::from(error))
     }
 
-    fn one_component(name: &Path) -> io::Result<()> {
+    pub(super) fn one_component(name: &Path) -> io::Result<()> {
         let mut components = name.components();
         if matches!(components.next(), Some(std::path::Component::Normal(_)))
             && components.next().is_none()
@@ -483,13 +519,35 @@ mod imp {
         actual_uid == current_uid && mode == if directory { 0o700 } else { 0o600 }
     }
 
+    fn trusted_ancestor_owner_mode(metadata: &std::fs::Metadata) -> bool {
+        metadata.is_dir()
+            && (metadata.uid() == 0 || metadata.uid() == nix::unistd::Uid::effective().as_raw())
+            && metadata.mode() & 0o022 == 0
+    }
+    /// Read-only qualification for selecting a data-read strategy. Native I/O
+    /// errors propagate; false means the existing trust policy evaluated unsafe.
+    pub fn private_storage_ancestor_qualified(directory: &File) -> io::Result<bool> {
+        let metadata = directory.metadata()?;
+        if !trusted_ancestor_owner_mode(&metadata) {
+            return Ok(false);
+        }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let permissive_acl = apple_acl_has_allow_entry(directory)?;
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let permissive_acl = false;
+        // Owner/mode qualification above already establishes a non-shared
+        // trusted owner. Reuse the exact existing staging ACL decision.
+        Ok(staging_parent_security_is_safe(
+            false,
+            false,
+            true,
+            permissive_acl,
+        ))
+    }
     /// Refuses ancestors whose entries another ordinary account can replace.
     pub fn trusted_private_storage_ancestor(directory: &File) -> io::Result<()> {
         let metadata = directory.metadata()?;
-        if !metadata.is_dir()
-            || (metadata.uid() != 0 && metadata.uid() != nix::unistd::Uid::effective().as_raw())
-            || metadata.mode() & 0o022 != 0
-        {
+        if !trusted_ancestor_owner_mode(&metadata) {
             return Err(io::Error::from(io::ErrorKind::PermissionDenied));
         }
         secure_staging_parent(directory).map(|_| ())
@@ -1407,11 +1465,12 @@ pub use imp::{
     is_current_user_only, is_current_user_only_executable, make_private, make_private_directory,
     open_absolute_directory_read_nofollow, open_directory_read_nofollow,
     open_directory_search_nofollow, open_download_parent, open_file_nofollow, open_private_file,
-    preserve_security_metadata, remove_download_file, remove_empty_directory,
-    remove_empty_private_directory, remove_private_staging_file, rename_noreplace,
-    reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
-    trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
+    preserve_security_metadata, private_storage_ancestor_qualified, remove_download_file,
+    remove_empty_directory, remove_empty_private_directory, remove_private_staging_file,
+    rename_noreplace, reopen_directory_read, replace_private_file, secure_staging_parent,
+    security_metadata, security_metadata_matches, staging_parent_matches,
+    trusted_packaged_executable_ancestor, trusted_private_storage_ancestor, writable_directory,
+    SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(target_os = "macos")]
@@ -1533,10 +1592,10 @@ mod tests {
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-    struct TemporaryDirectory(PathBuf);
+    pub(crate) struct TemporaryDirectory(pub(crate) PathBuf);
 
     impl TemporaryDirectory {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
             let path =
                 std::env::temp_dir().join(format!("festerm-unix-security-{}-{id}", process::id()));

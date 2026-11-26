@@ -80,6 +80,7 @@ impl festerm_sftp::PaneFs for FixtureFs {
 pub(crate) struct FixtureTransfers {
     pub(crate) rows: Vec<files::TransferRow>,
     pub(crate) display_root: Option<String>,
+    pub(crate) locations: Option<Vec<files::RemoteLocation>>,
     pub(crate) resolved: std::sync::Mutex<Vec<(u64, festerm_sftp::ConflictPolicy, bool)>>,
 }
 
@@ -88,12 +89,16 @@ impl FixtureTransfers {
         Self {
             rows,
             display_root: None,
+            locations: None,
             resolved: Default::default(),
         }
     }
 }
 
 impl files::Transfers for FixtureTransfers {
+    fn remote_locations(&self) -> Option<Vec<files::RemoteLocation>> {
+        self.locations.clone()
+    }
     fn remote_root_label(&self) -> String {
         self.display_root.clone().unwrap_or_else(|| "/".into())
     }

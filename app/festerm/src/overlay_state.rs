@@ -328,11 +328,36 @@ pub(crate) enum StoredCredentialLaunch {
     },
 }
 
+/// An in-memory cleanup diagnostic owned by the pending notice.
+pub(crate) struct CleanupDiagnostic {
+    _error: Box<festerm_ssh::SftpSessionError>,
+}
+
+impl CleanupDiagnostic {
+    pub(crate) fn new(error: festerm_ssh::SftpSessionError) -> Self {
+        Self {
+            _error: Box::new(error),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn error(&self) -> &festerm_ssh::SftpSessionError {
+        &self._error
+    }
+}
+
+impl std::fmt::Debug for CleanupDiagnostic {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CleanupDiagnostic { .. }")
+    }
+}
+
 /// A file that could not be opened, named so the reader can tell which of
 /// several they picked was refused, with the reason in the words the document
 /// layer already uses.
 #[derive(Debug)]
 pub(crate) struct OpenRefusalNotice {
+    pub(crate) _cleanup_diagnostic: Option<CleanupDiagnostic>,
     pub(crate) title: Option<Box<str>>,
     pub(crate) acknowledgement_path: Option<Box<PathBuf>>,
     pub(crate) name: String,

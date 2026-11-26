@@ -408,6 +408,7 @@ fn host_update_rejects_unprojected_files_policy_before_native_effects() {
     let mut settings = fixture.store.snapshot().unwrap().settings;
     settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
         start_in: None,
+        locations: None,
         root: fixture.root.path().join("reviewed-root"),
         write: true,
         delete: true,

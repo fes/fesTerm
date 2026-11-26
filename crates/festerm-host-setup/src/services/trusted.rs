@@ -417,6 +417,33 @@ impl TrustedStage {
         if settings
             .filesystem
             .as_ref()
+            .is_some_and(|policy| policy.locations.is_some())
+        {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct LocationsReply {
+                schema: u16,
+                host_files_locations_v1: bool,
+            }
+            let reply = runner
+                .execute_read_only(&super::native::NativeRequest::Process {
+                    tool: self.path.clone(),
+                    args: vec!["capabilities".into(), "files-locations".into()],
+                })
+                .map_err(|_| unsupported())?;
+            if !reply.success || reply.code != 0 || reply.stdout.len() > 1024 {
+                return Err(unsupported());
+            }
+            let reply: LocationsReply =
+                serde_json::from_slice(&reply.stdout).map_err(|_| unsupported())?;
+            if reply.schema != 1 || !reply.host_files_locations_v1 {
+                return Err(unsupported());
+            }
+            self.revalidate()?;
+        }
+        if settings
+            .filesystem
+            .as_ref()
             .is_some_and(|policy| policy.start_in.is_some())
         {
             #[derive(serde::Deserialize)]
@@ -895,6 +922,7 @@ mod tests {
         assert_eq!(probe.calls.get(), 0);
         settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: root.path().into(),
             write: false,
@@ -970,6 +998,7 @@ mod tests {
         let mut settings = crate::lifecycle::Settings {
             filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
                 start_in: None,
+                locations: None,
                 root: root.path().into(),
                 write: true,
                 delete: false,
@@ -1061,6 +1090,7 @@ mod tests {
         let mut settings = crate::lifecycle::Settings {
             filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
                 start_in: None,
+                locations: None,
                 root: root.path().into(),
                 write: false,
                 delete: false,
@@ -1104,6 +1134,102 @@ mod tests {
             assert_eq!(probe.calls.borrow().len(), 2);
         }
         probe.start = br#"{"schema":1,"host_files_start_v1":true}"#.to_vec();
+        stage.require_host_files_with(&settings, &probe).unwrap();
+        probe.tamper = true;
+        assert!(
+            stage.require_host_files_with(&settings, &probe).is_err(),
+            "successful probe cannot authorize changed staged bytes"
+        );
+    }
+
+    #[test]
+    fn host_locations_probe_is_separate_strict_bounded_and_revalidates_stage() {
+        use super::super::native::{CommandRunner, NativeOutput, NativeRequest};
+        struct Probe {
+            path: PathBuf,
+            start: Vec<u8>,
+            calls: std::cell::RefCell<Vec<Vec<std::ffi::OsString>>>,
+            tamper: bool,
+        }
+        impl CommandRunner for Probe {
+            fn execute(&self, _: &NativeRequest) -> io::Result<NativeOutput> {
+                panic!("mutating runner must never be used");
+            }
+            fn execute_read_only(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+                let NativeRequest::Process { tool, args } = request else {
+                    panic!("process probe only");
+                };
+                assert_eq!(tool, &self.path);
+                self.calls.borrow_mut().push(args.clone());
+                let stdout = if args == &["capabilities"] {
+                    br#"{"schema":1,"host_files_v2":true}"#.to_vec()
+                } else {
+                    assert_eq!(args, &["capabilities", "files-locations"]);
+                    if self.tamper {
+                        std::fs::write(tool, b"changed signed helper")?;
+                    }
+                    self.start.clone()
+                };
+                Ok(NativeOutput {
+                    success: true,
+                    code: 0,
+                    stdout,
+                })
+            }
+        }
+        let root = storage::private_test_directory();
+        let stage = fixture(root.path());
+        let mut settings = crate::lifecycle::Settings {
+            filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
+                start_in: None,
+                locations: None,
+                root: root.path().into(),
+                write: false,
+                delete: false,
+            }),
+            ordinary_access: crate::lifecycle::OrdinaryAccess::ProviderOwner,
+            friendly_name: "Start probe fixture".into(),
+            allow_creation: false,
+            allow_session_termination: false,
+            startup: crate::lifecycle::Startup::Manual,
+        };
+        let mut probe = Probe {
+            path: stage.path().into(),
+            start: Vec::new(),
+            calls: Default::default(),
+            tamper: false,
+        };
+        stage.require_host_files_with(&settings, &probe).unwrap();
+        assert_eq!(
+            &*probe.calls.borrow(),
+            &[vec![std::ffi::OsString::from("capabilities")]],
+            "old default grant never invokes the new feature probe"
+        );
+        settings.filesystem.as_mut().unwrap().locations =
+            Some(festerm_tunnel_bridge::file_protocol::AllowedLocations {
+                roots: vec![root.path().into()],
+                start: None,
+            });
+        for bytes in [
+            Vec::new(),
+            vec![b'x'; 1025],
+            br#"{"schema":1,"host_files_locations_v1":false}"#.to_vec(),
+            br#"{"schema":2,"host_files_locations_v1":true}"#.to_vec(),
+            br#"{"schema":1,"host_files_locations_v1":true,"future":true}"#.to_vec(),
+            br#"{"schema":1,"host_files_v2":true}"#.to_vec(),
+        ] {
+            probe.calls.borrow_mut().clear();
+            probe.start = bytes;
+            assert_eq!(
+                stage
+                    .require_host_files_with(&settings, &probe)
+                    .unwrap_err()
+                    .to_string(),
+                "host.file_helper_unsupported"
+            );
+            assert_eq!(probe.calls.borrow().len(), 2);
+        }
+        probe.start = br#"{"schema":1,"host_files_locations_v1":true}"#.to_vec();
         stage.require_host_files_with(&settings, &probe).unwrap();
         probe.tamper = true;
         assert!(

@@ -10,6 +10,15 @@ use std::{collections::HashMap, fmt, io, sync::Arc};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+/// Ephemeral foreground navigation intent for a newly authenticated Files
+/// opening. This is neither a persisted destination nor filesystem authority.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NavigationPreference {
+    #[default]
+    DefaultStart,
+    ChooseLocation,
+}
+
 #[derive(Debug)]
 pub enum Error {
     Closed,
@@ -138,10 +147,22 @@ pub struct Chunk {
     pub eof: bool,
 }
 
+/// Current guarded transfers understand the new namespace while retaining the
+/// historical Open2 bytes against a historical description.
+#[derive(Clone, Copy)]
+enum HostOpening {
+    Legacy,
+    Reviewed,
+    #[cfg(feature = "host-routing")]
+    Current,
+}
+
 pub struct Client<S> {
     stream: Option<S>,
     capabilities: rpc::Capabilities,
     operations: Option<rpc::OperationCapabilities>,
+    locations: Option<Vec<rpc::FileLocation>>,
+    locations_scope: bool,
     next_id: u32,
     handles: HashMap<u32, (u32, State)>,
     connection: Arc<()>,
@@ -319,6 +340,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             stream: Some(stream),
             capabilities,
             operations: None,
+            locations: None,
+            locations_scope: false,
             next_id: 0,
             handles: HashMap::new(),
             connection: Arc::new(()),
@@ -343,7 +366,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             None,
             || Ok(()),
             cancel,
-            rpc::HOST_VERSION,
+            HostOpening::Legacy,
         )
         .await
     }
@@ -362,7 +385,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             None,
             || Ok(()),
             cancel,
-            rpc::HOST_REVIEWED_VERSION,
+            HostOpening::Reviewed,
         )
         .await
     }
@@ -383,7 +406,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             pinned,
             guard,
             cancel,
-            rpc::HOST_VERSION,
+            HostOpening::Current,
         )
         .await
     }
@@ -403,7 +426,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             pinned,
             guard,
             cancel,
-            rpc::HOST_REVIEWED_VERSION,
+            HostOpening::Reviewed,
         )
         .await
     }
@@ -416,7 +439,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         pinned: Option<&rpc::HostScope>,
         guard: crate::host_client::ordinary::OrdinaryAccountGuard,
         cancel: CancellationToken,
-        version: u16,
+        opening: HostOpening,
     ) -> Result<Option<(Self, rpc::HostScope)>> {
         let current = guard.clone();
         let opened = Self::open_host_checked(
@@ -426,7 +449,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             pinned,
             move || current.check().map_err(|_| Error::Cancelled),
             cancel,
-            version,
+            opening,
         )
         .await?;
         Ok(opened.map(|(mut client, scope)| {
@@ -442,21 +465,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         pinned: Option<&rpc::HostScope>,
         current: impl Fn() -> Result<()>,
         cancel: CancellationToken,
-        version: u16,
+        opening: HostOpening,
     ) -> Result<Option<(Self, rpc::HostScope)>> {
-        if !matches!(version, rpc::HOST_VERSION | rpc::HOST_REVIEWED_VERSION) {
-            return Err(Error::Invalid);
-        }
         current()?;
         let description = bounded(&cancel, async {
             let bytes = frame(&mut stream, rpc::HOST_DESCRIPTION, 4096).await?;
             let description: rpc::HostDescription =
                 serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
-            if description.version != rpc::HOST_VERSION
+            if !matches!(
+                description.version,
+                rpc::HOST_VERSION | rpc::HOST_LOCATIONS_VERSION
+            ) || description.version == rpc::HOST_LOCATIONS_VERSION
+                && matches!(opening, HostOpening::Legacy)
                 || &description.scope.host != host
                 || &description.scope.installation != installation
                 || description.scope.validate().is_err()
                 || pinned.is_some_and(|expected| expected != &description.scope)
+            {
+                return Err(Error::Protocol);
+            }
+            if description.version == rpc::HOST_LOCATIONS_VERSION
+                && description.filesystem.is_none()
             {
                 return Err(Error::Protocol);
             }
@@ -469,6 +498,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         current()?;
         let Some(caps) = description.filesystem else {
             return Ok(None);
+        };
+        let version = if description.version == rpc::HOST_LOCATIONS_VERSION {
+            rpc::HOST_LOCATIONS_VERSION
+        } else if matches!(opening, HostOpening::Reviewed) {
+            rpc::HOST_REVIEWED_VERSION
+        } else {
+            rpc::HOST_VERSION
         };
         let operations = bounded(&cancel, async {
             write_frame(
@@ -491,7 +527,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                     result: Some(Reply::ReadyV3 { capabilities }),
                     error: None,
                     ..
-                } if version == rpc::HOST_REVIEWED_VERSION && capabilities.validate(&caps) => {
+                } if matches!(
+                    version,
+                    rpc::HOST_REVIEWED_VERSION | rpc::HOST_LOCATIONS_VERSION
+                ) && capabilities.validate(&caps)
+                    && (version != rpc::HOST_LOCATIONS_VERSION
+                        || capabilities
+                            .operations
+                            .iter()
+                            .any(|name| name == "locations")
+                            && capabilities.allows_start_directory()) =>
+                {
                     Ok(Some(capabilities))
                 }
                 rpc::Response {
@@ -513,6 +559,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                 stream: Some(stream),
                 capabilities: caps,
                 operations,
+                locations: None,
+                locations_scope: description.version == rpc::HOST_LOCATIONS_VERSION,
                 next_id: 0,
                 handles: HashMap::new(),
                 connection: Arc::new(()),
@@ -534,6 +582,45 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     }
 
     /// Initial navigation only. Legacy peers keep their historical root start.
+    /// Current-grant locations; absent metadata is the unchanged singleton.
+    pub async fn locations(&mut self) -> Result<Option<Vec<rpc::FileLocation>>> {
+        self.ready()?;
+        if !self.locations_scope {
+            return Ok(None);
+        }
+        if !self
+            .operations
+            .as_ref()
+            .is_some_and(|ops| ops.allows_locations())
+        {
+            return self.protocol();
+        }
+        let (Reply::Locations { locations }, None) =
+            self.exchange(Operation::Locations {}, None).await?
+        else {
+            return self.protocol();
+        };
+        if locations.is_empty()
+            || locations.len() > rpc::LOCATION_LIMIT
+            || locations.iter().any(|root| !root.validate())
+            || locations
+                .iter()
+                .map(|root| &root.selector)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != locations.len()
+        {
+            return self.protocol();
+        }
+        self.locations = Some(locations.clone());
+        Ok(Some(locations))
+    }
+    pub fn location_chooser(&self, path: &str) -> bool {
+        self.locations_scope && path == "/"
+    }
+    pub fn location_metadata(&self) -> Option<&[rpc::FileLocation]> {
+        self.locations.as_deref()
+    }
     pub async fn start_directory(&mut self) -> Result<String> {
         self.ready()?;
         if !self
@@ -544,7 +631,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             return Ok("/".into());
         }
         match self.exchange(Operation::StartDirectory {}, None).await? {
-            (Reply::StartDirectory { path }, None) => Ok(path.into()),
+            (Reply::StartDirectory { path }, None) => {
+                if self.locations_scope
+                    && path.as_str() != "/"
+                    && !self.locations.as_ref().is_some_and(|roots| {
+                        roots
+                            .iter()
+                            .any(|root| root.available && root.contains(path.as_str()))
+                    })
+                {
+                    return self.protocol();
+                }
+                Ok(path.into())
+            }
             _ => self.protocol(),
         }
     }
@@ -1316,6 +1415,7 @@ mod tests {
         let root = crate::test_support::private_directory("festerm-rooted-client");
         let files = FileService::rooted(&rpc::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: root.clone(),
             write,
@@ -1611,6 +1711,7 @@ mod tests {
         std::fs::write(root.join(leaf).join("canary.txt"), b"public canary").unwrap();
         let filesystem = crate::filesystem::Filesystem::open(&rpc::Policy {
             start_in: None,
+            locations: None,
             root: root.clone(),
             write: true,
             delete: false,
@@ -3176,6 +3277,81 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn allowed_locations_v4_opening_refuses_off_and_missing_mandatory_operations() {
+        for case in 0..4 {
+            let scope = reviewed_scope();
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let mut server = tokio::spawn(async move {
+                let filesystem = if case == 0 { None } else { Some(limits()) };
+                write_frame(
+                    &mut peer,
+                    rpc::HOST_DESCRIPTION,
+                    &serde_json::to_vec(&rpc::HostDescription {
+                        version: rpc::HOST_LOCATIONS_VERSION,
+                        scope: expected,
+                        filesystem,
+                    })
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+                if case != 0 {
+                    let (kind, bytes) = crate::wire::read_frame(&mut peer).await.unwrap();
+                    assert_eq!(kind, rpc::OPEN);
+                    let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(open.version, rpc::HOST_LOCATIONS_VERSION);
+                    let operations = match case {
+                        1 => vec!["start_directory".into()],
+                        2 => vec!["locations".into()],
+                        _ => vec!["locations".into(), "start_directory".into()],
+                    };
+                    reply(
+                        &mut peer,
+                        0,
+                        Reply::ReadyV3 {
+                            capabilities: rpc::OperationCapabilities {
+                                version: rpc::HOST_REVIEWED_VERSION,
+                                write: limits().write,
+                                operations,
+                                chunk_limit: rpc::CHUNK_LIMIT,
+                                page_limit: rpc::PAGE_LIMIT,
+                                handle_limit: rpc::HANDLE_LIMIT,
+                            },
+                        },
+                    )
+                    .await;
+                }
+                assert!(
+                    crate::wire::read_frame(&mut peer).await.is_err(),
+                    "no initial chooser/metadata request after malformed opening"
+                );
+            });
+            let result = Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await;
+            if case == 3 {
+                let (mut client, _) = result.unwrap().unwrap();
+                client.cancel();
+            } else {
+                assert!(matches!(result, Err(Error::Protocol)));
+            }
+            match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server).await {
+                Ok(result) => result.unwrap(),
+                Err(error) => {
+                    server.abort();
+                    let _ = server.await;
+                    panic!("owned peer did not drain: {error}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn reviewed_client_unknown_optional_operations_grant_nothing_and_preserve_ping() {
         let scope = reviewed_scope();
         let expected = scope.clone();
@@ -3385,6 +3561,7 @@ mod tests {
         std::fs::write(root.join("file"), b"owned source").unwrap();
         let filesystem = crate::filesystem::Filesystem::open(&rpc::Policy {
             start_in: None,
+            locations: None,
             root: root.clone(),
             write: true,
             delete: true,

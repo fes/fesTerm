@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, ffi::OsString, io, path::PathBuf, process::Exit
 const HELP: &str = "\
 festerm-host — ADR 0084 headless lifecycle boundary
 
-capabilities [files-delete|mac-host-access]
+capabilities [files-start|files-locations|files-delete|mac-host-access]
     Read static compiled helper capabilities only; no state, account or service is accessed.
 start-desktop --state-dir PATH --installation UUID --epoch U64 --scope-digest SHA256 --nonce UUID --consent start
     macOS authenticated registered helper only, noninteractive one-shot native start with parent-lifetime pipe; Running is not Ready.
@@ -138,6 +138,10 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         return match feature.as_deref() {
             None => Ok(format!(
                 "{{\"schema\":1,\"host_files_v2\":{}}}\n",
+                cfg!(feature = "owner-routing")
+            )),
+            Some(feature) if feature == "files-locations" => Ok(format!(
+                "{{\"schema\":1,\"host_files_locations_v1\":{}}}\n",
                 cfg!(feature = "owner-routing")
             )),
             Some(feature) if feature == "files-start" => Ok(format!(

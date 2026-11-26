@@ -60,6 +60,7 @@ struct Lease {
     uploads: Mutex<Option<Arc<uploads::Uploads>>>,
     root: Mutex<Option<Arc<local_root::Root>>>,
     display_root: Mutex<Option<festerm_tunnel_bridge::file_protocol::DisplayRoot>>,
+    locations: Mutex<Option<Vec<rpc::FileLocation>>>,
 }
 impl Drop for Lease {
     fn drop(&mut self) {
@@ -67,6 +68,26 @@ impl Drop for Lease {
     }
 }
 impl Lease {
+    fn location(&self, path: &str) -> Option<rpc::FileLocation> {
+        self.locations
+            .lock()
+            .unwrap()
+            .as_ref()?
+            .iter()
+            .find(|location| location.contains(path))
+            .cloned()
+    }
+    fn mutation_path_available(&self, path: &str) -> bool {
+        self.locations
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(|locations| {
+                locations.iter().any(|location| {
+                    location.contains(path) && location.available && location.mutations_available
+                })
+            })
+    }
     fn send_current(&self) -> Result<(), SftpError> {
         if self.cancel.is_cancelled()
             || (self.current)().is_err()
@@ -109,6 +130,10 @@ impl PaneFs for Remote {
     }
     fn list(&self, p: &str, o: &ListOptions) -> Result<Listing, SftpError> {
         let p = rooted(p)?;
+        self.0.send_current()?;
+        if p == "/" && self.0.locations.lock().unwrap().is_some() {
+            return Ok(finish_listing(p, Vec::new(), false, o));
+        }
         let options = ListOptions {
             max_scan: o.max_scan.min(festerm_sftp::DEFAULT_MAX_SCAN),
             max_entries: o.max_entries.min(festerm_sftp::DEFAULT_MAX_ENTRIES),
@@ -128,7 +153,9 @@ impl PaneFs for Remote {
         }
     }
     fn mkdir(&self, value: &str) -> Result<(), SftpError> {
-        if !self.0.write.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.0.write.load(std::sync::atomic::Ordering::SeqCst)
+            || !self.0.mutation_path_available(value)
+        {
             return Err(denied());
         }
         let value = rooted(value)?;
@@ -141,12 +168,20 @@ impl PaneFs for Remote {
         Err(denied())
     }
     fn join(&self, d: &str, n: &str) -> Result<String, SftpError> {
+        if d == "/" && self.0.locations.lock().unwrap().is_some() {
+            return Err(denied());
+        }
         path::validate_name(n)?;
         rooted(&path::join_remote(d, n)?)
     }
     fn parent(&self, p: &str) -> Option<String> {
         let p = rooted(p).ok()?;
-        if p == "/" {
+        if p == "/"
+            || self
+                .0
+                .location(&p)
+                .is_some_and(|location| location.virtual_root() == p)
+        {
             None
         } else {
             path::parent_remote(&p)
@@ -156,12 +191,71 @@ impl PaneFs for Remote {
 /// Validate optional server metadata before the worker can publish Ready.
 async fn initial_directory<S: AsyncRead + AsyncWrite + Unpin>(
     client: &mut file_client::Client<S>,
+    navigation: file_client::NavigationPreference,
 ) -> Result<String, &'static str> {
+    client
+        .check_current()
+        .map_err(|_| "Files connection cancelled")?;
+    let locations = client
+        .locations()
+        .await
+        .map_err(|_| "Files locations unavailable")?;
+    client
+        .check_current()
+        .map_err(|_| "Files connection cancelled")?;
+    if navigation == file_client::NavigationPreference::ChooseLocation {
+        if locations.is_none() {
+            return Err("This host does not support choosing an allowed location");
+        }
+        // Explicit user intent, fresh metadata, and no filesystem request.
+        // Remote::list handles this synthetic chooser locally.
+        return Ok("/".into());
+    }
     let start = client
         .start_directory()
         .await
         .map_err(|_| "Files starting folder unavailable")?;
+    if locations.as_ref().is_some_and(|locations| {
+        start != "/"
+            && !locations
+                .iter()
+                .any(|location| location.available && location.contains(&start))
+    }) {
+        return Err("Files starting folder unavailable");
+    }
     rooted(&start).map_err(|_| "Files starting folder unavailable")
+}
+
+/// Namespaced default starts are not Ready until the actual first directory
+/// listing succeeds. Carry that snapshot into the pane rather than reissuing
+/// the same request after admission. The explicit chooser stays entirely local.
+async fn initial_listing<S: AsyncRead + AsyncWrite + Unpin>(
+    client: &mut file_client::Client<S>,
+    start: &str,
+) -> Result<Option<Listing>, &'static str> {
+    if client.location_metadata().is_none() {
+        return Ok(None);
+    }
+    client
+        .check_current()
+        .map_err(|_| "Files connection cancelled")?;
+    let options = ListOptions::default();
+    let snapshot = if start == "/" {
+        finish_listing(start.into(), Vec::new(), false, &options)
+    } else {
+        match tokio::time::timeout(DEADLINE, listing(client, start, &options)).await {
+            Ok(Ok(snapshot)) => snapshot,
+            Ok(Err(_)) => return Err("Files starting folder unavailable"),
+            Err(_) => {
+                client.cancel();
+                return Err("Files starting folder unavailable");
+            }
+        }
+    };
+    client
+        .check_current()
+        .map_err(|_| "Files connection cancelled")?;
+    Ok(Some(snapshot))
 }
 
 fn rooted(p: &str) -> Result<String, SftpError> {
@@ -271,6 +365,26 @@ async fn listing<S: AsyncRead + AsyncWrite + Unpin>(
 }
 struct HostTransfers(Arc<Lease>);
 impl Transfers for HostTransfers {
+    fn remote_locations(&self) -> Option<Vec<super::files::RemoteLocation>> {
+        let locations = self.0.locations.lock().unwrap();
+        let locations = locations.as_ref()?;
+        // Preserve the new-scope distinction after retirement without disclosing
+        // its former labels or silently adopting the legacy namespace.
+        if self.0.cancel.is_cancelled() || (self.0.current)().is_err() {
+            return Some(Vec::new());
+        }
+        Some(
+            locations
+                .iter()
+                .map(|location| super::files::RemoteLocation {
+                    path: location.virtual_root(),
+                    label: path::display_name(location.label.as_str()),
+                    available: location.available,
+                    mutations_available: location.mutations_available,
+                })
+                .collect(),
+        )
+    }
     fn remote_root_label(&self) -> String {
         // Paint may run while lifecycle polling is paused. This is a local
         // authority check only: no Documents stat or remote liveness request.
@@ -316,7 +430,11 @@ impl Transfers for HostTransfers {
         paths: Vec<String>,
         stop: CancellationToken,
     ) -> Result<super::files::deletion::Reply<super::files::deletion::Review>, String> {
-        if !self.delete_available() {
+        if !self.delete_available()
+            || paths
+                .iter()
+                .any(|path| !self.0.mutation_path_available(path))
+        {
             return Err("Deletion is unavailable".into());
         }
         let (send, receive) = mpsc::sync_channel(1);
@@ -393,12 +511,20 @@ impl Transfers for HostTransfers {
         if let Some(uploads) = self.0.uploads.lock().unwrap().clone() {
             uploads.poll();
         }
-        self.0.state.lock().unwrap().rows.clone()
+        let mut rows = self.0.state.lock().unwrap().rows.clone();
+        for row in &mut rows {
+            if row.direction == Direction::Upload {
+                row.target = self.remote_path_label(&row.target);
+            }
+        }
+        rows
     }
     fn enqueue(&self, d: Direction, source: &str, target: &str) -> Result<u64, String> {
         if d == Direction::Upload {
             self.0.send_current().map_err(|_| "Connection closed")?;
-            if !self.0.write.load(std::sync::atomic::Ordering::SeqCst) {
+            if !self.0.write.load(std::sync::atomic::Ordering::SeqCst)
+                || !self.0.mutation_path_available(target)
+            {
                 return Err("Uploads are unavailable".into());
             }
             let uploads = self
@@ -681,6 +807,7 @@ pub(super) struct HostConnector {
 impl HostConnector {
     pub(super) fn start(
         local_root: std::path::PathBuf,
+        navigation: file_client::NavigationPreference,
         cancel: CancellationToken,
         wake: &egui::Context,
         publish_guard: Arc<dyn Fn() -> Result<(), SftpError> + Send + Sync>,
@@ -701,6 +828,7 @@ impl HostConnector {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
         });
         let weak = Arc::downgrade(&lease);
@@ -732,7 +860,9 @@ impl HostConnector {
                     let local = root
                         .local_fs()
                         .map_err(|_| "App Documents unavailable or changed")?;
-                    let start_dir = rt.block_on(initial_directory(client))?;
+                    let start_dir = rt.block_on(initial_directory(client, navigation))?;
+                    let initial_remote_listing = rt.block_on(initial_listing(client, &start_dir))?;
+                    let locations = client.location_metadata().map(|locations| locations.to_vec());
                     let display_root = rt
                         .block_on(client.display_root())
                         .map_err(|_| "Files folder information unavailable")?;
@@ -742,6 +872,7 @@ impl HostConnector {
                         return Ok(());
                     };
                     *lease.display_root.lock().unwrap() = display_root;
+                    *lease.locations.lock().unwrap() = locations;
                     *lease.root.lock().unwrap() = Some(root.clone());
                     lease
                         .delete
@@ -773,9 +904,10 @@ impl HostConnector {
                         local_root,
                         transfers: Arc::new(HostTransfers(lease)),
                         start_dir: Some(start_dir),
+                        initial_remote_listing,
                         remote_write: write,
                     };
-                    if cancel.is_cancelled() {
+                    if cancel.is_cancelled() || (publish_guard)().is_err() {
                         return Ok(());
                     }
                     events_send
@@ -1100,6 +1232,7 @@ mod tests {
         std::fs::create_dir(remote.path().join("folder")).unwrap();
         let filesystem = festerm_tunnel_bridge::filesystem::Filesystem::open(&rpc::Policy {
             start_in: None,
+            locations: None,
             root: remote.path().canonicalize().unwrap(),
             write,
             delete: false,
@@ -1545,6 +1678,73 @@ mod tests {
         }
     }
     #[test]
+    fn host_files_location_chooser_is_local_and_retirement_hides_namespaced_metadata() {
+        let selector = "11111111111111111111111111111111";
+        let virtual_root = format!("/{selector}");
+        let (commands, mut rx) = tokio::sync::mpsc::channel(QUEUE);
+        let mut row = transfer_row();
+        row.direction = Direction::Upload;
+        row.target = format!("{virtual_root}/projects");
+        let lease = Arc::new(Lease {
+            commands,
+            cancel: CancellationToken::new(),
+            state: Arc::new(Mutex::new(State {
+                rows: vec![row],
+                ..State::default()
+            })),
+            wake: egui::Context::default(),
+            current: Arc::new(|| Ok(())),
+            write: std::sync::atomic::AtomicBool::new(true),
+            delete: std::sync::atomic::AtomicBool::new(true),
+            uploads: Mutex::new(None),
+            root: Mutex::new(None),
+            display_root: Mutex::new(None),
+            locations: Mutex::new(Some(vec![rpc::FileLocation {
+                selector: selector.into(),
+                label: "/Users/example".to_owned().try_into().unwrap(),
+                available: true,
+                mutations_available: false,
+            }])),
+        });
+        let remote = Remote(lease.clone());
+        let transfers = HostTransfers(lease.clone());
+        assert!(remote
+            .list("/", &ListOptions::default())
+            .unwrap()
+            .entries
+            .is_empty());
+        assert!(remote.join("/", "unrouted").is_err());
+        assert_eq!(remote.parent(&virtual_root), None);
+        assert_eq!(
+            remote.parent(&format!("{virtual_root}/child")),
+            Some(virtual_root.clone())
+        );
+        assert!(remote.mkdir(&format!("{virtual_root}/child")).is_err());
+        assert!(transfers
+            .enqueue(Direction::Upload, "public.md", &virtual_root)
+            .is_err());
+        assert!(transfers
+            .review_delete(
+                vec![format!("{virtual_root}/public.md")],
+                CancellationToken::new()
+            )
+            .is_err());
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        assert_eq!(transfers.rows()[0].target, "/Users/example/projects");
+        assert_eq!(
+            lease.state.lock().unwrap().rows[0].target,
+            format!("{virtual_root}/projects"),
+            "presentation must never retarget retained queued work"
+        );
+        lease.cancel.cancel();
+        assert!(transfers.remote_locations().unwrap().is_empty());
+        assert_eq!(transfers.rows()[0].target, "Remote folder");
+        assert!(remote.list("/", &ListOptions::default()).is_err());
+    }
+    #[test]
     fn host_files_actual_partial_writes_update_progress_and_cancel_preserves_count() {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1599,6 +1799,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
             current: Arc::new(move || {
                 if check.load(Ordering::SeqCst) {
@@ -1619,6 +1820,7 @@ mod tests {
                 local_root: root.path().into(),
                 transfers: Arc::new(HostTransfers(lease.clone())),
                 start_dir: Some("/".into()),
+                initial_remote_listing: None,
             })))
             .unwrap_or_else(|_| panic!("owned Ready fixture channel"));
         let mut connector = HostConnector {
@@ -1650,6 +1852,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root)),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
         });
         let (send, events) = mpsc::sync_channel(1);
@@ -1688,6 +1891,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root.clone())),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
         });
         let mut session = super::super::files::FilesSession::ready(
@@ -1700,6 +1904,7 @@ mod tests {
                 local_root: selected.clone(),
                 transfers: Arc::new(HostTransfers(lease)),
                 start_dir: None,
+                initial_remote_listing: None,
             },
             &egui::Context::default(),
         );
@@ -1764,10 +1969,150 @@ mod tests {
                 let (mut client, _) = file_client::Client::open_host_reviewed(stream, &scope.host, &scope.installation, CancellationToken::new()).await.unwrap().unwrap();
                 // This is the worker's prerequisite for constructing/publishing Ready;
                 // it also covers a manually configured server, independent of owner GUI validation.
-                let start = initial_directory(&mut client).await;
+                let start = initial_directory(&mut client, file_client::NavigationPreference::DefaultStart).await;
                 assert_eq!(start.is_ok(), accepted);
                 if accepted { assert_eq!(start.unwrap(), path); }
                 client.cancel();
+                tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn host_files_choose_location_requires_new_valid_metadata_and_never_opens_a_folder() {
+        use festerm_tunnel_bridge::wire::{read_frame, write_frame};
+        use file_client::NavigationPreference::{ChooseLocation, DefaultStart};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // Each attempt has a NEW stream/client; the failed default cannot
+            // donate cached metadata, an opening, or a selector to recovery.
+            for (navigation, legacy, malformed, cancel_before, cancel_after) in [
+                (DefaultStart, false, false, false, false),
+                (ChooseLocation, false, false, false, false),
+                (ChooseLocation, true, false, false, false),
+                (ChooseLocation, false, true, false, false),
+                (ChooseLocation, false, false, true, false),
+                (ChooseLocation, false, false, false, true),
+            ] {
+                let scope = rpc::HostScope { host: Default::default(), installation: Default::default(), epoch: "1".into() };
+                let expected = scope.clone();
+                let cancel = CancellationToken::new();
+                let retire = cancel.clone();
+                let (stream, mut peer) = tokio::io::duplex(8192);
+                let server = tokio::spawn(async move {
+                    let limits = rpc::Capabilities { version: rpc::VERSION, write: false, chunk_limit: rpc::CHUNK_LIMIT, page_limit: rpc::PAGE_LIMIT, handle_limit: rpc::HANDLE_LIMIT };
+                    write_frame(&mut peer, rpc::HOST_DESCRIPTION, &serde_json::to_vec(&rpc::HostDescription { version: if legacy { rpc::HOST_VERSION } else { rpc::HOST_LOCATIONS_VERSION }, scope: expected, filesystem: Some(limits) }).unwrap()).await.unwrap();
+                    assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::OPEN);
+                    let operations = if legacy { vec!["start_directory"] } else { vec!["locations", "start_directory"] };
+                    let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":false,"operations":operations,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
+                    write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&ready).unwrap()).await.unwrap();
+                    if !legacy && !cancel_before {
+                        let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+                        assert_eq!(kind, rpc::REQUEST);
+                        let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                        assert!(matches!(request.operation, rpc::Operation::Locations {}));
+                        let reply = serde_json::json!({"id":request.id,"result":{"type":"locations","locations":[{"selector":if malformed {"invalid"}else{"22222222222222222222222222222222"},"label":"/owned/current","available":true,"mutations_available":false}]}});
+                        write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&reply).unwrap()).await.unwrap();
+                        if cancel_after { retire.cancel(); }
+                        if navigation == DefaultStart {
+                            let (_, bytes) = read_frame(&mut peer).await.unwrap();
+                            let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                            assert!(matches!(request.operation, rpc::Operation::StartDirectory {}));
+                            let reply = serde_json::json!({"id":request.id,"error":"not_found"});
+                            write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&reply).unwrap()).await.unwrap();
+                        }
+                    }
+                    // Dropping the client must be the NEXT event. Any Start,
+                    // stat, directory open, mutation, or retry fails this check.
+                    assert!(read_frame(&mut peer).await.is_err());
+                });
+                let (mut client, _) = file_client::Client::open_host_reviewed(stream, &scope.host, &scope.installation, cancel.clone()).await.unwrap().unwrap();
+                if cancel_before { cancel.cancel(); }
+                let result = initial_directory(&mut client, navigation).await;
+                let accepted = navigation == ChooseLocation && !legacy && !malformed && !cancel_before && !cancel_after;
+                assert_eq!(result.is_ok(), accepted);
+                if accepted {
+                    assert_eq!(result.unwrap(), "/");
+                    let snapshot = initial_listing(&mut client, "/").await.unwrap().unwrap();
+                    assert_eq!(snapshot.path, "/");
+                    assert!(snapshot.entries.is_empty());
+                }
+                if navigation == DefaultStart {
+                    assert!(client.available(), "a missing start is not a malformed-metadata recovery or an authentication downgrade");
+                }
+                drop(client);
+                tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn host_files_initial_listing_is_required_before_ready() {
+        use festerm_tunnel_bridge::wire::{read_frame, write_frame};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            for failure in [Some("not_found"), Some("denied"), None] {
+                let scope = rpc::HostScope { host: Default::default(), installation: Default::default(), epoch: "1".into() };
+                let expected = scope.clone();
+                let (stream, mut peer) = tokio::io::duplex(8192);
+                let server = tokio::spawn(async move {
+                    let limits = rpc::Capabilities { version: rpc::VERSION, write: false, chunk_limit: rpc::CHUNK_LIMIT, page_limit: rpc::PAGE_LIMIT, handle_limit: rpc::HANDLE_LIMIT };
+                    write_frame(&mut peer, rpc::HOST_DESCRIPTION, &serde_json::to_vec(&rpc::HostDescription { version: rpc::HOST_LOCATIONS_VERSION, scope: expected, filesystem: Some(limits) }).unwrap()).await.unwrap();
+                    assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::OPEN);
+                    let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":false,"operations":["locations","start_directory"],"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
+                    write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&ready).unwrap()).await.unwrap();
+                    for step in 0..if failure.is_some() { 3 } else { 5 } {
+                        let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+                        assert_eq!(kind, rpc::REQUEST);
+                        let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                        let reply = match step {
+                            0 => {
+                                assert!(matches!(request.operation, rpc::Operation::Locations {}));
+                                serde_json::json!({"id":request.id,"result":{"type":"locations","locations":[{"selector":"22222222222222222222222222222222","label":"/owned/current","available":true,"mutations_available":false}]}})
+                            }
+                            1 => {
+                                assert!(matches!(request.operation, rpc::Operation::StartDirectory {}));
+                                serde_json::json!({"id":request.id,"result":{"type":"start_directory","path":"/22222222222222222222222222222222/child"}})
+                            }
+                            2 => {
+                                assert!(matches!(request.operation, rpc::Operation::OpenDirectory { ref path } if path == "/22222222222222222222222222222222/child"));
+                                if let Some(failure) = failure {
+                                    serde_json::json!({"id":request.id,"error":failure})
+                                } else {
+                                    serde_json::json!({"id":request.id,"result":{"type":"directory","handle":7}})
+                                }
+                            }
+                            3 => {
+                                assert!(matches!(request.operation, rpc::Operation::ReadDirectory { handle:7, .. }));
+                                serde_json::json!({"id":request.id,"result":{"type":"entries","entries":[],"done":true,"skipped":0}})
+                            }
+                            _ => {
+                                assert!(matches!(request.operation, rpc::Operation::Close { handle:7 }));
+                                serde_json::json!({"id":request.id,"result":{"type":"closed"}})
+                            }
+                        };
+                        write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&reply).unwrap()).await.unwrap();
+                    }
+                    // No fallback directory, mutation or retry follows the refusal.
+                    assert!(read_frame(&mut peer).await.is_err());
+                });
+                let (mut client, _) = file_client::Client::open_host_reviewed(stream, &scope.host, &scope.installation, CancellationToken::new()).await.unwrap().unwrap();
+                let start = initial_directory(&mut client, file_client::NavigationPreference::DefaultStart).await.unwrap();
+                let first = initial_listing(&mut client, &start).await;
+                if failure.is_some() {
+                    assert_eq!(first.unwrap_err(), "Files starting folder unavailable");
+                } else {
+                    let snapshot = first.unwrap().unwrap();
+                    assert_eq!(snapshot.path, start);
+                    assert!(snapshot.entries.is_empty());
+                }
+                drop(client);
                 tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
             }
         });
@@ -1806,6 +2151,7 @@ mod tests {
                     delete: std::sync::atomic::AtomicBool::new(false),
                     uploads: Mutex::new(None),
                     root: Mutex::new(None),
+                    locations: Mutex::new(None),
                     display_root: Mutex::new(Some(raw.to_owned().try_into().unwrap())),
                 });
                 let fs = |kind| {
@@ -1828,6 +2174,7 @@ mod tests {
                         local_root: "/nonexistent-public-fixture".into(),
                         transfers: Arc::new(HostTransfers(lease.clone())),
                         start_dir: Some("/".into()),
+                        initial_remote_listing: None,
                         remote_write: false,
                     },
                     &egui::Context::default(),
@@ -1892,6 +2239,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root)),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
             current: Arc::new(move || {
                 retired.cancel();
@@ -1923,6 +2271,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root.clone())),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
             current: Arc::new(|| Ok(())),
         });
@@ -1940,6 +2289,7 @@ mod tests {
                 local_root: local.path().into(),
                 transfers: Arc::new(HostTransfers(lease.clone())),
                 start_dir: Some("/".into()),
+                initial_remote_listing: None,
                 remote_write: false,
             },
             &ctx,
@@ -2035,6 +2385,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root.clone())),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
             current: Arc::new(|| Ok(())),
         });
@@ -2081,6 +2432,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
+            locations: Mutex::new(None),
             display_root: Mutex::new(None),
             current: Arc::new(|| Ok(())),
         });

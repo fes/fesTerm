@@ -995,6 +995,7 @@ fn desktop_remote_access_active_file_consent_changes_block_before_acquisition_or
     let mut settings = Draft::default().settings().unwrap();
     settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
         start_in: None,
+        locations: None,
         delete: false,
         root: root.path().to_path_buf(),
         write: false,
@@ -1045,6 +1046,8 @@ fn desktop_remote_access_native_file_aware_review_allows_disabled_changes_and_ex
     let path = root.path().join("desktop-files");
     let draft = Draft {
         files: FileAccessDraft {
+            locations: None,
+            start_root: None,
             start_in: String::new(),
             delete: false,
             enabled: true,
@@ -2182,6 +2185,8 @@ fn desktop_files_start_directory_worker_refuses_before_acquisition_or_state_effe
         let path = root.path().join("not-created");
         let mut work = request(&path, Operation::Enable, Scope::Absent);
         work.draft.files = FileAccessDraft {
+            locations: None,
+            start_root: None,
             enabled: true,
             root: root.path().into(),
             start_in: if start == "missing" {
@@ -2204,4 +2209,29 @@ fn desktop_files_start_directory_worker_refuses_before_acquisition_or_state_effe
         assert!(matches!(result, Err(Failure::FileAccessReview)));
         assert!(!path.exists());
     }
+}
+
+#[test]
+fn desktop_files_allowed_locations_worker_refuses_missing_root_before_acquisition_or_state_effects()
+{
+    let root = storage::private_test_directory();
+    let path = root.path().join("not-created");
+    let missing = root.path().join("missing-location");
+    let mut work = request(&path, Operation::Enable, Scope::Absent);
+    work.draft.files = FileAccessDraft {
+        enabled: true,
+        root: missing.clone(),
+        locations: Some(vec![missing]),
+        ..Default::default()
+    };
+    work.draft.account = "42".into();
+    let result = Native.execute_with(
+        work,
+        &CancellationToken::new(),
+        mpsc::sync_channel(1).0,
+        |_, _| -> Result<(), Failure> { panic!("unadmitted root must not acquire") },
+        |_, _| panic!("unadmitted root must not publish"),
+    );
+    assert!(matches!(result, Err(Failure::FileAccessReview)));
+    assert!(!path.exists());
 }

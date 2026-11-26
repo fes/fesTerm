@@ -1643,6 +1643,8 @@
         "desktop_remote_access_file_confirmation_captures_exact_scope_and_consent",
         "desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review",
         "desktop_remote_access_file_review_names_exact_folder_and_permissions",
+        "desktop_remote_access_file_review_distinguishes_start_location_and_up_boundary",
+        "desktop_remote_access_editing_only_legacy_start_retains_singleton_read_contract",
         "host_desktop_file_review_reserves_once_and_retains_revoked_late_completion",
         "host_desktop_file_review_rejects_headless_stale_and_invalid_without_mutation",
         "host_file_helper_admission_never_reserves_or_changes_consent_and_fences_late_results",
@@ -7502,7 +7504,10 @@
         "desktop_files_start_directory_worker_refuses_before_acquisition_or_state_effects",
         "desktop_files_start_directory_drive_suffix_refuses_before_home_callback",
         "desktop_files_start_directory_windows_home_join_never_receives_drive_prefix",
-        "host_runtime_public_entry_futures_fit_stack_budget"
+        "host_runtime_public_entry_futures_fit_stack_budget",
+        "host_allowed_locations_pending_settings_fit_journal_and_oversize_refuses_before_storage",
+        "desktop_files_allowed_locations_start_is_separate_and_legacy_stays_legacy",
+        "desktop_files_allowed_locations_worker_refuses_missing_root_before_acquisition_or_state_effects"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
@@ -7660,7 +7665,9 @@
         "desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget",
         "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback",
         "host_start_directory_probe_is_separate_strict_bounded_and_revalidates_stage",
-        "host_start_directory_capability_is_separate_and_has_no_state_effects"
+        "host_start_directory_capability_is_separate_and_has_no_state_effects",
+        "host_locations_probe_is_separate_strict_bounded_and_revalidates_stage",
+        "host_allowed_locations_capability_is_separate_and_has_no_state_effects"
       ],
       "manual_scenarios": [
         "DT-05",
@@ -7734,6 +7741,8 @@
         "files_delete_cancelled_preparation_observes_and_closes_last_handle_without_delete",
         "files_delete_exact_review_batch_reports_confirmed_unknown_and_untouched_without_replay",
         "files_delete_dropped_mutation_retains_only_unknown_observation_and_never_replays",
+        "desktop_files_detached_delete_reports_confirmed_removals_without_selectors",
+        "desktop_files_detached_cleanup_hides_location_selectors_and_keeps_uncertainty",
         "files_delete_returned_refusal_and_success_clear_owner_marker_and_keep_channel_live",
         "files_delete_dialog_requires_all_prepared_handles_and_cancel_closes_review",
         "files_delete_write_only_link_and_oversize_selections_cannot_prepare",
@@ -7765,7 +7774,20 @@
         "start_directory_is_nofollow_navigation_not_an_allowed_root",
         "reviewed_client_start_directory_is_optional_bounded_and_current",
         "prepared_root_survives_missing_start_directory_and_serves_root",
-        "desktop_files_start_directory_snapshot_errors_sanitize_details"
+        "desktop_files_start_directory_snapshot_errors_sanitize_details",
+        "allowed_locations_shape_is_explicit_bounded_and_preserves_legacy_bytes",
+        "allowed_locations_actual_os_home_start_and_private_regular_file_read",
+        "allowed_locations_directory_page_rechecks_after_owned_parent_move",
+        "allowed_locations_shared_outside_ancestor_never_becomes_mutation_authority",
+        "allowed_locations_mutation_leaves_share_qualified_review_and_replacement_route",
+        "mutation_leaf_qualifies_before_data_open_and_refuses_special_names",
+        "allowed_locations_two_channels_share_selectors_captured_paths_and_one_budget",
+        "allowed_locations_current_transfer_guard_retirement_sends_no_open_or_metadata_request",
+        "allowed_locations_cross_root_expected_handle_cannot_retarget_replacement",
+        "file_manager_location_labels_hide_namespace_and_retired_metadata",
+        "trusted_data_leaf_rejects_noncomponent_before_parent_or_external_lookup",
+        "trusted_data_actual_os_home_chain_has_qualified_ownership_boundary",
+        "desktop_files_allowed_locations_render_physical_roots_and_keep_virtual_callbacks"
       ],
       "manual_scenarios": [
         "DT-07"
@@ -7871,7 +7893,14 @@
         "display_root_disclosure_is_fenced_by_current_files_authority",
         "host_files_root_presentation_sanitizes_formatters_and_masks_retired_inactive_view",
         "files_start_directory_initializes_child_but_keeps_allowed_root_up_fence",
-        "host_files_start_directory_metadata_refuses_unsupported_paths_before_ready"
+        "host_files_start_directory_metadata_refuses_unsupported_paths_before_ready",
+        "files_allowed_locations_choose_without_exposing_selectors_or_enabling_unavailable_writes",
+        "files_location_display_paths_and_namespace_matching_do_not_mix_roots",
+        "host_files_location_chooser_is_local_and_retirement_hides_namespaced_metadata",
+        "host_files_choose_location_requires_new_valid_metadata_and_never_opens_a_folder",
+        "host_files_initial_listing_is_required_before_ready",
+        "files_admitted_initial_listing_is_used_once_and_mismatched_path_refuses_ready",
+        "files_failed_view_offers_explicit_location_choice_only_for_host_context"
       ],
       "manual_scenarios": [
         "MOB-11"
@@ -7880,7 +7909,7 @@
       "prerequisites": [
         "Pinned Android Linux/Windows/Mac ordinary browse/download/Markdown preview and profile reopen components are accepted in validation/dev-tunnels/mobile-files-android-native-components.json. Separate Linux active-upload Cancel/same-queue continuation is accepted. Three iOS pairs, active-transfer background/return/reconnect, conflict/replacement and live account/lock/suspend retirement remain unqualified; no uniform-release claim.",
         "Mobile upload/mkdir/reviewed Delete/rename/chmod/link parity and destination replacement/Keep Both are outside this read-only tranche.",
-        "Compact controls, physical-root display and neutral unsupported-entry presentation require corrected native mobile qualification. Physical labels add no allowed roots or symlink-following authority."
+        "Compact controls, physical-root display and neutral unsupported-entry presentation require corrected native mobile qualification. Native iOS/Android allowlist navigation, Start and same-host failed-view recovery remain pending. Physical labels add no allowed roots or symlink-following authority."
       ]
     },
     {
@@ -7990,7 +8019,33 @@
       "status": "partial",
       "prerequisites": [
         "Pinned Android Linux/Windows/Mac named pinned Files profile save/fresh reopening and reviewed regular-file/empty-folder Delete Cancel/fresh Confirm are accepted in validation/dev-tunnels/mobile-files-android-native-components.json, followed by owned profile cleanup and original preservation. Full native iOS pairs, Files-profile process restart, offline edit/sign-out, changed identity/stale-authority and unknown-result presentation remain separate pending checks. No shell-matrix cases or full item25 closure added. Pinned iOS Simulator source 3d6ed76b components are separately attributed in validation/dev-tunnels/mobile-files-ios-native-components.json; they do not qualify the new Local Delete implementation.",
-        "Foreground Files authority and a current successful listing are required. Local Delete uses pinned Documents without remote write/Delete permission or RPC and retains native Save exclusion through capture/settlement. Native Local Delete on iOS and Android remains pending. No background continuation, durable mobile recovery ledger, recursive Delete, rename/chmod/links or automatic replay is added."
+        "Foreground Files authority and a current successful listing are required. Local Delete uses pinned Documents without remote write/Delete permission or RPC and retains native Save exclusion through capture/settlement. The attributed iOS Simulator e5b582ed record at validation/dev-tunnels/mobile-files-ios-local-delete-native.json accepts file/empty-folder Cancel and fresh Confirm with remote Write/Delete ON. Native remote-OFF independence, Android Local Delete and broader iOS lifecycle cases remain pending. No background continuation, durable mobile recovery ledger, recursive Delete, rename/chmod/links or automatic replay is added."
+      ]
+    },
+    {
+      "id": "files-explicit-location-recovery",
+      "edges": [
+        "DTFILES-05"
+      ],
+      "requirements": [
+        "docs/dev-tunnel-files-protocol.md#explicit-host-allowed-locations"
+      ],
+      "decisions": [
+        "ADR-0067"
+      ],
+      "automated_tests": [
+        "desktop_files_choose_location_requires_fresh_metadata_without_start_or_folder_rpc",
+        "desktop_files_choose_location_recovery_is_an_explicit_host_command_only",
+        "desktop_files_recovery_refuses_remapped_provider_account_before_preparation",
+        "saved_files_route_pin_refuses_changed_host_or_key_before_native_index_action",
+        "saved_files_challenge_pin_refuses_changed_issuer_before_proof_but_allows_new_epoch"
+      ],
+      "manual_scenarios": [
+        "DT-07"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "Native Desktop/iOS/Android failed-Start recovery remains pending. Fresh chooser opening must pin the failed opening’s authenticated account/host/key/installation/principal before location metadata. Missing or changed identity requires normal host selection. Source/framed/rendered tests do not establish native acceptance."
       ]
     }
   ]

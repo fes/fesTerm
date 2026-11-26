@@ -4368,13 +4368,37 @@ Confirmed completion updates the matching session row; uncertainty remains an
 error without claiming termination or replaying the request. Profiles does not
 show technical attachment-retirement notices after a tab is closed.
 
-For ordinary host Files configuration, show one **Allowed location** separately
-from optional **Start in**. Blank Start in preserves the old allowed-root start;
-absolute paths or `~` must resolve within that location for this computer's OS
-account. Resolution and directory checks run in the existing owned worker,
-never during painting. Review discloses both choices and keeps separate existing
-read/write/Delete permission controls. Start in is initial navigation only: Up
-still reaches the configured root. Desktop's existing remote Home action still
-means virtual `/`; SFTP behavior is unchanged. This increment adds no multi-root
-selector or link-following behavior; native start-directory qualification remains
+For ordinary host Files configuration, show **Allowed locations** separately
+from optional **Start in**. Newly reviewed grants allow one to eight locations.
+A blank Start in opens the only allowed location, the explicitly selected
+location, or a chooser when several locations are allowed and none is selected.
+Absolute paths or `~` must resolve within the selected location or match exactly
+one allowed location. Account home resolution and directory checks run in the
+existing worker. The Enable review names the starting folder or chooser and
+where Up stops. Choosing a nested location makes it the Up boundary even when
+another allowed location contains it. Editing only Start in for a historical
+singleton preserves its read rules. The allowlist review explains ordinary-data
+reads and retains the separate read/write/Delete controls. Desktop's remote Home
+action still means virtual `/` (the chooser for a new multi-location grant).
+Link-following remains unavailable. Native start-directory qualification remains
 pending under DT-05/DT-07 and MOB-11.
+
+
+For an explicitly reviewed Files allowlist, keep the location chooser inside the
+existing Remote header/More area without reducing the three complete list rows.
+Show full sanitized physical locations and root-relative breadcrumbs/editor text;
+opaque selectors belong only to immutable request paths. Up stops at the chosen
+root; changing the chooser never redirects queued transfers or reviews. Locations
+whose native read boundary is unavailable are disabled. Changes may be unavailable
+under the existing strict write rules even when browsing works; retain the global
+write/Delete consent controls. Retired authority hides namespaced metadata and
+requires a fresh explicit connection.
+
+When a HOST Files view fails to open at its configured Start folder, offer
+**Choose location…** after capturing the authenticated host identity. The action
+opens a fresh session pinned to the original account, host, key, installation
+and principal. It shows current locations in the local chooser and waits for an
+explicit selection before opening any folder. Missing or changed identity
+requires normal host selection. A failed first folder listing also leaves the
+view in recovery. Native Desktop/iOS/Android recovery remains pending under
+DTFILES-05 and MOB-11.

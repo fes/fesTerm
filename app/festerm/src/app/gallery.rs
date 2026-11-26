@@ -173,6 +173,7 @@ pub(crate) fn fixture(scene: Scene, context: &egui::Context) -> FesTermApp {
         }
         Scene::OpenRefusal => {
             app.overlays.open_refusal = Some(OpenRefusalNotice {
+                _cleanup_diagnostic: None,
                 title: None,
                 acknowledgement_path: None,
                 name: "binary-fixture.dat".into(),

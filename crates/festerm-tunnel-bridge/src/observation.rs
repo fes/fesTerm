@@ -62,6 +62,7 @@ impl Observation {
             }
             let filesystem = Filesystem::open(&FilePolicy {
                 start_in: None,
+                locations: None,
                 delete: false,
                 root: path.clone(),
                 write: false,
@@ -1159,6 +1160,7 @@ mod tests {
         );
         let filesystem = FilePolicy {
             start_in: None,
+            locations: None,
             delete: false,
             root: path.clone(),
             write: true,

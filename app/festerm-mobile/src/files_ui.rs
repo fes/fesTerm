@@ -19,6 +19,7 @@ const PANE_CHROME: f32 = 44.0 + 44.0 + 32.0;
 #[derive(Default)]
 pub(crate) struct FilesOutcome {
     pub(crate) retry: bool,
+    pub(crate) choose_location: bool,
     pub(crate) events: Vec<FilesEvent>,
 }
 
@@ -248,8 +249,12 @@ fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) ->
     }
 }
 
-fn crumb_row(ui: &mut Ui, pane: &mut Pane, root_label: &str, ctx: &egui::Context) {
-    let crumbs = pane.crumbs(root_label);
+fn crumb_row(ui: &mut Ui, pane: &mut Pane, root_label: &str, root_path: &str, ctx: &egui::Context) {
+    let crumbs = if root_path == "/" {
+        pane.crumbs(root_label)
+    } else {
+        pane.crumbs_from(root_label, root_path)
+    };
     let last = crumbs.len().saturating_sub(1);
     let mut goto = None;
     egui::ScrollArea::horizontal()
@@ -260,12 +265,12 @@ fn crumb_row(ui: &mut Ui, pane: &mut Pane, root_label: &str, ctx: &egui::Context
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for (index, (label, path)) in crumbs.iter().enumerate() {
-                    if index > 0 {
+                    if index > 0 && !(index == 1 && root_label == "/" && root_path != "/") {
                         ui.label(
                             egui::RichText::new(
                                 if pane.fs.kind() == festerm_sftp::PaneKind::Remote
-                                    && root_label != "/"
-                                    && root_label != "Shared folder"
+                                    && (root_path != "/"
+                                        || (root_label != "/" && root_label != "Shared folder"))
                                 {
                                     if root_label.contains('\\') {
                                         "\\"
@@ -339,11 +344,27 @@ struct PaneOutcome {
     delete: bool,
 }
 
+#[derive(Clone, Copy)]
+struct PaneLocation<'a> {
+    label: &'a str,
+    root: &'a str,
+    choices: Option<&'a [super::files::RemoteLocation]>,
+}
+impl PaneLocation<'_> {
+    fn local() -> Self {
+        Self {
+            label: "Documents",
+            root: "",
+            choices: None,
+        }
+    }
+}
+
 fn pane_card(
     ui: &mut Ui,
     pane: &mut Pane,
     title: &str,
-    root_label: &str,
+    location: PaneLocation<'_>,
     height: f32,
     ctx: &egui::Context,
     controls: PaneControls,
@@ -387,6 +408,19 @@ fn pane_card(
                                 }
                             });
                         egui::Popup::menu(&menu).show(|ui| {
+                            if location.choices.is_some() {
+                                if ui
+                                    .add(
+                                        egui::Button::new("Allowed locations")
+                                            .min_size(egui::vec2(0.0, 44.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    pane.go_to("/", ctx);
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
                             if let Some(enabled) = controls.delete {
                                 if ui
                                     .add_enabled(
@@ -464,7 +498,7 @@ fn pane_card(
                     ui.set_height(30.0);
                     ui.add_space(space::MD);
                     let up = ui
-                        .add_enabled_ui(pane.can_go_up(), |ui| {
+                        .add_enabled_ui(pane.can_go_up() && pane.path != location.root, |ui| {
                             icon_button(ui, "Parent folder", false, |painter, c, tint| {
                                 arrow_glyph(painter, c, true, tint);
                             })
@@ -473,7 +507,7 @@ fn pane_card(
                     if up.clicked() {
                         pane.go_up(ctx);
                     }
-                    crumb_row(ui, pane, root_label, ctx);
+                    crumb_row(ui, pane, location.label, location.root, ctx);
                 });
                 if pane.filter_open {
                     ui.horizontal(|ui| {
@@ -515,6 +549,36 @@ fn pane_card(
                                     .wrap(),
                                 );
                             });
+                        }
+                        if pane.path == "/" {
+                            if let Some(locations) = location.choices {
+                                let mut target = None;
+                                for location in locations {
+                                    let label = if location.available {
+                                        location.label.clone()
+                                    } else {
+                                        format!("{} — Unavailable", location.label)
+                                    };
+                                    if ui
+                                        .add_enabled(
+                                            location.available,
+                                            egui::Button::new(label)
+                                                .wrap_mode(egui::TextWrapMode::Truncate)
+                                                .min_size(egui::vec2(
+                                                    ui.available_width(),
+                                                    ROW_HEIGHT,
+                                                )),
+                                        )
+                                        .clicked()
+                                    {
+                                        target = Some(location.path.clone());
+                                    }
+                                }
+                                if let Some(path) = target {
+                                    pane.go_to(&path, ctx);
+                                }
+                                return;
+                            }
                         }
                         let entries = pane.visible();
                         if entries.is_empty() && pane.listing.is_some() && !pane.loading() {
@@ -561,9 +625,13 @@ fn pane_card(
                     ui.set_height(32.0);
                     ui.add_space(space::MD);
                     ui.label(
-                        egui::RichText::new(footer_text(pane))
-                            .size(type_scale::CAPTION)
-                            .color(color::TEXT_MUTED),
+                        egui::RichText::new(if pane.path == "/" && location.choices.is_some() {
+                            format!("{} locations", location.choices.unwrap_or_default().len())
+                        } else {
+                            footer_text(pane)
+                        })
+                        .size(type_scale::CAPTION)
+                        .color(color::TEXT_MUTED),
                     );
                     let single_markdown = pane.selected_files().len() == 1
                         && pane
@@ -638,7 +706,7 @@ fn transfer_buttons(ui: &mut Ui, session: &mut FilesSession) {
             ui,
             ButtonKind::Primary,
             &upload,
-            upload_count > 0 && session.remote_write,
+            upload_count > 0 && session.can_upload(),
             size,
         );
         let down = button_sized(
@@ -662,7 +730,16 @@ const WIDE_FILES_WIDTH: f32 = 700.0;
 const FILES_MAX_WIDTH: f32 = 1100.0;
 
 /// The Files screen body below the header.
+#[cfg(test)]
 pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
+    show_with_location_choice(ui, session, false)
+}
+
+pub(crate) fn show_with_location_choice(
+    ui: &mut Ui,
+    session: &mut FilesSession,
+    can_choose_location: bool,
+) -> FilesOutcome {
     #[cfg(feature = "host-clients")]
     session.clear_retired_delete_recovery();
     let mut outcome = FilesOutcome::default();
@@ -671,12 +748,33 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     // visible viewport, including its existing native-keyboard clip.
     let modal_bounds = ui.max_rect().intersect(ui.clip_rect());
     let remote_root_label = session.remote_root_label();
+    let remote_locations = session.remote_locations();
+    let remote_root_path = session.remote_location().map_or_else(
+        || {
+            if remote_locations.is_some() {
+                // Retired/unknown metadata must never reinterpret the opaque
+                // namespace as visible legacy breadcrumb components.
+                session
+                    .remote
+                    .as_ref()
+                    .map_or_else(|| "/".into(), |pane| pane.path.clone())
+            } else {
+                "/".into()
+            }
+        },
+        |location| location.path,
+    );
+    let remote_navigation = PaneLocation {
+        label: &remote_root_label,
+        root: &remote_root_path,
+        choices: remote_locations.as_deref(),
+    };
     #[cfg(feature = "host-clients")]
     let select_folders = session.deletion_available();
     #[cfg(not(feature = "host-clients"))]
     let select_folders = false;
     if !session.is_ready() {
-        connecting_body(ui, session, &mut outcome);
+        connecting_body(ui, session, &mut outcome, can_choose_location);
         return outcome;
     }
     ui.spacing_mut().item_spacing.y = space::SM;
@@ -711,7 +809,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                 #[cfg(not(feature = "host-clients"))]
                 let delete = None;
                 let remote_controls = PaneControls {
-                    create: session.remote_write,
+                    create: session.can_upload(),
                     select_folders,
                     delete,
                 };
@@ -744,7 +842,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                                     ui,
                                     pane,
                                     "Remote",
-                                    &remote_root_label,
+                                    remote_navigation,
                                     pane_height,
                                     &ctx,
                                     remote_controls,
@@ -758,7 +856,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                                     ui,
                                     pane,
                                     "This device",
-                                    "Documents",
+                                    PaneLocation::local(),
                                     pane_height,
                                     &ctx,
                                     local_controls,
@@ -775,7 +873,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                             ui,
                             pane,
                             "Remote",
-                            &remote_root_label,
+                            remote_navigation,
                             pane_height,
                             &ctx,
                             remote_controls,
@@ -787,7 +885,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                             ui,
                             pane,
                             super::platform_text("This iPhone", "This device"),
-                            "Documents",
+                            PaneLocation::local(),
                             pane_height,
                             &ctx,
                             local_controls,
@@ -926,18 +1024,10 @@ fn delete_sheet(ctx: &egui::Context, bounds: Rect, session: &mut FilesSession) {
                 format!("Documents/{relative}")
             }
         } else {
-            let root = session.remote_root_label();
-            let root = if root.is_empty() {
-                "Shared folder"
-            } else {
-                &root
-            };
-            let relative = draft.path().trim_start_matches('/');
-            if relative.is_empty() {
-                root.to_owned()
-            } else {
-                format!("{}/{relative}", root.trim_end_matches('/'))
-            }
+            session.transfers.as_ref().map_or_else(
+                || "Shared folder".into(),
+                |transfers| transfers.remote_path_label(draft.path()),
+            )
         };
         let label = if draft.local() {
             crate::platform_text("This iPhone", "This device")
@@ -1007,7 +1097,12 @@ fn delete_sheet(ctx: &egui::Context, bounds: Rect, session: &mut FilesSession) {
     }
 }
 
-fn connecting_body(ui: &mut Ui, session: &mut FilesSession, outcome: &mut FilesOutcome) {
+fn connecting_body(
+    ui: &mut Ui,
+    session: &mut FilesSession,
+    outcome: &mut FilesOutcome,
+    can_choose_location: bool,
+) {
     ui.add_space(space::XL * 2.0);
     ui.vertical_centered(|ui| match &session.link {
         Link::Failed(message) => {
@@ -1039,6 +1134,14 @@ fn connecting_body(ui: &mut Ui, session: &mut FilesSession, outcome: &mut FilesO
                     outcome.retry = true;
                 }
             });
+            if can_choose_location {
+                ui.add_space(space::SM);
+                ui.allocate_ui(egui::vec2(220.0, 48.0), |ui| {
+                    if button(ui, ButtonKind::Secondary, "Choose location", true).clicked() {
+                        outcome.choose_location = true;
+                    }
+                });
+            }
         }
         Link::Connecting(status) => {
             ui.add(egui::Spinner::new().size(28.0));

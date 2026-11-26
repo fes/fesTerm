@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "ddcb8f46538ad707e452860db813a61e1404f4d5e56b35e53fe5128181fa41be"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "32ffff5db19fd52dddbe9abd7e2f63ee56dfae6ac58608b7b7e7de6bd6f7ebca"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -52,11 +52,11 @@ Use for: Documents and Files.
 
 - [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns document authority and save policy.
 
-- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Owns Files and its upload queue.
+- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Chooser, verified first listing and uploads.
 
 - [`Root`](../../app/festerm-mobile/src/host_files/local_root.rs) — Pins Documents before canonicalization.
 - [`Owner`](../../app/festerm-mobile/src/host_files/local_delete.rs) — Reviews Documents-only deletion.
-- [`FilesHostIdentity`](../../app/festerm-mobile/src/host_files_profiles.rs) — Pins saved Files destinations; reopen uses fresh authority.
+- [`FilesHostIdentity`](../../app/festerm-mobile/src/host_files_profiles.rs) — Saved destination; fresh authority on reopen.
 
 Evidence:
 - [`document_surface_native_multiline_edits_never_reach_the_terminal`](../../app/festerm-mobile/src/documents_tests.rs)

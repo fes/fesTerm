@@ -2378,6 +2378,7 @@ fn desktop_remote_access_old_draft_cannot_erase_protected_file_consent() {
     let mut configured = old_draft.clone();
     configured.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
         start_in: None,
+        locations: None,
         delete: false,
         root: root.path().to_path_buf(),
         write: false,
@@ -2428,6 +2429,7 @@ fn desktop_remote_access_file_refresh_preserves_exact_consent_and_edited_draft()
             };
             let policy = festerm_tunnel_bridge::file_protocol::Policy {
                 start_in: None,
+                locations: None,
                 delete: false,
                 root: directory.path().join("Exact Folder"),
                 write,
@@ -2492,6 +2494,8 @@ fn desktop_remote_access_file_confirmation_captures_exact_scope_and_consent() {
     let context = egui::Context::default();
     let mut draft = controller.view.draft.clone();
     draft.files = FileAccessDraft {
+        locations: None,
+        start_root: None,
         start_in: String::new(),
         delete: false,
         enabled: true,
@@ -2523,6 +2527,8 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
         let before = controller.view.draft.clone();
         let mut draft = before.clone();
         draft.files = FileAccessDraft {
+            locations: None,
+            start_root: None,
             start_in: String::new(),
             delete: false,
             enabled: true,
@@ -2539,6 +2545,8 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
     })));
     controller.view.scope = Scope::Absent;
     controller.view.draft.files = FileAccessDraft {
+        locations: None,
+        start_root: None,
         start_in: String::new(),
         delete: false,
         enabled: true,
@@ -2578,6 +2586,8 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
             ..View::default()
         };
         view.draft.files = FileAccessDraft {
+            locations: None,
+            start_root: None,
             start_in: if write { "~".into() } else { String::new() },
             delete,
             enabled: true,
@@ -2594,11 +2604,12 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
             );
         harness.run();
         harness.get_by_label(&format!("Allowed location: {}", root.display()));
-        harness.get_by_label(if write {
-            "Start in: ~"
+        if write {
+            harness.get_by_label("Start in: ~");
         } else {
-            "Start in: Allowed location"
-        });
+            harness.get_by_label(&format!("Start in: {}", root.display()));
+        }
+        harness.get_by_label(&format!("Up stops at: {}", root.display()));
         harness.get_by_label(if write {
             "File permissions: Read and write — upload and create folders"
         } else {
@@ -2611,6 +2622,142 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
         });
         harness.get_by_label("Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
     }
+}
+
+#[test]
+fn desktop_remote_access_file_review_distinguishes_start_location_and_up_boundary() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let directory = std::path::Path::new(if cfg!(windows) {
+        "C:\\Locations"
+    } else {
+        "/locations"
+    });
+    let first = directory.join("First");
+    let second = directory.join("Second");
+    let child = second.join("Child").display().to_string();
+    let nested = first.join("Nested");
+    let nested_child = nested.join("Child").display().to_string();
+    for (other, selected, start, initial, boundary) in [
+        (
+            &second,
+            Some(1),
+            "",
+            format!("Start in: {}", second.display()),
+            format!("Up stops at: {}", second.display()),
+        ),
+        (
+            &second,
+            None,
+            "",
+            "Start in: Choose a location when opening".into(),
+            "Up stops at the location you choose.".into(),
+        ),
+        (
+            &second,
+            None,
+            child.as_str(),
+            format!("Start in: {child}"),
+            format!("Up stops at: {}", second.display()),
+        ),
+        (
+            &nested,
+            Some(1),
+            nested_child.as_str(),
+            format!("Start in: {nested_child}"),
+            format!("Up stops at: {}", nested.display()),
+        ),
+        (
+            &second,
+            None,
+            "~",
+            "Start in: ~".into(),
+            "Up stops at the allowed location containing the resolved home path.".into(),
+        ),
+    ] {
+        let mut view = View {
+            scope: Scope::Absent,
+            access_requested: Some(true),
+            review: Some(Operation::Enable),
+            ..View::default()
+        };
+        view.draft.files = FileAccessDraft {
+            enabled: true,
+            root: first.clone(),
+            locations: Some(vec![first.clone(), other.to_path_buf()]),
+            start_root: selected,
+            start_in: start.into(),
+            ..FileAccessDraft::default()
+        };
+        assert!(view.draft.valid_files());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1400.0, 2400.0))
+            .build_ui_state(
+                |ui, view: &mut View| {
+                    assert!(show(ui, view, &[]).is_none());
+                },
+                view,
+            );
+        harness.run();
+        harness.get_by_label(&initial);
+        harness.get_by_label(&boundary);
+        harness.get_by_label("Clients authorized through this host’s GitHub account can browse and download supported files this computer’s account can read inside the allowed locations. Write and Delete have stricter folder checks. Shared shells retain this computer’s account permissions.");
+    }
+}
+
+#[test]
+fn desktop_remote_access_editing_only_legacy_start_retains_singleton_read_contract() {
+    use egui_kittest::{kittest::Queryable, Harness};
+    let root = PathBuf::from(if cfg!(windows) {
+        "C:\\Locations"
+    } else {
+        "/locations"
+    });
+    let mut view = View {
+        scope: Scope::Absent,
+        access_requested: Some(true),
+        ..View::default()
+    };
+    let policy = festerm_tunnel_bridge::file_protocol::Policy {
+        root: root.clone(),
+        start_in: None,
+        locations: None,
+        write: false,
+        delete: false,
+    };
+    view.draft.files = FileAccessDraft::from_policy(Some(&policy));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 2400.0))
+        .build_ui_state(
+            |ui, view: &mut View| {
+                if let Some(Action::Edit(draft)) = show(ui, view, &[]) {
+                    view.draft = draft;
+                }
+            },
+            view,
+        );
+    harness.run();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::TextInput, "Start in (optional)")
+        .click();
+    harness.run();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::TextInput, "Start in (optional)")
+        .type_text(&root.join("Child").display().to_string());
+    harness.run();
+    let edited = harness
+        .state()
+        .draft
+        .settings()
+        .unwrap()
+        .filesystem
+        .unwrap();
+    assert_eq!(
+        edited,
+        festerm_tunnel_bridge::file_protocol::Policy {
+            start_in: Some("/Child".into()),
+            ..policy
+        }
+    );
 }
 
 #[test]
@@ -3030,6 +3177,8 @@ fn desktop_files_start_directory_owner_input_is_relative_to_allowed_location() {
     let root = festerm_sessiond::private_storage::private_test_directory();
     std::fs::create_dir(root.path().join("home")).unwrap();
     let mut files = FileAccessDraft {
+        locations: None,
+        start_root: None,
         enabled: true,
         root: root.path().into(),
         ..Default::default()
@@ -3081,6 +3230,8 @@ fn desktop_files_start_directory_drive_suffix_refuses_before_home_callback() {
         "~/../folder",
     ] {
         let mut files = FileAccessDraft {
+            locations: None,
+            start_root: None,
             enabled: true,
             root: PathBuf::from(if cfg!(windows) { "C:/" } else { "/" }),
             start_in: input.into(),
@@ -3105,6 +3256,8 @@ fn desktop_files_start_directory_windows_home_join_never_receives_drive_prefix()
         "native join would replace the account home"
     );
     let mut files = FileAccessDraft {
+        locations: None,
+        start_root: None,
         enabled: true,
         root: PathBuf::from("C:/"),
         start_in: "~/C:/folder".into(),
@@ -3113,4 +3266,60 @@ fn desktop_files_start_directory_windows_home_join_never_receives_drive_prefix()
     assert!(files
         .resolve_start_in(|| panic!("prefix must refuse before callback"))
         .is_err());
+}
+
+#[test]
+fn desktop_files_allowed_locations_start_is_separate_and_legacy_stays_legacy() {
+    let first = if cfg!(windows) {
+        PathBuf::from("C:/first")
+    } else {
+        PathBuf::from("/first")
+    };
+    let second = if cfg!(windows) {
+        PathBuf::from("C:/second")
+    } else {
+        PathBuf::from("/second")
+    };
+    let mut files = FileAccessDraft {
+        enabled: true,
+        root: first.clone(),
+        locations: Some(vec![first.clone(), second.clone()]),
+        ..Default::default()
+    };
+    let chooser = files.policy().unwrap().unwrap();
+    assert!(chooser.locations.as_ref().unwrap().start.is_none());
+    assert!(chooser.start_in.is_none());
+    files.start_root = Some(1);
+    let root_start = files.policy().unwrap().unwrap();
+    let start = root_start
+        .locations
+        .as_ref()
+        .unwrap()
+        .start
+        .as_ref()
+        .unwrap();
+    assert_eq!(start.root, 1);
+    assert_eq!(start.path.as_str(), "/");
+    assert_eq!(FileAccessDraft::from_policy(Some(&root_start)), files);
+    files.start_root = None;
+    files.start_in = second.join("home").to_str().unwrap().into();
+    let selected = files.policy().unwrap().unwrap();
+    let start = selected.locations.as_ref().unwrap().start.as_ref().unwrap();
+    assert_eq!(start.root, 1);
+    assert_eq!(start.path.as_str(), "/home");
+    assert_eq!(
+        FileAccessDraft::from_policy(Some(&selected))
+            .policy()
+            .unwrap(),
+        Some(selected)
+    );
+    files.start_root = Some(0);
+    assert!(
+        files.policy().is_err(),
+        "explicit chosen root cannot be replaced by path matching"
+    );
+    files.locations = None;
+    files.start_root = None;
+    files.start_in = first.join("home").to_str().unwrap().into();
+    assert!(files.policy().unwrap().unwrap().locations.is_none());
 }

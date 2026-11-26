@@ -1111,6 +1111,8 @@ struct ConnectionStatusBannerAction {
 fn show_connection_status_banner_ui(
     ui: &mut Ui,
     connection_state: &SftpConnectionState,
+    retry_label: &str,
+    show_edit: bool,
 ) -> ConnectionStatusBannerAction {
     let mut action = ConnectionStatusBannerAction::default();
     if let SftpConnectionState::Failed { summary, details }
@@ -1123,10 +1125,10 @@ fn show_connection_status_banner_ui(
                 ui.horizontal(|ui| {
                     ui.colored_label(theme::STATUS_ERROR, summary);
                     ui.add_space(8.0);
-                    if ui.small_button("Retry").clicked() {
+                    if ui.small_button(retry_label).clicked() {
                         action.retry = true;
                     }
-                    if is_failed {
+                    if is_failed && show_edit {
                         ui.add_space(4.0);
                         if ui.small_button("Edit connection…").clicked() {
                             action.edit_connection = true;
@@ -1921,6 +1923,12 @@ struct SftpCleanupReporter {
     sender: Arc<Mutex<Option<mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>>>>,
 }
 
+#[cfg(feature = "experimental-dev-tunnels")]
+enum FilesCleanup {
+    Transfer { namespaced: bool },
+    Delete { confirmed: usize, total: usize },
+}
+
 impl SftpCleanupReporter {
     fn set_sender(&self, sender: mpsc::SyncSender<crate::overlay_state::OpenRefusalNotice>) {
         *self
@@ -1937,6 +1945,7 @@ impl SftpCleanupReporter {
         repaint: &egui::Context,
     ) {
         let notice = crate::overlay_state::OpenRefusalNotice {
+            _cleanup_diagnostic: None,
             title: Some("Upload recovery report needs review".into()),
             acknowledgement_path: None,
             name: label.into(),
@@ -1960,39 +1969,80 @@ impl SftpCleanupReporter {
     }
 
     fn report(&self, label: String, error: festerm_ssh::SftpSessionError, repaint: &egui::Context) {
-        self.report_with_headline(label, error, repaint, "SFTP cleanup is incomplete");
+        let detail = error.to_string();
+        self.report_with_headline(label, error, repaint, "SFTP cleanup is incomplete", detail);
     }
     #[cfg(feature = "experimental-dev-tunnels")]
     fn report_files(
         &self,
         label: String,
         error: festerm_ssh::SftpSessionError,
+        cleanup: FilesCleanup,
         repaint: &egui::Context,
     ) {
-        let headline = if matches!(
-            error,
-            festerm_ssh::SftpSessionError::PublicationUncertain { .. }
-        ) {
-            "Files publication outcome is unknown"
-        } else {
-            "Files cleanup is incomplete"
+        let (headline, detail) = match cleanup {
+            FilesCleanup::Delete { confirmed, total } => (
+                "Files deletion outcome is unknown",
+                format!(
+                    "{confirmed} of {total} removals were confirmed. Inspect the current target and refresh before reviewing any remaining items. The pending deletion will not be retried automatically."
+                ),
+            ),
+            FilesCleanup::Transfer { namespaced } => {
+                let publication_uncertain = matches!(
+                    error,
+                    festerm_ssh::SftpSessionError::PublicationUncertain { .. }
+                );
+                let headline = if publication_uncertain {
+                    "Files publication outcome is unknown"
+                } else {
+                    "Files cleanup is incomplete"
+                };
+                let detail = match (namespaced, publication_uncertain) {
+                    (true, true) => "The upload may have published. Review the host before starting new work.".into(),
+                    (true, false) => "Completion or cleanup may be uncertain. Review the host before starting new work.".into(),
+                    (false, _) => error.to_string(),
+                };
+                (headline, detail)
+            }
         };
-        self.report_with_headline(label, error, repaint, headline);
+        self.report_with_headline(label, error, repaint, headline, detail);
     }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn report_interrupted_files_delete(
+        &self,
+        label: &str,
+        observation: &crate::app::host_files::DeleteObservation,
+        repaint: &egui::Context,
+    ) {
+        let progress = observation.confirmed_before_interruption();
+        if let Some(error) = observation.interrupted() {
+            let (confirmed, total) = progress.expect("an interrupted deletion has progress");
+            self.report_files(
+                label.to_owned(),
+                error,
+                FilesCleanup::Delete { confirmed, total },
+                repaint,
+            );
+        }
+    }
+
     fn report_with_headline(
         &self,
         label: String,
         error: festerm_ssh::SftpSessionError,
         repaint: &egui::Context,
         headline: &'static str,
+        detail: String,
     ) {
         let notice = crate::overlay_state::OpenRefusalNotice {
+            _cleanup_diagnostic: Some(crate::overlay_state::CleanupDiagnostic::new(error)),
             title: None,
             acknowledgement_path: None,
             name: label,
             path: String::new(),
             headline: headline.to_owned(),
-            detail: error.to_string(),
+            detail,
         };
         let delivered = self
             .sender
@@ -2003,12 +2053,10 @@ impl SftpCleanupReporter {
         tracing::warn!(
             target: "festerm::sftp",
             gui_notice_delivered = delivered,
-            "GUI SFTP cancellation cleanup failed; partial output may remain"
+            "File operation was interrupted or cleanup could not be confirmed"
         );
         if delivered {
             repaint.request_repaint();
-        } else {
-            eprintln!("fesTerm: GUI SFTP cancellation cleanup failed: {error}");
         }
     }
 }
@@ -2118,6 +2166,10 @@ pub(crate) struct SftpFileManagerTab {
     #[cfg(feature = "experimental-dev-tunnels")]
     files_source: Option<host_files::FilesSource>,
     #[cfg(feature = "experimental-dev-tunnels")]
+    files_locations_scope: bool,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    files_recovery_pin: Option<crate::app::host_files::FilesRecoveryPin>,
+    #[cfg(feature = "experimental-dev-tunnels")]
     host_files_retired: bool,
     cleanup_reporter: SftpCleanupReporter,
     event_receiver: WorkerEventReceiver,
@@ -2224,6 +2276,10 @@ impl SftpFileManagerTab {
             host_files_cancel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             files_source: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_locations_scope: false,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_recovery_pin: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             host_files_retired: false,
             cleanup_reporter: SftpCleanupReporter::default(),
@@ -2390,6 +2446,10 @@ impl SftpFileManagerTab {
             #[cfg(feature = "experimental-dev-tunnels")]
             files_source: None,
             #[cfg(feature = "experimental-dev-tunnels")]
+            files_locations_scope: false,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_recovery_pin: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
             host_files_retired: false,
             cleanup_reporter,
             event_receiver,
@@ -2455,7 +2515,12 @@ impl SftpFileManagerTab {
             }
             self.pending_markdown_request = None;
             self.pending_markdown_open = None;
+            self.files_locations_scope |= self
+                .files_source
+                .as_ref()
+                .is_some_and(|source| source.locations.is_some());
             self.files_source = None;
+            self.close_namespaced_remote_path_editor();
             self.remote_pane.stale = true;
             self.remote_pane.loading = false;
             self.connection_state = SftpConnectionState::Disconnected { summary: "Files session ended".into(),
@@ -2523,15 +2588,47 @@ impl SftpFileManagerTab {
     }
 
     fn request_reconnect(&mut self) {
-        if let FileManagerLaunchTarget::HostFiles(target) = &self.launch_target {
-            self.pending_application_command = Some(crate::tabs::AppCommand::OpenDevTunnelFiles {
-                target: target.clone(),
+        if matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_)) {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            if let Some(command) = self.files_recovery_command(
+                festerm_tunnel_bridge::file_client::NavigationPreference::DefaultStart,
+            ) {
+                self.pending_application_command = Some(command);
+                return;
+            }
+            self.pending_application_command = Some(crate::tabs::AppCommand::CreateProfile {
+                kind: crate::tabs::NewProfileKind::DevTunnelFiles,
             });
             return;
         }
         if self.submit_worker_command(WorkerCommand::Reconnect).is_ok() {
             self.connection_state = SftpConnectionState::Connecting;
             self.remote_pane.loading = true;
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn files_recovery_command(
+        &self,
+        navigation: festerm_tunnel_bridge::file_client::NavigationPreference,
+    ) -> Option<crate::tabs::AppCommand> {
+        let FileManagerLaunchTarget::HostFiles(target) = &self.launch_target else {
+            return None;
+        };
+        Some(crate::tabs::AppCommand::ReopenDevTunnelFiles {
+            target: target.clone(),
+            pin: self.files_recovery_pin.clone()?,
+            navigation,
+        })
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn close_namespaced_remote_path_editor(&mut self) {
+        if self.files_locations_scope {
+            self.remote_pane.editing_path = false;
+            self.remote_pane.path_focus_requested = false;
+            self.repaint
+                .memory_mut(|memory| memory.surrender_focus(path_field_id(PaneFocus::Remote)));
         }
     }
 
@@ -2792,6 +2889,8 @@ impl SftpFileManagerTab {
         let Some((summary, details)) = self.operation_error.clone() else {
             return;
         };
+        let labels = self.file_operation_labels();
+        let details = labels.text(&details);
         let mut dismiss = false;
         ui.horizontal(|ui| {
             ui.add_space(SFTP_TOOLBAR_LEFT_PADDING);
@@ -2858,7 +2957,51 @@ impl SftpFileManagerTab {
         ui: &mut Ui,
         tab_id: crate::tabs::TabId,
     ) -> Option<crate::tabs::AppCommand> {
-        let action = show_connection_status_banner_ui(ui, &self.connection_state);
+        if !matches!(
+            self.connection_state,
+            SftpConnectionState::Failed { .. } | SftpConnectionState::Disconnected { .. }
+        ) {
+            return None;
+        }
+        let labels = self.file_operation_labels();
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let recovery = self.files_recovery_command(
+            festerm_tunnel_bridge::file_client::NavigationPreference::ChooseLocation,
+        );
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let recovery: Option<crate::tabs::AppCommand> = None;
+        let needs_host_selection =
+            matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
+                && recovery.is_none();
+        let display_state = match &self.connection_state {
+            SftpConnectionState::Failed { summary, details } => SftpConnectionState::Failed {
+                summary: summary.clone(),
+                details: labels.connection_failure(details, self.has_connected_once),
+            },
+            SftpConnectionState::Disconnected { summary, details } => {
+                SftpConnectionState::Disconnected {
+                    summary: summary.clone(),
+                    details: labels.text(details),
+                }
+            }
+            other => other.clone(),
+        };
+        let retry_label = if needs_host_selection {
+            "Choose host again…"
+        } else {
+            "Retry"
+        };
+        let action = show_connection_status_banner_ui(
+            ui,
+            &display_state,
+            retry_label,
+            !needs_host_selection,
+        );
+        if let Some(command) = recovery {
+            if ui.button("Choose location…").clicked() {
+                return Some(command);
+            }
+        }
         if action.retry {
             self.request_reconnect();
         }
@@ -2941,18 +3084,64 @@ impl SftpFileManagerTab {
                     .as_ref()
                     .is_none_or(|cancel| !cancel.is_cancelled()))
             .then(|| {
-                self.files_source
-                    .as_ref()
-                    .and_then(|source| source.display_root.as_ref())
+                self.files_source.as_ref().map(|source| {
+                    source.display_root_for(
+                        remote_virtual_path(&self.remote_pane.current_path).unwrap_or("/"),
+                    )
+                })
             })
-            .flatten()
-            .map(|root| festerm_sftp::path::display_name(root.as_str()));
+            .flatten();
             #[cfg(not(feature = "experimental-dev-tunnels"))]
             let root: Option<String> = None;
             Some(root.unwrap_or_else(|| "Shared folder".into()))
         } else {
             None
         };
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let location_roots = if focus == PaneFocus::Remote
+            && (self.files_locations_scope
+                || self
+                    .files_source
+                    .as_ref()
+                    .is_some_and(|source| source.locations.is_some()))
+        {
+            if matches!(self.connection_state, SftpConnectionState::Ready)
+                && self.file_operations.current_connection()
+                && !self.host_files_retired
+                && self
+                    .host_files_cancel
+                    .as_ref()
+                    .is_none_or(|stop| !stop.is_cancelled())
+            {
+                Some(
+                    self.files_source
+                        .as_ref()
+                        .and_then(|source| source.locations.clone())
+                        .unwrap_or_default(),
+                )
+            } else {
+                Some(Vec::new())
+            }
+        } else {
+            None
+        };
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let location_roots: Option<Vec<()>> = None;
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let location_base = location_roots
+            .as_ref()
+            .and_then(|roots| {
+                roots.iter().find(|root| {
+                    root.contains(
+                        remote_virtual_path(&self.remote_pane.current_path).unwrap_or("/"),
+                    )
+                })
+            })
+            .map(|root| root.virtual_root());
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let location_base: Option<String> = None;
+        let location_chooser =
+            focus == PaneFocus::Remote && location_roots.is_some() && location_base.is_none();
         let mut request_back = false;
         let mut request_up = false;
         let mut request_home = false;
@@ -3009,6 +3198,7 @@ impl SftpFileManagerTab {
         let list_height =
             (available_list_height / SFTP_TABLE_ROW_HEIGHT).floor() * SFTP_TABLE_ROW_HEIGHT;
         let list_bottom_slack = available_list_height - list_height;
+        let path_labels = self.file_operation_labels();
         let pane_frame_response = crate::software_background::show_frame(
             ui,
             egui::Frame::new()
@@ -3025,9 +3215,10 @@ impl SftpFileManagerTab {
             |ui| {
                 ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
                 let pane = pane_mut(self, focus);
+                if location_chooser {pane.editing_path=false;pane.path_text.clear();}
                 let interactions_enabled = !(focus == PaneFocus::Remote && pane.stale);
                 let error_summary = pane.error.clone();
-                let error_details = pane.details.clone();
+                let error_details = pane.details.as_ref().map(|text|if focus==PaneFocus::Remote {path_labels.text(text)}else{text.clone()});
                 let footer_items = pane.item_count();
                 let footer_selection = footer_summary(pane);
                 ui.vertical(|ui| {
@@ -3119,6 +3310,17 @@ impl SftpFileManagerTab {
                                         ui.available_size_before_wrap(),
                                         Layout::left_to_right(Align::Center),
                                         |ui| {
+                                            #[cfg(feature="experimental-dev-tunnels")]
+                                            if let Some(roots)=&location_roots {
+                                                ui.menu_button("Allowed locations",|ui| {
+                                                    for root in roots {
+                                                        let mut label=festerm_sftp::path::display_name(root.label.as_str());
+                                                        if !root.available{label.push_str(" · Unavailable");}else if !root.mutations_available {label.push_str(" · Changes unavailable");}
+                                                        if ui.add_enabled(root.available,egui::Button::new(label).wrap()).clicked(){request_breadcrumb=Some(SftpPath::remote(root.virtual_root()));ui.close();}
+                                                    }
+                                                });
+                                                return;
+                                            }
                                             let identity = match focus {
                                                 PaneFocus::Local => "· This computer".to_owned(),
                                                 PaneFocus::Remote => remote_identity.clone(),
@@ -3157,7 +3359,7 @@ impl SftpFileManagerTab {
                                         request_back = true;
                                     }
                                     if ui.add_enabled_ui(
-                                        display_root.is_none() || pane.current_path != SftpPath::remote("/"),
+                                        !location_chooser && (display_root.is_none() || remote_virtual_path(&pane.current_path).is_some_and(|path|path!=location_base.as_deref().unwrap_or("/"))),
                                         |ui| toolbar_icon_button(ui, SftpGlyph::Up, &format!("Up {} folder", focus.label())),
                                     ).inner.clicked()
                                     {
@@ -3263,7 +3465,7 @@ impl SftpFileManagerTab {
                                                         ui.horizontal_centered(|ui| {
                                                             let mut previous_label_was_root_slash = false;
                                                             for (index, segment) in
-                                                                display_breadcrumb_segments(&pane.current_path, display_root.as_deref())
+                                                                display_location_breadcrumb_segments(&pane.current_path, display_root.as_deref(), location_base.as_deref(),location_chooser)
                                                                     .into_iter()
                                                                     .enumerate()
                                                             {
@@ -3322,11 +3524,12 @@ impl SftpFileManagerTab {
                                                 format!(
                                                     "{} path {}",
                                                     focus.label(),
-                                                    pane.current_path.display()
+                                                    if location_chooser {"Choose an allowed location".into()}else{location_base.as_ref().and_then(|base|remote_virtual_path(&pane.current_path).and_then(|path|path.strip_prefix(base))).filter(|relative|!relative.is_empty()).map_or_else(||if location_base.is_some(){"/".into()}else{pane.current_path.display()},str::to_owned)}
                                                 ),
                                             )
                                         });
-                                        if bar_bg_response.double_clicked() {
+                                        if !location_chooser && bar_bg_response.double_clicked() {
+                                            if let Some(base)=&location_base {pane.path_text=remote_virtual_path(&pane.current_path).and_then(|path|path.strip_prefix(base)).filter(|path|!path.is_empty()).unwrap_or("/").to_owned();}
                                             pane.editing_path = true;
                                             pane.path_focus_requested = true;
                                         }
@@ -3505,7 +3708,7 @@ impl SftpFileManagerTab {
                                         .is_some_and(|snapshot| snapshot.entries.is_empty())
                                     {
                                         ui.label(
-                                            RichText::new("This folder is empty.")
+                                            RichText::new(if location_chooser {"Choose an allowed location."}else{"This folder is empty."})
                                                 .font(font_for_text_role(SftpTextRole::TableBody))
                                                 .color(theme::TEXT_SECONDARY),
                                         );
@@ -3902,18 +4105,8 @@ impl SftpFileManagerTab {
         };
         ui.set_min_width(rail_width);
         ui.set_max_width(rail_width);
-        let upload = transfer_action(
-            PaneFocus::Local,
-            &self.local_pane,
-            &self.remote_pane,
-            &self.connection_state,
-        );
-        let download = transfer_action(
-            PaneFocus::Remote,
-            &self.remote_pane,
-            &self.local_pane,
-            &self.connection_state,
-        );
+        let upload = self.pane_transfer_action(PaneFocus::Local);
+        let download = self.pane_transfer_action(PaneFocus::Remote);
         // Mockup `.fsftp-transferrail` is a *full-height* column with
         // `justify-content: center`, so the two buttons sit as a centred
         // group. The previous fixed 24px top pad left visibly more space
@@ -4002,6 +4195,7 @@ impl SftpFileManagerTab {
             .transfer_drawer
             .summary()
             .expect("non-empty transfer drawer has a summary");
+        let path_labels = self.file_operation_labels();
         let mut commands = Vec::new();
         ui.add_space(10.0);
         egui::Frame::new()
@@ -4031,7 +4225,16 @@ impl SftpFileManagerTab {
                     .show(ui, |ui| {
                         show_transfer_history_rows(ui, &self.transfer_drawer.items, |ui, item| {
                             ui.separator();
-                            show_transfer_history_heading(ui, item);
+                            show_transfer_history_heading(
+                                ui,
+                                item,
+                                &path_labels.path(&item.request.source),
+                                &path_labels.path(
+                                    item.destination
+                                        .as_ref()
+                                        .unwrap_or(&item.request.destination),
+                                ),
+                            );
                             if let Some(total) = item.total_bytes {
                                 let progress = if total == 0 {
                                     0.0
@@ -4051,7 +4254,7 @@ impl SftpFileManagerTab {
                             }
                             if let Some(details) = &item.details {
                                 ui.label(
-                                    RichText::new(details)
+                                    RichText::new(path_labels.text(details))
                                         .font(font_for_text_role(SftpTextRole::TransferMeta))
                                         .color(theme::TEXT_MUTED),
                                 );
@@ -4154,7 +4357,25 @@ impl SftpFileManagerTab {
             pane.filter_focus_requested = true;
         }
         if command && ctx.input(|input| input.key_pressed(Key::L)) {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            let relative = if self.focused_pane == PaneFocus::Remote && self.files_locations_scope {
+                let Some(source) = &self.files_source else {
+                    return;
+                };
+                let path = remote_virtual_path(&self.remote_pane.current_path).unwrap_or("/");
+                if source.location(path).is_none() {
+                    return;
+                }
+                Some(source.visible_path(path))
+            } else {
+                None
+            };
+            #[cfg(not(feature = "experimental-dev-tunnels"))]
+            let relative: Option<String> = None;
             let pane = self.focused_pane_mut();
+            if let Some(relative) = relative {
+                pane.path_text = relative;
+            }
             pane.editing_path = true;
             pane.path_focus_requested = true;
         }
@@ -4241,6 +4462,20 @@ impl SftpFileManagerTab {
     }
 
     fn navigate_up(&mut self, focus: PaneFocus) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if focus == PaneFocus::Remote {
+            if let Some(source) = &self.files_source {
+                if source.locations.is_some() {
+                    let path = remote_virtual_path(&self.remote_pane.current_path).unwrap_or("/");
+                    let Some(root) = source.location(path) else {
+                        return;
+                    };
+                    if path == root.virtual_root() {
+                        return;
+                    }
+                }
+            }
+        }
         let path = pane_ref(self, focus).current_path.parent_directory();
         self.navigate_to_path(focus, path);
     }
@@ -4258,6 +4493,22 @@ impl SftpFileManagerTab {
 
     fn navigate_to_text(&mut self, focus: PaneFocus) {
         let text = pane_ref(self, focus).path_text.trim().to_owned();
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let text = if focus == PaneFocus::Remote {
+            if let Some(source) = &self.files_source {
+                let Some(path) = source.path_from_text(
+                    remote_virtual_path(&self.remote_pane.current_path).unwrap_or("/"),
+                    &text,
+                ) else {
+                    return;
+                };
+                path
+            } else {
+                text
+            }
+        } else {
+            text
+        };
         if text.is_empty() {
             return;
         }
@@ -4331,28 +4582,62 @@ impl SftpFileManagerTab {
         build_remote_markdown_source(self.launch_target.sftp()?, fingerprint, remote_path)
     }
 
+    fn files_upload_refusal(&self) -> Option<&'static str> {
+        if !matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_)) {
+            return None;
+        }
+        if !matches!(self.connection_state, SftpConnectionState::Ready)
+            || !self.file_operations.current_connection()
+        {
+            return Some("The remote Files connection is unavailable.");
+        }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if self.host_files_retired
+            || self
+                .host_files_cancel
+                .as_ref()
+                .is_some_and(|stop| stop.is_cancelled())
+        {
+            return Some("The remote Files connection is unavailable.");
+        }
+        let pane = &self.remote_pane;
+        if pane.loading
+            || pane.stale
+            || pane
+                .snapshot
+                .as_ref()
+                .is_none_or(|snapshot| snapshot.path != pane.current_path)
+            || pane.directory_metadata.as_ref().is_none_or(|metadata| {
+                metadata.path != pane.current_path || metadata.file_type != SftpEntryType::Directory
+            })
+        {
+            return Some("Wait for the remote Files folder to finish loading before uploading.");
+        }
+        None
+    }
+
+    fn pane_transfer_action(&self, source: PaneFocus) -> TransferActionState {
+        if source == PaneFocus::Local {
+            if let Some(reason) = self.files_upload_refusal() {
+                return TransferActionState {
+                    enabled: false,
+                    reason: Some(reason.into()),
+                };
+            }
+        }
+        transfer_action(
+            source,
+            pane_ref(self, source),
+            pane_ref(self, source.opposite()),
+            &self.connection_state,
+        )
+    }
+
     fn queue_transfer(&mut self, source_focus: PaneFocus) {
-        let destination_path = match source_focus {
-            PaneFocus::Local => self.remote_pane.current_path.clone(),
-            PaneFocus::Remote => self.local_pane.current_path.clone(),
-        };
-        let action = match source_focus {
-            PaneFocus::Local => transfer_action(
-                source_focus,
-                &self.local_pane,
-                &self.remote_pane,
-                &self.connection_state,
-            ),
-            PaneFocus::Remote => transfer_action(
-                source_focus,
-                &self.remote_pane,
-                &self.local_pane,
-                &self.connection_state,
-            ),
-        };
-        if !action.enabled {
+        if !self.pane_transfer_action(source_focus).enabled {
             return;
         }
+        let destination_path = pane_ref(self, source_focus.opposite()).current_path.clone();
         let requests = pane_mut(self, source_focus)
             .selected_items()
             .into_iter()
@@ -4374,6 +4659,9 @@ impl SftpFileManagerTab {
         &mut self,
         paths: Vec<PathBuf>,
     ) -> Result<usize, String> {
+        if let Some(reason) = self.files_upload_refusal() {
+            return Err(reason.into());
+        }
         if !matches!(self.connection_state, SftpConnectionState::Ready) {
             return Err(format!(
                 "The remote {} connection is unavailable.",
@@ -4406,6 +4694,7 @@ impl SftpFileManagerTab {
                 &event,
                 WorkerEvent::FilesConnected { .. }
                     | WorkerEvent::FilesDirectoryLoaded { .. }
+                    | WorkerEvent::FilesDirectoryFailed { .. }
                     | WorkerEvent::ReviewedDeletePrepared { .. }
                     | WorkerEvent::Connected { .. }
                     | WorkerEvent::RemoteDirectoryLoaded { .. }
@@ -4420,6 +4709,11 @@ impl SftpFileManagerTab {
                 self.apply_upload_inspection(request, result)
             }
             #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::FilesAuthenticated { pin, namespaced } => {
+                self.files_recovery_pin = Some(pin);
+                self.files_locations_scope = namespaced;
+            }
+            #[cfg(feature = "experimental-dev-tunnels")]
             WorkerEvent::FilesConnected {
                 connection_scope,
                 snapshot,
@@ -4427,6 +4721,8 @@ impl SftpFileManagerTab {
                 source,
                 skipped,
             } => {
+                self.files_locations_scope = source.locations.is_some();
+                self.close_namespaced_remote_path_editor();
                 self.files_source = Some(source);
                 self.apply_event(WorkerEvent::Connected {
                     connection_scope,
@@ -4440,11 +4736,16 @@ impl SftpFileManagerTab {
             }
             #[cfg(feature = "experimental-dev-tunnels")]
             WorkerEvent::FilesDirectoryLoaded {
+                request_id,
                 connection_scope,
                 snapshot,
                 metadata,
                 skipped,
             } => {
+                if request_id != self.remote_pane.pending_request_id {
+                    return;
+                }
+                self.close_namespaced_remote_path_editor();
                 self.apply_event(WorkerEvent::RemoteDirectoryLoaded {
                     connection_scope,
                     snapshot,
@@ -4453,6 +4754,19 @@ impl SftpFileManagerTab {
                 });
                 if skipped > 0 {
                     self.operation_error = Some(("Some entries are unavailable".into(), format!("{skipped} unsupported or inaccessible entries were omitted by the host.")));
+                }
+            }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::FilesDirectoryFailed {
+                request_id,
+                details,
+            } => {
+                if request_id == self.remote_pane.pending_request_id {
+                    self.close_namespaced_remote_path_editor();
+                    self.apply_event(WorkerEvent::RemoteDirectoryFailed {
+                        summary: "Could not load this Files folder.".into(),
+                        details,
+                    });
                 }
             }
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -4543,6 +4857,8 @@ impl SftpFileManagerTab {
             }
             WorkerEvent::Transfer(event) => self.apply_transfer_event(event),
             WorkerEvent::ConnectionFailed { summary, details } => {
+                #[cfg(feature = "experimental-dev-tunnels")]
+                self.close_namespaced_remote_path_editor();
                 self.pending_host_key = None;
                 self.connection_state = SftpConnectionState::Failed { summary, details };
                 self.remote_pane.loading = false;
@@ -4565,7 +4881,24 @@ impl SftpFileManagerTab {
                     Some(source) => {
                         self.pending_markdown_open = Some(PendingMarkdownOpen {
                             source,
-                            display_path: path,
+                            display_path: {
+                                #[cfg(feature = "experimental-dev-tunnels")]
+                                if let Some(files) = &self.files_source {
+                                    if files.locations.is_some() {
+                                        let root = files.display_root_for(&path);
+                                        let relative = files.visible_path(&path);
+                                        format!("{}{}", root.trim_end_matches('/'), relative)
+                                    } else {
+                                        path
+                                    }
+                                } else {
+                                    path
+                                }
+                                #[cfg(not(feature = "experimental-dev-tunnels"))]
+                                {
+                                    path
+                                }
+                            },
                             content,
                         });
                     }
@@ -4785,6 +5118,8 @@ enum WorkerCommand {
     },
     LoadRemote {
         path: String,
+        #[cfg(feature = "experimental-dev-tunnels")]
+        request_id: u64,
     },
     /// Fetches a remote file's full bytes for the Markdown viewer
     /// (issue #133), bounded by `max_bytes` so a huge file can't be pulled
@@ -4810,6 +5145,11 @@ enum WorkerEvent {
         result: Result<SftpDirectorySnapshot, String>,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
+    FilesAuthenticated {
+        pin: crate::app::host_files::FilesRecoveryPin,
+        namespaced: bool,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
     FilesConnected {
         connection_scope: Arc<()>,
         snapshot: SftpDirectorySnapshot,
@@ -4819,10 +5159,16 @@ enum WorkerEvent {
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     FilesDirectoryLoaded {
+        request_id: u64,
         connection_scope: Arc<()>,
         snapshot: SftpDirectorySnapshot,
         metadata: SftpPathMetadata,
         skipped: usize,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    FilesDirectoryFailed {
+        request_id: u64,
+        details: String,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     ReviewedDeletePrepared {
@@ -4961,7 +5307,12 @@ fn show_transfer_drawer_heading<Id: Copy + Eq + std::hash::Hash>(
     command
 }
 
-fn show_transfer_history_heading<Id>(ui: &mut Ui, item: &TransferHistoryItem<Id>) {
+fn show_transfer_history_heading<Id>(
+    ui: &mut Ui,
+    item: &TransferHistoryItem<Id>,
+    source_label: &str,
+    destination_label: &str,
+) {
     let state = ui.painter().layout_no_wrap(
         transfer_state_label(&item.state).to_owned(),
         font_for_text_role(SftpTextRole::TransferMeta),
@@ -4969,7 +5320,7 @@ fn show_transfer_history_heading<Id>(ui: &mut Ui, item: &TransferHistoryItem<Id>
     );
     let mut paths = egui::text::LayoutJob::default();
     paths.append(
-        &item.request.source.display(),
+        source_label,
         0.0,
         egui::TextFormat {
             font_id: font_for_text_role(SftpTextRole::TableBody),
@@ -4978,13 +5329,7 @@ fn show_transfer_history_heading<Id>(ui: &mut Ui, item: &TransferHistoryItem<Id>
         },
     );
     paths.append(
-        &format!(
-            " → {}",
-            item.destination
-                .as_ref()
-                .unwrap_or(&item.request.destination)
-                .display()
-        ),
+        &format!(" → {destination_label}"),
         0.0,
         egui::TextFormat {
             font_id: font_for_text_role(SftpTextRole::TableMetadata),
@@ -5321,7 +5666,7 @@ async fn run_worker_operations(
                         let _ = event_sender.send(WorkerEvent::UploadLocationInspected { request, result }).await;
                         repaint.request_repaint();
                     }
-                    WorkerCommand::LoadRemote { path } => {
+                    WorkerCommand::LoadRemote { path, .. } => {
                         match browsing.remote_directory_snapshot(Some(&path)).await {
                             Ok(snapshot) => {
                                 current_remote = path;
@@ -6531,12 +6876,16 @@ fn load_path(
         if tab
             .submit_worker_command(WorkerCommand::LoadRemote {
                 path: remote.clone(),
+                #[cfg(feature = "experimental-dev-tunnels")]
+                request_id,
             })
             .is_err()
         {
             return false;
         }
         tab.remote_pane.pending_request_id = request_id;
+        #[cfg(feature = "experimental-dev-tunnels")]
+        tab.close_namespaced_remote_path_editor();
     }
     {
         let pane = pane_mut(tab, focus);
@@ -7062,6 +7411,51 @@ pub(crate) struct BreadcrumbSegment {
     pub(crate) label: String,
     pub(crate) path: SftpPath,
     pub(crate) current: bool,
+}
+
+fn remote_virtual_path(path: &SftpPath) -> Option<&str> {
+    match path {
+        SftpPath::Remote(path) => Some(path),
+        SftpPath::Local(_) => None,
+    }
+}
+
+fn display_location_breadcrumb_segments(
+    path: &SftpPath,
+    label: Option<&str>,
+    base: Option<&str>,
+    chooser: bool,
+) -> Vec<BreadcrumbSegment> {
+    if chooser {
+        return vec![BreadcrumbSegment {
+            label: "Choose an allowed location".into(),
+            path: path.clone(),
+            current: true,
+        }];
+    }
+    let Some(base) = base else {
+        return display_breadcrumb_segments(path, label);
+    };
+    let Some(relative) = remote_virtual_path(path).and_then(|path| path.strip_prefix(base)) else {
+        return vec![];
+    };
+    let mut segments = breadcrumb_segments(&SftpPath::remote(if relative.is_empty() {
+        "/"
+    } else {
+        relative
+    }));
+    for segment in &mut segments {
+        if let Some(relative) = remote_virtual_path(&segment.path) {
+            segment.path = SftpPath::remote(format!(
+                "{base}{}",
+                if relative == "/" { "" } else { relative }
+            ));
+        }
+    }
+    if let Some(first) = segments.first_mut() {
+        first.label = label.unwrap_or("Shared folder").into();
+    }
+    segments
 }
 
 /// Changes only the visible root label. Every navigation target remains virtual.
@@ -7965,6 +8359,10 @@ pub(crate) mod tests {
             #[cfg(feature = "experimental-dev-tunnels")]
             files_source: None,
             #[cfg(feature = "experimental-dev-tunnels")]
+            files_locations_scope: false,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            files_recovery_pin: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
             host_files_retired: false,
             cleanup_reporter: SftpCleanupReporter::default(),
             event_receiver,
@@ -8583,7 +8981,7 @@ pub(crate) mod tests {
         assert_eq!(tab.remote_pane.history, vec![SftpPath::remote("/")]);
         let mut admitted_paths = Vec::new();
         while let Ok(command) = receiver.try_recv() {
-            if let WorkerCommand::LoadRemote { path } = command {
+            if let WorkerCommand::LoadRemote { path, .. } = command {
                 admitted_paths.push(path);
             }
         }
@@ -8812,6 +9210,61 @@ pub(crate) mod tests {
         assert_eq!(notice.name, "owned SFTP fixture");
         assert!(notice.detail.contains("/fixture/report.festerm-part"));
         assert!(destination.take_sftp_cleanup_notice().is_none());
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_detached_cleanup_hides_location_selectors_and_keeps_uncertainty() {
+        use crate::tabs::{AppState, TabContent};
+        const SELECTOR: &str = "0123456789abcdef0123456789abcdef";
+        let mut state = AppState::with_launcher(festerm_config::Configuration::empty());
+        let tab = test_tab();
+        let reporter = tab.cleanup_reporter.clone();
+        let id = state.active_tab().id;
+        let mut owned_tab = state.detach_tab(id).unwrap();
+        owned_tab.content = TabContent::SftpFileManager(Box::new(tab));
+        state.adopt_tab(owned_tab, None);
+        drop(state.detach_tab(id).unwrap());
+
+        let error = festerm_ssh::SftpSessionError::PublicationUncertain {
+            path: format!("/{SELECTOR}/uploaded.txt"),
+            reason: format!("Could not inspect recovery at /{SELECTOR}/.owned-part"),
+        };
+        let context = egui::Context::default();
+        reporter.report_files(
+            "Owned Files".into(),
+            error,
+            FilesCleanup::Transfer { namespaced: true },
+            &context,
+        );
+        let notice = state.take_sftp_cleanup_notice().unwrap();
+        assert_eq!(notice.headline, "Files publication outcome is unknown");
+        assert!(notice.detail.contains("may have published"));
+        assert!(!notice.detail.contains(SELECTOR));
+        assert!(notice.path.is_empty());
+        assert!(!format!("{notice:?}").contains(SELECTOR));
+        let diagnostic = notice._cleanup_diagnostic.as_ref().unwrap().error();
+        assert!(matches!(
+            diagnostic,
+            festerm_ssh::SftpSessionError::PublicationUncertain { path, reason }
+                if path == &format!("/{SELECTOR}/uploaded.txt")
+                    && reason == &format!("Could not inspect recovery at /{SELECTOR}/.owned-part")
+        ));
+        let legacy = festerm_ssh::SftpSessionError::PublicationUncertain {
+            path: "/owned.txt".into(),
+            reason: "Could not inspect recovery at /.owned-part".into(),
+        };
+        let legacy_message = legacy.to_string();
+        reporter.report_files(
+            "Owned legacy Files".into(),
+            legacy,
+            FilesCleanup::Transfer { namespaced: false },
+            &context,
+        );
+        assert_eq!(
+            state.take_sftp_cleanup_notice().unwrap().detail,
+            legacy_message
+        );
     }
 
     #[test]
@@ -10028,6 +10481,116 @@ pub(crate) mod tests {
         assert!(harness.query_by_label("Accept and Remember").is_some());
     }
 
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_choose_location_recovery_is_an_explicit_host_command_only() {
+        use crate::tabs::AppCommand;
+        use festerm_tunnel_bridge::{
+            file_client::NavigationPreference,
+            ordinary_auth::{OrdinaryHostInfo, OrdinaryRoute, ORDINARY_VERSION},
+            owner_auth::PinnedHost,
+        };
+        let host_info = OrdinaryHostInfo {
+            version: ORDINARY_VERSION,
+            route: OrdinaryRoute {
+                tunnel_id: "owned-tunnel".into(),
+                cluster: "use".into(),
+                endpoint_id: "owned-endpoint".into(),
+                port: 1,
+                host: PinnedHost {
+                    host: Default::default(),
+                    host_key_fingerprint: format!("SHA256:{}", "A".repeat(43)),
+                },
+            },
+            installation: Default::default(),
+            principal: Default::default(),
+            policy_epoch: festerm_host_protocol::Epoch::new(1).unwrap(),
+        };
+        let original_account = 42;
+        for (host, authenticated) in [(true, true), (true, false), (false, false)] {
+            let context = egui::Context::default();
+            let mut tab = paint_fixture(&context, 0);
+            tab.has_connected_once = false;
+            let target = HostFilesLaunchTarget {
+                label: "owned Files".into(),
+                profile_id: Some("owned-profile".into()),
+                account: Some("owned-account".into()),
+                locator: "owned.use".into(),
+            };
+            if host {
+                tab.launch_target = FileManagerLaunchTarget::HostFiles(target.clone());
+            }
+            if authenticated {
+                tab.apply_event(host_files::files_authenticated(
+                    &host_info,
+                    original_account,
+                    true,
+                ));
+            }
+            tab.apply_event(WorkerEvent::ConnectionFailed {
+                summary: "Could not open files".into(),
+                details: "Starting folder unavailable".into(),
+            });
+            let tab_id = crate::tabs::AppState::for_test().active();
+            let mut harness = Harness::builder().build_ui_state(
+                move |ui, state: &mut (SftpFileManagerTab, Option<AppCommand>)| {
+                    if let Some(command) = state
+                        .0
+                        .show_connection_status_banner(ui, tab_id)
+                        .or_else(|| state.0.take_pending_markdown_command())
+                    {
+                        state.1 = Some(command);
+                    }
+                },
+                (tab, None),
+            );
+            harness.run();
+            assert!(harness.state().1.is_none());
+            if authenticated {
+                harness.get_by_label("Choose location…").click();
+                harness.run();
+                let Some(AppCommand::ReopenDevTunnelFiles {
+                    target: actual,
+                    pin,
+                    navigation,
+                }) = &harness.state().1
+                else {
+                    panic!("chooser must use the pinned reopening route");
+                };
+                assert_eq!(actual.locator, target.locator);
+                assert_eq!(actual.profile_id, target.profile_id);
+                assert_eq!(actual.account, target.account);
+                assert_eq!(pin.account_id, original_account);
+                assert_eq!(pin.expected_host.host, host_info.route.host);
+                assert_eq!(pin.expected_host.installation, host_info.installation);
+                assert_eq!(pin.expected_host.principal, host_info.principal);
+                assert_eq!(*navigation, NavigationPreference::ChooseLocation);
+                harness.get_by_label("Retry").click();
+                harness.run();
+                assert!(matches!(
+                    &harness.state().1,
+                    Some(AppCommand::ReopenDevTunnelFiles { pin, navigation: NavigationPreference::DefaultStart, .. })
+                        if pin.account_id == original_account
+                            && pin.expected_host.host == host_info.route.host
+                            && pin.expected_host.installation == host_info.installation
+                            && pin.expected_host.principal == host_info.principal
+                ));
+            } else {
+                assert!(harness.query_by_label("Choose location…").is_none());
+                if host {
+                    harness.get_by_label("Choose host again…").click();
+                    harness.run();
+                    assert!(matches!(
+                        &harness.state().1,
+                        Some(AppCommand::CreateProfile {
+                            kind: crate::tabs::NewProfileKind::DevTunnelFiles
+                        })
+                    ));
+                }
+            }
+        }
+    }
+
     #[test]
     fn failed_connection_banner_shows_diagnostic_details() {
         let state = SftpConnectionState::Failed {
@@ -10036,7 +10599,7 @@ pub(crate) mod tests {
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                show_connection_status_banner_ui(ui, &state);
+                show_connection_status_banner_ui(ui, &state, "Retry", true);
                 *command = None;
             },
             None,
@@ -10066,7 +10629,7 @@ pub(crate) mod tests {
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                show_connection_status_banner_ui(ui, &state);
+                show_connection_status_banner_ui(ui, &state, "Retry", true);
                 *command = None;
             },
             None,
@@ -10254,7 +10817,7 @@ pub(crate) mod tests {
             tab.command_sender = sender;
             tab.navigate_up(PaneFocus::Remote);
             assert!(
-                matches!(commands.try_recv().unwrap(), WorkerCommand::LoadRemote {path} if path == "/")
+                matches!(commands.try_recv().unwrap(), WorkerCommand::LoadRemote {path, ..} if path == "/")
             );
             assert_eq!(tab.remote_pane.current_path, SftpPath::remote("/"));
             assert_eq!(
@@ -10299,6 +10862,247 @@ pub(crate) mod tests {
                 .map(|segment| (&segment.label, &segment.path))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_allowed_locations_render_physical_roots_and_keep_virtual_callbacks() {
+        use egui_kittest::kittest::By;
+        let context = egui::Context::default();
+        let mut tab = paint_fixture(&context, 0);
+        tab.launch_target = FileManagerLaunchTarget::HostFiles(HostFilesLaunchTarget {
+            label: "public Files".into(),
+            profile_id: None,
+            account: Some("public-account".into()),
+            locator: "owned.use".into(),
+        });
+        let root = festerm_tunnel_bridge::file_protocol::FileLocation {
+            selector: "1234567890abcdef1234567890abcdef".into(),
+            label: "/Volumes/عربي".to_owned().try_into().unwrap(),
+            available: true,
+            mutations_available: false,
+        };
+        let opaque = root.virtual_root();
+        let mut source = host_files::FilesSource::reviewed_delete_fixture(false);
+        source.locations = Some(vec![root.clone()]);
+        tab.files_source = Some(source);
+        tab.files_locations_scope = true;
+        tab.remote_pane.current_path = SftpPath::remote(&opaque);
+        tab.remote_pane.path_text = opaque.clone();
+        tab.host_files_cancel = Some(tokio_util::sync::CancellationToken::new());
+        let (sender, mut commands) = tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+        tab.command_sender = sender;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(460.0, 500.0))
+            .build_ui_state(
+                |ui, tab: &mut SftpFileManagerTab| tab.show_pane(ui, PaneFocus::Remote),
+                tab,
+            );
+        harness.run();
+        harness.get_by_label("/Volumes/عربي");
+        assert!(harness.query_by_label(&opaque).is_none());
+        harness.get(
+            By::new()
+                .label("Up Remote folder")
+                .predicate(|node| node.is_disabled()),
+        );
+        assert!(commands.try_recv().is_err());
+        harness.state_mut().remote_pane.current_path = SftpPath::remote(format!("{opaque}/notes"));
+        harness.run();
+        harness.get_by_label("/Volumes/عربي").click();
+        harness.run();
+        assert!(
+            matches!(commands.try_recv().unwrap(),WorkerCommand::LoadRemote {path, ..} if path==opaque)
+        );
+        let source = harness.state().files_source.as_ref().unwrap();
+        assert_eq!(source.visible_path(&format!("{opaque}/notes")), "/notes");
+        assert_eq!(
+            source.path_from_text(&opaque, "/notes"),
+            Some(format!("{opaque}/notes"))
+        );
+        assert!(source.path_from_text("/", "/notes").is_none());
+        harness
+            .state_mut()
+            .host_files_cancel
+            .as_ref()
+            .unwrap()
+            .cancel();
+        harness.run();
+        assert!(harness.query_by_label("/Volumes/عربي").is_none());
+        assert!(harness.query_by_label(&opaque).is_none());
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_pending_navigation_blocks_new_uploads_and_closes_path_editor() {
+        use festerm_tunnel_bridge::file_protocol::FileLocation;
+        const ORIGINAL_SELECTOR: &str = "11111111111111111111111111111111";
+        const TARGET_SELECTOR: &str = "22222222222222222222222222222222";
+        let first = SftpPath::remote(format!("/{ORIGINAL_SELECTOR}"));
+        let next = SftpPath::remote(format!("/{TARGET_SELECTOR}"));
+        let (mut tab, mut commands) = tab_with_command_receiver();
+        tab.launch_target = FileManagerLaunchTarget::HostFiles(HostFilesLaunchTarget {
+            label: "Owned Files".into(),
+            profile_id: None,
+            account: None,
+            locator: "owned.use".into(),
+        });
+        let original_snapshot = SftpDirectorySnapshot {
+            location: SftpLocation::Remote,
+            path: first.clone(),
+            loaded_at: SystemTime::UNIX_EPOCH,
+            entries: Vec::new(),
+        };
+        let original_metadata = SftpPathMetadata {
+            path: first.clone(),
+            file_type: SftpEntryType::Directory,
+            size: None,
+            modified_at: None,
+            permissions: Some(0o700),
+        };
+        let mut source = host_files::FilesSource::reviewed_delete_fixture(false);
+        source.locations = Some(
+            [
+                (ORIGINAL_SELECTOR, "/owned/first"),
+                (TARGET_SELECTOR, "/owned/next"),
+            ]
+            .into_iter()
+            .map(|(selector, label)| FileLocation {
+                selector: selector.into(),
+                label: label.to_owned().try_into().unwrap(),
+                available: true,
+                mutations_available: true,
+            })
+            .collect(),
+        );
+        let connection_scope = tab.file_operations.connection.capture();
+        tab.apply_event(WorkerEvent::FilesConnected {
+            connection_scope: connection_scope.clone(),
+            snapshot: original_snapshot.clone(),
+            metadata: original_metadata.clone(),
+            source,
+            skipped: 0,
+        });
+        let local = item("owned.txt", SftpEntryType::File, Some(4));
+        tab.local_pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: SftpLocation::Local,
+                path: SftpPath::local("/owned"),
+                loaded_at: SystemTime::UNIX_EPOCH,
+                entries: vec![local.clone()],
+            },
+            None,
+        );
+        tab.local_pane.select_single(&local.path);
+        assert!(tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.queue_transfer(PaneFocus::Local);
+        let WorkerCommand::Enqueue(requests) = commands.try_recv().unwrap() else {
+            panic!("the loaded folder must accept the upload");
+        };
+        assert_eq!(requests[0].destination, first);
+        let transfer_id = festerm_ssh::gallery_transfer_events(false)
+            .into_iter()
+            .find_map(|event| match event {
+                SftpTransferEvent::ItemStarted { transfer_id, .. } => Some(transfer_id),
+                _ => None,
+            })
+            .unwrap();
+        tab.apply_event(WorkerEvent::TransferBatchAdmitted {
+            transfer_ids: vec![transfer_id],
+            requests,
+        });
+
+        tab.remote_pane.directory_metadata.as_mut().unwrap().path = next.clone();
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        assert!(tab
+            .enqueue_external_drop_upload(vec![PathBuf::from("/owned/mismatched.txt")])
+            .is_err());
+        tab.remote_pane.directory_metadata = Some(original_metadata.clone());
+        tab.remote_pane.stale = true;
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.remote_pane.stale = false;
+
+        tab.refresh_pane(PaneFocus::Remote);
+        let WorkerCommand::LoadRemote {
+            request_id: refresh_id,
+            ..
+        } = commands.try_recv().unwrap()
+        else {
+            panic!("refresh must use the current folder");
+        };
+        tab.remote_pane.path_text = "/draft".into();
+        tab.remote_pane.editing_path = true;
+        tab.remote_pane.path_focus_requested = true;
+        tab.navigate_to_path(PaneFocus::Remote, next.clone());
+        let WorkerCommand::LoadRemote { path, request_id } = commands.try_recv().unwrap() else {
+            panic!("location selection must use the virtual folder");
+        };
+        assert_eq!(SftpPath::remote(path), next);
+        assert!(!tab.remote_pane.editing_path);
+        assert!(!tab.remote_pane.path_focus_requested);
+
+        tab.apply_event(WorkerEvent::FilesDirectoryLoaded {
+            request_id: refresh_id,
+            connection_scope,
+            snapshot: original_snapshot,
+            metadata: original_metadata,
+            skipped: 0,
+        });
+        assert!(tab.remote_pane.loading);
+        assert_eq!(tab.remote_pane.current_path, next);
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.queue_transfer(PaneFocus::Local);
+        assert!(tab
+            .enqueue_external_drop_upload(vec![PathBuf::from("/owned/dropped.txt")])
+            .is_err());
+        assert!(commands.try_recv().is_err());
+
+        fn has_selector(shape: &egui::Shape) -> bool {
+            match shape {
+                egui::Shape::Text(text) => {
+                    text.galley.job.text.contains(ORIGINAL_SELECTOR)
+                        || text.galley.job.text.contains(TARGET_SELECTOR)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().any(has_selector),
+                _ => false,
+            }
+        }
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(460.0, 500.0))
+            .build_ui_state(
+                |ui, tab: &mut SftpFileManagerTab| tab.show_pane(ui, PaneFocus::Remote),
+                tab,
+            );
+        harness.run();
+        assert!(!harness
+            .output()
+            .shapes
+            .iter()
+            .any(|clipped| has_selector(&clipped.shape)));
+
+        let tab = harness.state_mut();
+        tab.remote_pane.path_text = "/relative".into();
+        tab.remote_pane.editing_path = true;
+        tab.apply_event(WorkerEvent::FilesDirectoryFailed {
+            request_id,
+            details: format!("Could not load /{TARGET_SELECTOR}/large"),
+        });
+        assert!(tab.remote_pane.stale);
+        assert_eq!(tab.remote_pane.current_path, first);
+        assert!(!tab.remote_pane.editing_path);
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.queue_transfer(PaneFocus::Local);
+        assert!(tab
+            .enqueue_external_drop_upload(vec![PathBuf::from("/owned/failed.txt")])
+            .is_err());
+        assert!(commands.try_recv().is_err());
+        assert_eq!(tab.transfer_drawer.items[0].request.destination, first);
+        harness.run();
+        assert!(!harness
+            .output()
+            .shapes
+            .iter()
+            .any(|clipped| has_selector(&clipped.shape)));
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -10377,7 +11181,7 @@ pub(crate) mod tests {
             harness.get_by_label(&label).click();
             harness.run();
             assert!(
-                matches!(commands.try_recv().unwrap(), WorkerCommand::LoadRemote {path} if path == "/")
+                matches!(commands.try_recv().unwrap(), WorkerCommand::LoadRemote {path, ..} if path == "/")
             );
             assert_eq!(
                 harness.state().remote_pane.current_path,
@@ -12033,6 +12837,7 @@ pub(crate) mod tests {
         late_metadata.permissions = Some(0o500);
         tab.event_sender
             .try_send(WorkerEvent::FilesDirectoryLoaded {
+                request_id: 0,
                 connection_scope: scope.clone(),
                 snapshot: late_snapshot,
                 metadata: late_metadata,

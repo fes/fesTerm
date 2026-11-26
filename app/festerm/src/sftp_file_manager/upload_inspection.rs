@@ -297,13 +297,13 @@ mod tests {
         // Exercise actual ordinary-pane refresh and child navigation after adoption.
         tab.navigate_to_path(PaneFocus::Remote, SftpPath::remote(current_remote.clone()));
         assert!(
-            matches!(queue.try_recv().unwrap(), WorkerCommand::LoadRemote { path } if path == "/reported")
+            matches!(queue.try_recv().unwrap(), WorkerCommand::LoadRemote { path, .. } if path == "/reported")
         );
         tab.remote_pane.loading = false;
         let child = tab.remote_pane.current_path.join_child("child");
         tab.navigate_to_path(PaneFocus::Remote, child);
         assert!(
-            matches!(queue.try_recv().unwrap(), WorkerCommand::LoadRemote { path } if path == "/reported/child")
+            matches!(queue.try_recv().unwrap(), WorkerCommand::LoadRemote { path, .. } if path == "/reported/child")
         );
     }
 
@@ -622,6 +622,8 @@ mod tests {
             tab.command_sender = send;
             tab.submit_worker_command(WorkerCommand::LoadRemote {
                 path: "/queued".into(),
+                #[cfg(feature = "experimental-dev-tunnels")]
+                request_id: 0,
             })
             .unwrap();
             tab.remote_pane.pending_request_id = if exhausted { u64::MAX } else { 7 };

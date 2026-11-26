@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "d52e2bb3a3abd65a928fb97fe8b88698169b1d318a02d3e07fd44c414751dbf6"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "6df4f4d8a185712f06add9a2bdbe9ffb08857659e9c087fb83e09e025277611b"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -100,14 +100,15 @@ Caveats:
 
 ## Files transfer cancellation
 
-Use for: Returned local I/O errors and a Files connection that should remain usable after cancellation.
+Use for: Files locations, transfer cancellation and retained channels.
 
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded transfers; `display_root` queries advertised view-only metadata.
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded transfers, locations and transient navigation.
+- [`Location`](../../crates/festerm-tunnel-bridge/src/filesystem/locations.rs) — Retained roots, contained reads and strict mutation acquisition.
 - [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared optional client adapter; preserves publication, cleanup and authority fences.
 
 Evidence:
-- [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Actual rooted service aborts a partial upload and accepts a later operation on the same stream.
-- [`rooted_client_failed_abort_preserves_both_errors_and_original_deadline`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Wrong or missing Close acknowledgement preserves both errors without extending the original deadline.
+- [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Aborts a partial upload; retains the stream.
+- [`rooted_client_failed_abort_preserves_both_errors_and_original_deadline`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Preserves both errors and the original deadline.
 
 Caveats:
 - Close consumes the handle and attempts staging cleanup; it does not universally prove unlink success.

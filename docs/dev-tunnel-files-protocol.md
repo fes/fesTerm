@@ -709,3 +709,76 @@ is converted locally before protected Settings publication; raw shorthand does
 not travel on the wire. A new helper feature probe uses a separate
 `capabilities files-start` command, leaving the strict old reply unchanged.
 Native qualification of this increment is pending.
+
+
+## Explicit HOST Allowed locations
+
+A newly reviewed HOST policy may contain `locations` with one to eight absolute
+`roots` and optional `start: {root, path}`. `root` is the protected list index;
+`path` is a bounded root-relative virtual directory. This shape omits historical
+`root`/`start_in` fields and is limited to 8 KiB encoded, including JSON escaping.
+The lifecycle journal retains its 32 KiB limit with both approved Settings copies.
+Cross-shape fields are rejected even when null. Historical singleton
+`start_in: null` still decodes as the omitted start, and singleton serialization
+and defaults are preserved. A Start-only edit keeps the historical singleton
+read rules.
+
+The staged helper must separately answer strict `capabilities files-locations`
+with `{"schema":1,"host_files_locations_v1":true}` before acquisition/publication.
+No field is added to historical capability replies. HOST description and opening
+use explicit version 4 for this namespace; historical opening modes refuse it.
+The existing ReadyV3 shape and version 3 capability DTO stay unchanged, with
+optional operation name `locations`. Its request has no arguments and its reply
+contains a bounded list of `selector`, `label`, `available`, and
+`mutations_available`. Selectors are 32 lowercase hex characters, prepared once
+per HOST grant and shared by browsing and transfer channels. They are not
+persistent credentials or filesystem labels.
+
+Each request path is `/selector` followed by the selected root-relative path.
+Start metadata uses the same captured namespace. Multiple locations without a
+start return `/`, a client-local chooser with no enumeration request. Clients
+query locations before initial navigation, display the sanitized physical root,
+strip selectors from breadcrumbs/editor/review/transfer labels, and keep Up
+inside that root. Root choice never retargets queued jobs, open handles or reviews.
+Old helpers and unsupported native roots report Files unavailable; unrelated
+HOST/shell service continues. Missing or renamed start refuses initial Files
+navigation without changing access or selecting a fallback.
+
+A broad grant includes ordinary OS-readable data and supported subordinate local
+mounts, including later mounts. Native complete-root no-follow lookup and retained
+identity checks fence disclosure. Linux requires a supported local kernel
+filesystem class, `openat2` and mount IDs from `statx` for exact freshness checks.
+Regular-file data reopening uses the kernel's current-process descriptor path
+inside a verified procfs mount. Windows supports only local NTFS for the new
+namespace and retains non-reparse ancestor handles. macOS requires the recorded
+27.2.1 containment floor and local APFS. Regular-file data requires either an
+ownership-enforcing private full chain, or the separately qualified APFS/nodev
+ordinary route. A failure after selecting the private route is terminal.
+Unsupported filesystem classes stay unavailable; links remain refused.
+
+Existing global write/Delete consent, complete strict trusted ancestor checks,
+replacement/publication rules, channel/handle pools and deadlines remain whole
+grant. On Unix, each strict absolute and relative mutation ancestor must pass
+the filesystem check before the existing owner/mode/ACL checks. macOS requires
+ownership-enforcing local APFS for mutation, including on volumes that permit
+ordinary reads with ownership ignored. Linux requires the supported filesystem
+class and mount ID for mutation. On Linux, mutation/review regular-file leaves
+are pinned without crossing their qualified parent's mount, checked as supported
+regular objects, then opened for data through that same pin. Supported directory
+mounts remain available; separately mounted file leaves are refused for these
+operations. The server rechecks the original contained parent against the
+retained parent before new-scope upload and Delete effects.
+Current-product Desktop/iOS/Android allowlist behavior remains pending native
+qualification. Existing native evidence covers isolated API prerequisites.
+
+
+An explicit failed-view **Choose location…** action uses a new foreground
+authenticated opening pinned to the original account, stable host, key,
+installation and principal. Missing or changed identity requires normal host
+selection. The ephemeral navigation preference requires freshly queried
+locations and current account/lifetime checks, then displays the client-local
+chooser. It sends no Start, Stat, directory open or mutation before an explicit
+location choice. DefaultStart requires a successful first folder listing for
+an allowlist Start. ChooseLocation requires its own successful authorization and
+uses only metadata from the fresh opening. Legacy metadata absence refuses
+clearly. Native Desktop/iOS/Android recovery qualification remains pending.

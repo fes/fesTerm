@@ -531,6 +531,7 @@ fn headless_configure_cannot_erase_an_unreviewable_file_grant() {
             ordinary_access: OrdinaryAccess::ProviderOwner,
             filesystem: Some(festerm_tunnel_bridge::file_protocol::Policy {
                 start_in: None,
+                locations: None,
                 delete: false,
                 root: root.path().to_path_buf(),
                 write: false,
@@ -708,6 +709,27 @@ fn host_start_directory_capability_is_separate_and_has_no_state_effects() {
         output.stdout,
         format!(
             "{{\"schema\":1,\"host_files_start_v1\":{}}}\n",
+            cfg!(feature = "owner-routing")
+        )
+        .as_bytes()
+    );
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn host_allowed_locations_capability_is_separate_and_has_no_state_effects() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["capabilities", "files-locations"])
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        output.stdout,
+        format!(
+            "{{\"schema\":1,\"host_files_locations_v1\":{}}}\n",
             cfg!(feature = "owner-routing")
         )
         .as_bytes()

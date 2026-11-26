@@ -1898,6 +1898,19 @@ impl MobileApp {
         target: super::files_shell::HostFilesTarget,
         ctx: &egui::Context,
     ) -> Result<(), String> {
+        self.open_host_files_target_with_navigation(
+            target,
+            festerm_tunnel_bridge::file_client::NavigationPreference::DefaultStart,
+            ctx,
+        )
+    }
+
+    pub(super) fn open_host_files_target_with_navigation(
+        &mut self,
+        target: super::files_shell::HostFilesTarget,
+        navigation: festerm_tunnel_bridge::file_client::NavigationPreference,
+        ctx: &egui::Context,
+    ) -> Result<(), String> {
         use host_client::ordinary::OrdinaryKeyIndex;
         let epoch = self.files_admission_epoch(ctx)?;
         let token = self.files_admitted_token(epoch)?;
@@ -1937,6 +1950,7 @@ impl MobileApp {
             ConnectionPermit::reserve(&budgets).map_err(|_| "Too many active connections")?;
         let connector = super::host_files::HostConnector::start(
             local_root,
+            navigation,
             token.as_ref().clone(),
             ctx,
             publish_guard,

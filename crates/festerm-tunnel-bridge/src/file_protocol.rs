@@ -13,16 +13,167 @@ pub const JSON_LIMIT: usize = 64 * 1024;
 pub const PAGE_LIMIT: u16 = 64;
 pub const HANDLE_LIMIT: usize = 8;
 
+pub const LOCATION_LIMIT: usize = 8;
+pub const POLICY_BYTES_LIMIT: usize = 8 * 1024;
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Policy {
+    /// Historical singleton initial directory. Never mixed with locations.
+    pub start_in: Option<String>,
+    /// Historical root, or a derived mirror of the first allowlist entry.
+    /// The mirror is never serialized in the new shape and adds no grant.
+    pub root: std::path::PathBuf,
+    pub locations: Option<AllowedLocations>,
+    pub write: bool,
+    pub delete: bool,
+}
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Policy {
-    /// Initial virtual directory only; absent preserves the historical root start.
+pub struct AllowedLocations {
+    #[serde(deserialize_with = "bounded_location_roots")]
+    pub roots: Vec<std::path::PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_in: Option<String>,
-    pub root: std::path::PathBuf,
-    pub write: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub delete: bool,
+    pub start: Option<LocationStart>,
+}
+impl std::fmt::Debug for AllowedLocations {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AllowedLocations")
+            .field("roots", &"[private folders]")
+            .field("start", &"[private folder]")
+            .finish()
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LocationStart {
+    /// Protected list ordinal, not an ephemeral wire selector.
+    pub root: usize,
+    pub path: StartDirectory,
+}
+fn bounded_location_roots<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> std::result::Result<Vec<std::path::PathBuf>, D::Error> {
+    struct Roots;
+    impl<'de> serde::de::Visitor<'de> for Roots {
+        type Value = Vec<std::path::PathBuf>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("one to eight allowed locations")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut roots = Vec::new();
+            while let Some(root) = seq.next_element()? {
+                if roots.len() >= LOCATION_LIMIT {
+                    return Err(serde::de::Error::custom("too many allowed locations"));
+                }
+                roots.push(root);
+            }
+            if roots.is_empty() {
+                return Err(serde::de::Error::custom("no allowed locations"));
+            }
+            Ok(roots)
+        }
+    }
+    decoder.deserialize_seq(Roots)
+}
+impl Serialize for Policy {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct(
+            "Policy",
+            if self.locations.is_some() {
+                2 + usize::from(self.delete)
+            } else {
+                2 + usize::from(self.start_in.is_some()) + usize::from(self.delete)
+            },
+        )?;
+        if let Some(locations) = &self.locations {
+            state.serialize_field("locations", locations)?;
+        } else {
+            // Preserve the historical bytes and field order exactly.
+            if let Some(start) = &self.start_in {
+                state.serialize_field("start_in", start)?;
+            }
+            state.serialize_field("root", &self.root)?;
+        }
+        state.serialize_field("write", &self.write)?;
+        if !is_false(&self.delete) {
+            state.serialize_field("delete", &self.delete)?;
+        }
+        state.end()
+    }
+}
+impl<'de> Deserialize<'de> for Policy {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> std::result::Result<Self, D::Error> {
+        fn present<'input, T: Deserialize<'input>, D: serde::Deserializer<'input>>(
+            decoder: D,
+        ) -> std::result::Result<Option<T>, D::Error> {
+            T::deserialize(decoder).map(Some)
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Shape {
+            // Historical start_in accepts null, but its presence excludes locations.
+            #[serde(default, deserialize_with = "present")]
+            start_in: Option<Option<String>>,
+            #[serde(default, deserialize_with = "present")]
+            root: Option<std::path::PathBuf>,
+            #[serde(default, deserialize_with = "present")]
+            locations: Option<AllowedLocations>,
+            write: bool,
+            #[serde(default)]
+            delete: bool,
+        }
+        let shape = Shape::deserialize(decoder)?;
+        let root = match (shape.root, &shape.locations) {
+            (Some(root), None) => root,
+            (None, Some(locations)) if shape.start_in.is_none() => locations
+                .roots
+                .first()
+                .cloned()
+                .ok_or_else(|| serde::de::Error::custom("no allowed locations"))?,
+            _ => return Err(serde::de::Error::custom("mixed or missing file scope")),
+        };
+        let policy = Self {
+            root,
+            start_in: shape.start_in.flatten(),
+            locations: shape.locations,
+            write: shape.write,
+            delete: shape.delete,
+        };
+        if policy.locations.is_some() {
+            policy
+                .validate()
+                .map_err(|_| serde::de::Error::custom("invalid allowed locations"))?;
+        }
+        Ok(policy)
+    }
+}
+fn valid_location_root(root: &std::path::Path) -> bool {
+    let Some(text) = root.to_str() else {
+        return false;
+    };
+    root.is_absolute()
+        && text.len() <= 4096
+        && !text.contains("//")
+        && !text.contains("\\\\")
+        && !text
+            .split(['/', '\\'])
+            .any(|part| matches!(part, "." | ".."))
+        && root.components().all(|part| match part {
+            std::path::Component::Normal(name) => name.to_str().is_some_and(valid_name),
+            std::path::Component::RootDir => true,
+            std::path::Component::Prefix(prefix) => {
+                matches!(prefix.kind(), std::path::Prefix::Disk(_))
+            }
+            _ => false,
+        })
 }
 fn is_false(value: &bool) -> bool {
     !value
@@ -33,6 +184,7 @@ impl std::fmt::Debug for Policy {
         f.debug_struct("Policy")
             .field("root", &"[private folder]")
             .field("start_in", &"[private folder]")
+            .field("locations", &"[private folders]")
             .field("write", &self.write)
             .field("delete", &self.delete)
             .finish()
@@ -46,6 +198,32 @@ impl Policy {
     /// Portable shape only. Native admission separately opens and verifies the
     /// root and ancestors without following links or repairing permissions.
     pub fn validate(&self) -> std::io::Result<()> {
+        if let Some(locations) = &self.locations {
+            if self.start_in.is_some()
+                || locations.roots.is_empty()
+                || locations.roots.len() > LOCATION_LIMIT
+                || locations.roots.first() != Some(&self.root)
+                || locations
+                    .roots
+                    .iter()
+                    .any(|root| !valid_location_root(root))
+                || locations
+                    .roots
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != locations.roots.len()
+                || locations.start.as_ref().is_some_and(|start| {
+                    start.root >= locations.roots.len() || start.path.as_str().len() > 4096 - 33
+                })
+                || serde_json::to_vec(self)
+                    .map_err(|_| crate::protocol::invalid())?
+                    .len()
+                    > POLICY_BYTES_LIMIT
+            {
+                return Err(crate::protocol::invalid());
+            }
+        }
         if self.start_in.as_ref().is_some_and(|path| !valid_path(path))
             || self.delete && !self.write
             || !self.root.is_absolute()
@@ -110,6 +288,8 @@ pub struct Capabilities {
 
 /// Explicit HOST opening mode. Legacy/Open2 greetings and replies stay v1.
 pub const HOST_REVIEWED_VERSION: u16 = 3;
+/// Explicit new namespace; historical clients must never reinterpret it.
+pub const HOST_LOCATIONS_VERSION: u16 = 4;
 pub const OPERATION_LIMIT: usize = 16;
 pub const OPERATION_NAME_LIMIT: usize = 32;
 
@@ -157,6 +337,9 @@ fn bounded_operations<'de, D: serde::Deserializer<'de>>(
 }
 impl OperationCapabilities {
     /// Unknown optional names are inert; protected policy remains strictly typed.
+    pub fn allows_locations(&self) -> bool {
+        self.operations.iter().any(|name| name == "locations")
+    }
     pub fn allows_start_directory(&self) -> bool {
         self.operations.iter().any(|name| name == "start_directory")
     }
@@ -290,6 +473,35 @@ impl From<DisplayRoot> for String {
     }
 }
 
+/// Public view metadata only; selectors are connection/grant-scoped virtual
+/// path components. They are never native paths or persistent authority.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FileLocation {
+    pub selector: String,
+    pub label: DisplayRoot,
+    pub available: bool,
+    /// Existing strict absolute-root chain qualifies. This is availability,
+    /// not per-root consent or a guarantee of target OS write permission.
+    pub mutations_available: bool,
+}
+impl FileLocation {
+    pub fn validate(&self) -> bool {
+        self.selector.len() == 32
+            && self
+                .selector
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+    pub fn virtual_root(&self) -> String {
+        format!("/{}", self.selector)
+    }
+    pub fn contains(&self, path: &str) -> bool {
+        path.strip_prefix(&self.virtual_root())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -300,6 +512,7 @@ pub struct Request {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    Locations {},
     StartDirectory {},
     DisplayRoot {},
     ReviewEntry {
@@ -375,6 +588,9 @@ pub struct Entry {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Result {
+    Locations {
+        locations: Vec<FileLocation>,
+    },
     StartDirectory {
         path: StartDirectory,
     },
@@ -495,11 +711,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn allowed_locations_shape_is_explicit_bounded_and_preserves_legacy_bytes() {
+        let roots = vec![
+            std::path::PathBuf::from(if cfg!(windows) { "C:\\Users" } else { "/home" }),
+            std::path::PathBuf::from(if cfg!(windows) { "D:\\Data" } else { "/data" }),
+        ];
+        let mut policy = Policy {
+            root: roots[0].clone(),
+            start_in: None,
+            locations: Some(AllowedLocations {
+                roots: roots.clone(),
+                start: Some(LocationStart {
+                    root: 1,
+                    path: "/عربي".to_owned().try_into().unwrap(),
+                }),
+            }),
+            write: true,
+            delete: true,
+        };
+        policy.validate().unwrap();
+        let bytes = serde_json::to_vec(&policy).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("root").is_none());
+        assert!(value.get("start_in").is_none());
+        assert_eq!(serde_json::from_slice::<Policy>(&bytes).unwrap(), policy);
+        let mut mixed = value.clone();
+        mixed["root"] = serde_json::to_value(&roots[0]).unwrap();
+        assert!(serde_json::from_value::<Policy>(mixed).is_err());
+        for field in ["root", "start_in"] {
+            let mut mixed = value.clone();
+            mixed[field] = serde_json::Value::Null;
+            assert!(serde_json::from_value::<Policy>(mixed).is_err(), "{field}");
+        }
+        let mut changed = policy.clone();
+        changed
+            .locations
+            .as_mut()
+            .unwrap()
+            .start
+            .as_mut()
+            .unwrap()
+            .root = 0;
+        assert_ne!(policy, changed);
+        policy.locations.as_mut().unwrap().roots = vec![roots[0].clone(); 2];
+        assert!(policy.validate().is_err());
+        let mut too_many = value;
+        too_many["locations"]["roots"] =
+            serde_json::to_value(vec![&roots[0]; LOCATION_LIMIT + 1]).unwrap();
+        assert!(serde_json::from_value::<Policy>(too_many).is_err());
+        assert!(!format!("{policy:?}").contains("home"));
+        assert!(!format!("{:?}", policy.locations).contains("Users"));
+    }
+
+    #[test]
     fn start_directory_policy_defaults_preserve_legacy_and_validate_virtual_paths() {
         let old = serde_json::json!({"root": if cfg!(windows) {"C:\\Users"} else {"/home"}, "write": false});
         let mut policy: Policy = serde_json::from_value(old.clone()).unwrap();
         assert_eq!(policy.initial_directory(), "/");
         assert_eq!(serde_json::to_value(&policy).unwrap(), old);
+        let mut explicit_null = old.clone();
+        explicit_null["start_in"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<Policy>(explicit_null).unwrap(),
+            policy
+        );
+        let mut mixed = old.clone();
+        mixed["locations"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<Policy>(mixed).is_err());
         assert_eq!(
             serde_json::to_string(&policy).unwrap(),
             format!(
@@ -656,6 +934,7 @@ mod tests {
         }
         let policy = Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: std::env::temp_dir().join("canary-private-root"),
             write: false,
