@@ -1225,6 +1225,7 @@ mod tests {
             .expect("a policy-compliant private fixture root");
         std::fs::write(root.join("download.txt"), b"controlled download").unwrap();
         let filesystem = Filesystem::open(&rpc::Policy {
+            start_in: None,
             root: root.clone(),
             write: false,
             delete: false,

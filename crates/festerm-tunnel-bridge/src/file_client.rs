@@ -533,6 +533,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             .is_some_and(|ops| ops.allows_delete())
     }
 
+    /// Initial navigation only. Legacy peers keep their historical root start.
+    pub async fn start_directory(&mut self) -> Result<String> {
+        self.ready()?;
+        if !self
+            .operations
+            .as_ref()
+            .is_some_and(|ops| ops.allows_start_directory())
+        {
+            return Ok("/".into());
+        }
+        match self.exchange(Operation::StartDirectory {}, None).await? {
+            (Reply::StartDirectory { path }, None) => Ok(path.into()),
+            _ => self.protocol(),
+        }
+    }
+
     /// Queries only advertised presentation metadata on the authenticated stream.
     /// Legacy peers receive no new request. The value is never a request path.
     pub async fn display_root(&mut self) -> Result<Option<rpc::DisplayRoot>> {
@@ -1299,6 +1315,7 @@ mod tests {
     fn grant(write: bool) -> (std::path::PathBuf, FileService) {
         let root = crate::test_support::private_directory("festerm-rooted-client");
         let files = FileService::rooted(&rpc::Policy {
+            start_in: None,
             delete: false,
             root: root.clone(),
             write,
@@ -1593,6 +1610,7 @@ mod tests {
         std::fs::create_dir(root.join(leaf)).unwrap();
         std::fs::write(root.join(leaf).join("canary.txt"), b"public canary").unwrap();
         let filesystem = crate::filesystem::Filesystem::open(&rpc::Policy {
+            start_in: None,
             root: root.clone(),
             write: true,
             delete: false,
@@ -3181,6 +3199,7 @@ mod tests {
         .unwrap();
         assert!(!client.delete_advertised());
         assert!(client.display_root().await.unwrap().is_none());
+        assert_eq!(client.start_directory().await.unwrap(), "/");
         assert!(matches!(
             client.review_entry("/file").await,
             Err(Error::Invalid)
@@ -3192,6 +3211,42 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+    #[tokio::test]
+    async fn reviewed_client_start_directory_is_optional_bounded_and_current() {
+        for path in ["/child", "/../escape"] {
+            let scope = reviewed_scope();
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                reviewed_open(&mut peer, &expected, vec!["start_directory".into()]).await;
+                let call = request(&mut peer).await;
+                assert!(matches!(call.operation, Operation::StartDirectory {}));
+                let raw = serde_json::json!({"id":call.id, "result":{"type":"start_directory", "path":path}});
+                write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&raw).unwrap())
+                    .await
+                    .unwrap();
+            });
+            let (mut client, _) = Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let result = client.start_directory().await;
+            if path == "/child" {
+                assert_eq!(result.unwrap(), path);
+            } else {
+                assert!(result.is_err());
+            }
+            client.cancel();
+            assert!(client.start_directory().await.is_err());
+            server.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn reviewed_client_queries_display_root_only_after_advertised_open() {
         let scope = reviewed_scope();
@@ -3329,6 +3384,7 @@ mod tests {
         let root = crate::test_support::private_directory("festerm-reviewed-native-wire");
         std::fs::write(root.join("file"), b"owned source").unwrap();
         let filesystem = crate::filesystem::Filesystem::open(&rpc::Policy {
+            start_in: None,
             root: root.clone(),
             write: true,
             delete: true,

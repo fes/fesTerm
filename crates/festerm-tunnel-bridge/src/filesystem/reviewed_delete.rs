@@ -234,6 +234,7 @@ mod tests {
     fn session(delete: bool, reviewed: bool) -> (PathBuf, Session) {
         let root = crate::test_support::private_directory("festerm-reviewed-delete");
         let filesystem = Filesystem::open(&rpc::Policy {
+            start_in: None,
             root: root.clone(),
             write: true,
             delete,

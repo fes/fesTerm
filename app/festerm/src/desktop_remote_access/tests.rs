@@ -120,6 +120,7 @@ fn desktop_remote_access_hostname_seed_fits_friendly_name_contract() {
             ..Draft::default()
         }
         .settings()
+        .unwrap()
         .validate()
         .unwrap();
     }
@@ -180,10 +181,12 @@ fn provisioned_scope() -> Scope {
     let store = Store::create(
         &root.path().join("desktop"),
         Origin::Desktop,
-        Draft::default().settings(),
+        Draft::default().settings().unwrap(),
     )
     .unwrap();
-    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    let ticket = store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     store
         .record_provisioned(
             &ticket,
@@ -701,7 +704,10 @@ fn desktop_remote_access_checkboxes_require_fresh_review_and_reach_host_settings
             move |request: Request, _: &CancellationToken| {
                 assert_eq!(request.operation, Operation::Enable);
                 assert!(request.sharing.is_none());
-                recorded.lock().unwrap().push(request.draft.settings());
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(request.draft.settings().unwrap());
                 Ok(Report {
                     scope: Scope::Absent,
                     ..Report::default()
@@ -1379,10 +1385,12 @@ fn desktop_remote_access_running_process_and_history_never_become_ready() {
     let store = festerm_host_setup::lifecycle::Store::create(
         &root.path().join("desktop"),
         festerm_host_setup::lifecycle::Origin::Desktop,
-        Draft::default().settings(),
+        Draft::default().settings().unwrap(),
     )
     .unwrap();
-    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    let ticket = store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     store
         .record_provisioned(
             &ticket,
@@ -2366,9 +2374,10 @@ fn desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_ro
 fn desktop_remote_access_old_draft_cannot_erase_protected_file_consent() {
     use festerm_host_setup::lifecycle::{Origin, Store};
     let root = festerm_sessiond::private_storage::private_test_directory();
-    let old_draft = Draft::default().settings();
+    let old_draft = Draft::default().settings().unwrap();
     let mut configured = old_draft.clone();
     configured.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        start_in: None,
         delete: false,
         root: root.path().to_path_buf(),
         write: false,
@@ -2391,7 +2400,7 @@ fn desktop_remote_access_files_require_explicit_folder_and_account_consent() {
     let mut draft = Draft::default();
     assert_eq!(draft.files, FileAccessDraft::default());
     assert!(draft.files.root.as_os_str().is_empty());
-    assert!(draft.settings().filesystem.is_none());
+    assert!(draft.settings().unwrap().filesystem.is_none());
     draft.files.enabled = true;
     assert!(!draft.valid_files());
     draft.files.root = PathBuf::from("relative-folder");
@@ -2399,14 +2408,14 @@ fn desktop_remote_access_files_require_explicit_folder_and_account_consent() {
     let directory = festerm_sessiond::private_storage::private_test_directory();
     draft.files.root = directory.path().join("private-file-consent-canary");
     assert!(draft.valid_files());
-    assert!(!draft.settings().filesystem.as_ref().unwrap().write);
+    assert!(!draft.settings().unwrap().filesystem.as_ref().unwrap().write);
     draft.ordinary_access = OrdinaryAccess::OwnerOnly;
     assert!(!draft.valid_files());
     assert_eq!(draft.ordinary_access, OrdinaryAccess::OwnerOnly);
     assert!(!format!("{draft:?}").contains("private-file-consent-canary"));
     draft.files.enabled = false;
     assert!(draft.valid_files());
-    assert!(draft.settings().filesystem.is_none());
+    assert!(draft.settings().unwrap().filesystem.is_none());
 }
 
 #[test]
@@ -2418,6 +2427,7 @@ fn desktop_remote_access_file_refresh_preserves_exact_consent_and_edited_draft()
                 unreachable!()
             };
             let policy = festerm_tunnel_bridge::file_protocol::Policy {
+                start_in: None,
                 delete: false,
                 root: directory.path().join("Exact Folder"),
                 write,
@@ -2443,7 +2453,10 @@ fn desktop_remote_access_file_refresh_preserves_exact_consent_and_edited_draft()
             controller.action(Action::Refresh, &context);
             drain(&mut controller, &context);
             assert_eq!(controller.view.scope, expected);
-            assert_eq!(controller.view.draft.settings().filesystem, Some(policy));
+            assert_eq!(
+                controller.view.draft.settings().unwrap().filesystem,
+                Some(policy)
+            );
             if edited {
                 assert_eq!(controller.view.draft.friendly_name, "Edited before refresh");
             }
@@ -2467,7 +2480,7 @@ fn desktop_remote_access_file_confirmation_captures_exact_scope_and_consent() {
             recorded.lock().unwrap().push((
                 request.operation,
                 request.expected.clone(),
-                request.draft.settings(),
+                request.draft.settings().unwrap(),
             ));
             Ok(Report {
                 scope: request.expected,
@@ -2479,6 +2492,7 @@ fn desktop_remote_access_file_confirmation_captures_exact_scope_and_consent() {
     let context = egui::Context::default();
     let mut draft = controller.view.draft.clone();
     draft.files = FileAccessDraft {
+        start_in: String::new(),
         delete: false,
         enabled: true,
         root: directory.path().join("Exact Folder"),
@@ -2493,7 +2507,7 @@ fn desktop_remote_access_file_confirmation_captures_exact_scope_and_consent() {
     drain(&mut controller, &context);
     assert_eq!(
         *captured.lock().unwrap(),
-        [(Operation::Enable, expected, draft.settings())]
+        [(Operation::Enable, expected, draft.settings().unwrap())]
     );
 }
 
@@ -2509,6 +2523,7 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
         let before = controller.view.draft.clone();
         let mut draft = before.clone();
         draft.files = FileAccessDraft {
+            start_in: String::new(),
             delete: false,
             enabled: true,
             root: directory.path().to_path_buf(),
@@ -2524,6 +2539,7 @@ fn desktop_remote_access_file_edits_need_disabled_scope_and_fresh_review() {
     })));
     controller.view.scope = Scope::Absent;
     controller.view.draft.files = FileAccessDraft {
+        start_in: String::new(),
         delete: false,
         enabled: true,
         root: directory.path().to_path_buf(),
@@ -2562,6 +2578,7 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
             ..View::default()
         };
         view.draft.files = FileAccessDraft {
+            start_in: if write { "~".into() } else { String::new() },
             delete,
             enabled: true,
             root: root.clone(),
@@ -2576,7 +2593,12 @@ fn desktop_remote_access_file_review_names_exact_folder_and_permissions() {
                 view,
             );
         harness.run();
-        harness.get_by_label(&format!("File access folder: {}", root.display()));
+        harness.get_by_label(&format!("Allowed location: {}", root.display()));
+        harness.get_by_label(if write {
+            "Start in: ~"
+        } else {
+            "Start in: Allowed location"
+        });
         harness.get_by_label(if write {
             "File permissions: Read and write — upload and create folders"
         } else {
@@ -2601,12 +2623,12 @@ fn desktop_remote_access_delete_permission_is_separate_requires_write_and_surviv
     draft.files.write = true;
     assert!(draft.valid_files());
     assert!(
-        !draft.settings().filesystem.unwrap().delete,
+        !draft.settings().unwrap().filesystem.unwrap().delete,
         "old upload consent grants no deletion"
     );
     draft.files.delete = true;
     assert!(draft.valid_files());
-    let settings = draft.settings();
+    let settings = draft.settings().unwrap();
     assert!(settings.filesystem.as_ref().unwrap().delete);
     let restored = FileAccessDraft::from_policy(settings.filesystem.as_ref());
     assert_eq!(restored, draft.files);
@@ -3001,4 +3023,94 @@ fn desktop_remote_access_bound_enable_discard_review_preserves_off_and_separate_
     );
     assert_eq!(harness.state().0.access_requested, Some(false));
     assert!(!Operation::DiscardBoundEnable.needs_cancel_fence());
+}
+
+#[test]
+fn desktop_files_start_directory_owner_input_is_relative_to_allowed_location() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    std::fs::create_dir(root.path().join("home")).unwrap();
+    let mut files = FileAccessDraft {
+        enabled: true,
+        root: root.path().into(),
+        ..Default::default()
+    };
+    assert!(files.policy().unwrap().unwrap().start_in.is_none());
+    files.start_in = "~".into();
+    assert!(
+        files.policy().is_err(),
+        "unresolved shorthand cannot enter protected Settings"
+    );
+    files
+        .resolve_start_in(|| Ok(root.path().join("home")))
+        .unwrap();
+    let policy = files.policy().unwrap().unwrap();
+    assert_eq!(policy.start_in.as_deref(), Some("/home"));
+    assert_eq!(FileAccessDraft::from_policy(Some(&policy)), files);
+    assert!(!format!("{files:?}").contains("home"));
+    for bad in [
+        "relative",
+        "/outside",
+        "~/../escape",
+        "~//escape",
+        "~/C:\\outside",
+    ] {
+        files.start_in = bad.into();
+        assert!(files
+            .resolve_start_in(|| Ok(root.path().join("home")))
+            .is_err());
+    }
+    files.start_in = root.path().join("\u{202e}hidden").to_str().unwrap().into();
+    assert!(
+        files.policy().is_err(),
+        "unsupported name controls are not normalized into another path"
+    );
+    files.start_in = root.path().to_str().unwrap().into();
+    assert!(files.policy().unwrap().unwrap().start_in.is_none());
+    files.start_in = "~".into();
+    assert!(files
+        .resolve_start_in(|| Err(std::io::ErrorKind::PermissionDenied.into()))
+        .is_err());
+}
+
+#[test]
+fn desktop_files_start_directory_drive_suffix_refuses_before_home_callback() {
+    for input in [
+        "~/C:/folder",
+        "~/C:folder",
+        "~//server/share",
+        "~/../folder",
+    ] {
+        let mut files = FileAccessDraft {
+            enabled: true,
+            root: PathBuf::from(if cfg!(windows) { "C:/" } else { "/" }),
+            start_in: input.into(),
+            ..Default::default()
+        };
+        assert!(files
+            .resolve_start_in(|| panic!(
+                "invalid suffix must not look up home or open any directory"
+            ))
+            .is_err());
+        assert_eq!(files.start_in, input);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn desktop_files_start_directory_windows_home_join_never_receives_drive_prefix() {
+    let home = PathBuf::from("C:/Users/fixture");
+    assert_eq!(
+        home.join("C:/folder"),
+        PathBuf::from("C:/folder"),
+        "native join would replace the account home"
+    );
+    let mut files = FileAccessDraft {
+        enabled: true,
+        root: PathBuf::from("C:/"),
+        start_in: "~/C:/folder".into(),
+        ..Default::default()
+    };
+    assert!(files
+        .resolve_start_in(|| panic!("prefix must refuse before callback"))
+        .is_err());
 }

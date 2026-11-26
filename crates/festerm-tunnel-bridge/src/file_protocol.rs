@@ -16,6 +16,9 @@ pub const HANDLE_LIMIT: usize = 8;
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
+    /// Initial virtual directory only; absent preserves the historical root start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_in: Option<String>,
     pub root: std::path::PathBuf,
     pub write: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -29,16 +32,22 @@ impl std::fmt::Debug for Policy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Policy")
             .field("root", &"[private folder]")
+            .field("start_in", &"[private folder]")
             .field("write", &self.write)
             .field("delete", &self.delete)
             .finish()
     }
 }
 impl Policy {
+    pub fn initial_directory(&self) -> &str {
+        self.start_in.as_deref().unwrap_or("/")
+    }
+
     /// Portable shape only. Native admission separately opens and verifies the
     /// root and ancestors without following links or repairing permissions.
     pub fn validate(&self) -> std::io::Result<()> {
-        if self.delete && !self.write
+        if self.start_in.as_ref().is_some_and(|path| !valid_path(path))
+            || self.delete && !self.write
             || !self.root.is_absolute()
             || self.root.to_str().is_none_or(|p| p.len() > 4096)
             || self
@@ -148,6 +157,9 @@ fn bounded_operations<'de, D: serde::Deserializer<'de>>(
 }
 impl OperationCapabilities {
     /// Unknown optional names are inert; protected policy remains strictly typed.
+    pub fn allows_start_directory(&self) -> bool {
+        self.operations.iter().any(|name| name == "start_directory")
+    }
     pub fn allows_display_root(&self) -> bool {
         self.operations.iter().any(|name| name == "display_root")
     }
@@ -178,6 +190,12 @@ impl OperationCapabilities {
                 .filter(|name| name.as_str() == "display_root")
                 .count()
                 <= 1
+            && self
+                .operations
+                .iter()
+                .filter(|name| name.as_str() == "start_directory")
+                .count()
+                <= 1
             && (!self.allows_delete() || self.write)
     }
 }
@@ -201,6 +219,35 @@ pub struct Discovery {
     pub version: u16,
     pub target: Target,
     pub filesystem: Option<Capabilities>,
+}
+
+/// Bounded virtual initial location; Debug never discloses the private path.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct StartDirectory(String);
+impl StartDirectory {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl std::fmt::Debug for StartDirectory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StartDirectory([redacted])")
+    }
+}
+impl TryFrom<String> for StartDirectory {
+    type Error = &'static str;
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        if !valid_path(&value) {
+            return Err("invalid initial directory");
+        }
+        Ok(Self(value))
+    }
+}
+impl From<StartDirectory> for String {
+    fn from(value: StartDirectory) -> Self {
+        value.0
+    }
 }
 
 /// Authorized presentation metadata only; never a filesystem request path.
@@ -253,6 +300,7 @@ pub struct Request {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    StartDirectory {},
     DisplayRoot {},
     ReviewEntry {
         path: String,
@@ -327,6 +375,9 @@ pub struct Entry {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Result {
+    StartDirectory {
+        path: StartDirectory,
+    },
     DisplayRoot {
         root: DisplayRoot,
     },
@@ -402,13 +453,11 @@ pub struct Response {
 }
 
 /// Validates the existing virtual rooted namespace on either host or client.
-#[cfg(feature = "client")]
 pub(crate) fn valid_path(path: &str) -> bool {
     path == "/"
         || path.len() <= 4096 && path.starts_with('/') && path[1..].split('/').all(valid_name)
 }
 
-#[cfg(feature = "client")]
 pub(crate) fn valid_name(name: &str) -> bool {
     if name.is_empty()
         || name.len() > 255
@@ -444,6 +493,53 @@ pub fn decimal(value: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_directory_policy_defaults_preserve_legacy_and_validate_virtual_paths() {
+        let old = serde_json::json!({"root": if cfg!(windows) {"C:\\Users"} else {"/home"}, "write": false});
+        let mut policy: Policy = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(policy.initial_directory(), "/");
+        assert_eq!(serde_json::to_value(&policy).unwrap(), old);
+        assert_eq!(
+            serde_json::to_string(&policy).unwrap(),
+            format!(
+                r#"{{"root":{},"write":false}}"#,
+                serde_json::to_string(&policy.root).unwrap()
+            ),
+            "omitted field keeps historical bytes and order"
+        );
+        for bad in [
+            "relative",
+            "/../escape",
+            "/a/./b",
+            "/a//b",
+            "/a/",
+            "/.festerm-transfer-x",
+            "/CON",
+            "/a\\b",
+            "/~",
+            "/a:",
+        ] {
+            policy.start_in = Some(bad.into());
+            // ~ is a legal literal directory name on the wire, not owner shorthand.
+            assert_eq!(policy.validate().is_ok(), bad == "/~", "{bad}");
+        }
+        policy.start_in = Some(format!("/{}", "x".repeat(256)));
+        assert!(policy.validate().is_err());
+        let reply = Result::StartDirectory {
+            path: "/Documents/عربي".to_owned().try_into().unwrap(),
+        };
+        assert!(!format!("{reply:?}").contains("Documents"));
+        policy.start_in = Some("/Documents/عربي".into());
+        policy.validate().unwrap();
+        assert!(!format!("{policy:?}").contains("Documents"));
+        let changed = policy.clone();
+        policy.start_in = None;
+        assert_ne!(
+            policy, changed,
+            "complete Policy equality includes initial directory"
+        );
+    }
 
     #[test]
     fn display_root_is_portable_bounded_and_redacted() {
@@ -559,6 +655,7 @@ mod tests {
             assert!(invalid.validate().is_err());
         }
         let policy = Policy {
+            start_in: None,
             delete: false,
             root: std::env::temp_dir().join("canary-private-root"),
             write: false,

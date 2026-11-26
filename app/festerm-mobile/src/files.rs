@@ -1192,6 +1192,27 @@ mod tests {
     }
 
     #[test]
+    fn files_start_directory_initializes_child_but_keeps_allowed_root_up_fence() {
+        let ctx = egui::Context::default();
+        let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+        data.start_dir = Some("/child".into());
+        let mut session = FilesSession::ready("Files".into(), "Host".into(), data, &ctx);
+        settle(&mut session, &ctx);
+        let remote = session.remote.as_mut().unwrap();
+        assert_eq!(remote.path, "/child");
+        assert!(remote.can_go_up());
+        assert_eq!(
+            remote.crumbs("/home/example")[0],
+            ("/home/example".into(), "/".into())
+        );
+        remote.go_up(&ctx);
+        settle(&mut session, &ctx);
+        let remote = session.remote.as_ref().unwrap();
+        assert_eq!(remote.path, "/");
+        assert!(!remote.can_go_up());
+    }
+
+    #[test]
     fn files_pane_filters_selects_and_only_offers_regular_files() {
         let ctx = egui::Context::default();
         let mut session = FilesSession::ready(

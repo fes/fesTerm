@@ -2687,6 +2687,7 @@ mod tests {
             let mut reviewed = before.settings.clone();
             reviewed.ordinary_access = OrdinaryAccess::ProviderOwner;
             reviewed.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+                start_in: Some("/child".into()),
                 delete: false,
                 root: root.path().into(),
                 write: false,

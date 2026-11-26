@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 pub struct FileAccessDraft {
     pub enabled: bool,
     pub root: PathBuf,
+    pub start_in: String,
     pub write: bool,
     pub delete: bool,
 }
@@ -40,6 +41,7 @@ impl std::fmt::Debug for FileAccessDraft {
         f.debug_struct("FileAccessDraft")
             .field("enabled", &self.enabled)
             .field("root", &"[private folder]")
+            .field("start_in", &"[private folder]")
             .field("write", &self.write)
             .field("delete", &self.delete)
             .finish()
@@ -51,19 +53,109 @@ impl FileAccessDraft {
             Some(policy) => Self {
                 enabled: true,
                 root: policy.root.clone(),
+                start_in: policy.start_in.as_ref().map_or_else(String::new, |start| {
+                    policy
+                        .root
+                        .join(start.strip_prefix('/').unwrap_or(start))
+                        .to_string_lossy()
+                        .into_owned()
+                }),
                 write: policy.write,
                 delete: policy.delete,
             },
             None => Self::default(),
         }
     }
-    fn policy(&self) -> Option<festerm_tunnel_bridge::file_protocol::Policy> {
-        self.enabled
-            .then(|| festerm_tunnel_bridge::file_protocol::Policy {
-                delete: self.delete,
-                root: self.root.clone(),
-                write: self.write,
-            })
+    /// Pure owner input conversion. Home shorthand is resolved only by the worker.
+    fn policy(&self) -> std::io::Result<Option<festerm_tunnel_bridge::file_protocol::Policy>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let start_in = if self.start_in.is_empty() {
+            None
+        } else {
+            let path = std::path::Path::new(&self.start_in);
+            if self.start_in.len() > 4096
+                || self.start_in.contains("//")
+                || self.start_in.contains("\\\\")
+                || (self.start_in.ends_with(['/', '\\']) && path != self.root)
+                || !path.is_absolute()
+                || self
+                    .start_in
+                    .split(['/', '\\'])
+                    .any(|part| matches!(part, "." | ".."))
+            {
+                return Err(std::io::ErrorKind::InvalidInput.into());
+            }
+            let relative = path
+                .strip_prefix(&self.root)
+                .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+            let mut virtual_path = String::from("/");
+            for part in relative.components() {
+                let std::path::Component::Normal(name) = part else {
+                    return Err(std::io::ErrorKind::InvalidInput.into());
+                };
+                if virtual_path.len() > 1 {
+                    virtual_path.push('/');
+                }
+                let name = name.to_str().ok_or(std::io::ErrorKind::InvalidInput)?;
+                festerm_sftp::path::validate_name(name)
+                    .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+                virtual_path.push_str(name);
+            }
+            if virtual_path == "/" {
+                None
+            } else {
+                Some(virtual_path)
+            }
+        };
+        let policy = festerm_tunnel_bridge::file_protocol::Policy {
+            start_in,
+            delete: self.delete,
+            root: self.root.clone(),
+            write: self.write,
+        };
+        policy.validate()?;
+        Ok(Some(policy))
+    }
+
+    fn resolve_start_in(
+        &mut self,
+        home: impl FnOnce() -> std::io::Result<PathBuf>,
+    ) -> std::io::Result<()> {
+        if !self.enabled || self.start_in.is_empty() {
+            return Ok(());
+        }
+        if self.start_in == "~" || self.start_in.starts_with("~/") {
+            let suffix = self.start_in.strip_prefix("~/").unwrap_or("");
+            if !suffix.is_empty() {
+                festerm_tunnel_bridge::file_protocol::StartDirectory::try_from(format!(
+                    "/{suffix}"
+                ))
+                .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+                for name in suffix.split('/') {
+                    // Validate before joining: a Windows drive/root prefix must
+                    // never replace the account-home base of ~/child input.
+                    festerm_sftp::path::validate_name(name)
+                        .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+                }
+            }
+            let home = home()?;
+            self.start_in = if suffix.is_empty() {
+                home
+            } else {
+                home.join(suffix)
+            }
+            .to_str()
+            .ok_or(std::io::ErrorKind::InvalidInput)?
+            .to_owned();
+        }
+        // Native no-follow admission, never canonicalize then ambient-open.
+        if let Some(policy) = self.policy()? {
+            festerm_tunnel_bridge::filesystem::Filesystem::open(&policy)?
+                .validate_start_directory()?;
+        }
+        Ok(())
     }
 }
 
@@ -119,16 +211,25 @@ fn host_name_label(host_name: &std::ffi::OsStr) -> String {
 impl Draft {
     fn valid_files(&self) -> bool {
         !self.files.enabled
-            || self.ordinary_access == OrdinaryAccess::ProviderOwner
-                && self
+            || (self.files.start_in == "~" || self.files.start_in.starts_with("~/"))
+                && self.ordinary_access == OrdinaryAccess::ProviderOwner
+                && !self
                     .files
-                    .policy()
-                    .is_some_and(|policy| policy.validate().is_ok())
+                    .start_in
+                    .split('/')
+                    .any(|part| matches!(part, "." | ".."))
+                && {
+                    let mut files = self.files.clone();
+                    files.start_in.clear();
+                    files.policy().is_ok()
+                }
+            || self.ordinary_access == OrdinaryAccess::ProviderOwner
+                && self.files.policy().is_ok_and(|policy| policy.is_some())
     }
 
-    fn settings(&self) -> Settings {
-        Settings {
-            filesystem: self.files.policy(),
+    fn settings(&self) -> std::io::Result<Settings> {
+        Ok(Settings {
+            filesystem: self.files.policy()?,
             friendly_name: self.friendly_name.clone(),
             allow_creation: self.allow_creation,
             allow_session_termination: self.allow_session_termination,
@@ -138,7 +239,7 @@ impl Draft {
             } else {
                 Startup::Manual
             },
-        }
+        })
     }
 }
 
@@ -373,7 +474,7 @@ impl Failure {
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
-            Self::FileAccessReview => "File access requires an absolute folder and connections through your GitHub account. Disable remote access before changing the folder or permissions, then review Enable again. Current protected settings were retained.",
+            Self::FileAccessReview => "Choose an absolute allowed location and an existing, accessible starting folder inside it. File access requires connections through your GitHub account. Disable remote access before changing file settings, then review Enable again. Current protected settings were retained.",
             Self::MacHostIdentityUnsupported => "This app and the authenticated host component must be signed with Apple-issued Developer ID Application certificates from the same developer team. Use the official signed fesTerm app. Ad-hoc development builds cannot share the required protected storage. No account sign-in or host setup was started.",
             Self::MacHostHelperUnsupported => "Select a matching signed host component with macOS startup support. If already installed, disable remote access and use Update before reviewing Enable. No automatic fallback or startup is attempted.",
             Self::FileHelperUnsupported => "Obtain a matching signed host component with remote file access support, or explicitly turn file access off while remote access is disabled. Remote access was not enabled and no replacement was applied.",

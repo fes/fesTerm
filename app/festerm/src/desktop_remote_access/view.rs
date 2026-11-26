@@ -231,17 +231,20 @@ pub(crate) fn show(
             let files_editable = matches!(&view.scope, Scope::Absent)
                 || matches!(&view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Disabled);
             if settings_toggle_row_enabled(ui,
-                "Allow remote file access to one folder",
+                "Allow remote file access",
                 "Off by default. Share files separately from shell sessions.",
                 draft.files.enabled,
                 files_editable && (draft.ordinary_access == OrdinaryAccess::ProviderOwner || draft.files.enabled),
             ) { draft.files.enabled = !draft.files.enabled; }
             if draft.files.enabled {
                 ui.add_enabled_ui(files_editable, |ui| {
-                    ui.label("Folder on this computer");
+                    ui.label("Allowed location");
                     let mut root = draft.files.root.to_string_lossy().into_owned();
                     if ui.add(egui::TextEdit::singleline(&mut root).char_limit(4096)
                         .hint_text("Absolute folder path")).changed() { draft.files.root = root.into(); }
+                    ui.label("Start in (optional)");
+                    ui.add(egui::TextEdit::singleline(&mut draft.files.start_in).char_limit(4096)
+                        .hint_text("Allowed location, absolute path, or ~"));
                     ui.radio_value(&mut draft.files.write, false, "Read only — browse and download");
                     ui.radio_value(&mut draft.files.write, true, "Read and write — upload and create folders");
                     if settings_toggle_row_enabled(ui,
@@ -253,6 +256,7 @@ pub(crate) fn show(
                         settings_note(ui, "Turn deleting off before choosing read-only access.");
                     }
                 });
+                settings_note(ui, "Start in changes only the initial folder. Use ~ for this computer’s account home folder; leave blank to start at the allowed location.");
                 settings_note(ui, "File transfers stay inside this folder and its subfolders. Shared shells still have your user's file and command permissions.");
                 if draft.ordinary_access != OrdinaryAccess::ProviderOwner {
                     settings_note(ui, "Folder access requires account-based connections. Turn folder access off or enable account-based connections explicitly.");
@@ -265,7 +269,7 @@ pub(crate) fn show(
             }
             ui.add_space(6.0);
             let disable_to_configure = matches!(&view.scope, Scope::Present(snapshot)
-                if snapshot.phase == Phase::Provisioned && snapshot.settings != draft.settings());
+                if snapshot.phase == Phase::Provisioned && !draft.settings().is_ok_and(|settings| snapshot.settings == settings));
             if disable_to_configure {
                 settings_note(ui, "Changes are not applied. Disable access, then re-enable to review the retained preferences. Durable shells stay running.");
                 if action_button(ui, ActionButtonRole::DangerOutline, "Review Disable to change host settings…").clicked() {
@@ -441,7 +445,8 @@ pub(crate) fn show(
                             "Terminate remote sessions: On — confirm each session"
                         } else { "Terminate remote sessions: Off" });
                         if draft.files.enabled {
-                            ui.label(format!("File access folder: {}", draft.files.root.display()));
+                            ui.label(format!("Allowed location: {}", draft.files.root.display()));
+                            ui.label(format!("Start in: {}", if draft.files.start_in.is_empty() { "Allowed location" } else { &draft.files.start_in }));
                             ui.label(if draft.files.write {
                                 "File permissions: Read and write — upload and create folders"
                             } else { "File permissions: Read only — browse and download" });

@@ -27,7 +27,7 @@ fn desktop_remote_access_native_refresh_never_promotes_legacy_or_enrolls_a_devic
         let path = root.path().join("desktop");
         let settings = Settings {
             ordinary_access,
-            ..Draft::default().settings()
+            ..Draft::default().settings().unwrap()
         };
         let store = Store::create(&path, Origin::Desktop, settings).unwrap();
         let before = store.snapshot().unwrap();
@@ -76,7 +76,8 @@ fn sharing_request(root: &Path, step: ShareStep, expected: Scope) -> Request {
 fn desktop_remote_access_sharing_native_original_parse_and_origin_refuse_without_namespace() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let before = store.snapshot().unwrap();
     for step in [ShareStep::Resume, ShareStep::Release, ShareStep::Rollback] {
         let mut work = sharing_request(&path, step, Scope::Present(before.clone().into()));
@@ -87,7 +88,12 @@ fn desktop_remote_access_sharing_native_original_parse_and_origin_refuse_without
         assert!(!path.join("owner-enrollment.json").exists());
     }
     let foreign = root.path().join("headless");
-    let store = Store::create(&foreign, Origin::Headless, Draft::default().settings()).unwrap();
+    let store = Store::create(
+        &foreign,
+        Origin::Headless,
+        Draft::default().settings().unwrap(),
+    )
+    .unwrap();
     let before = store.snapshot().unwrap();
     for step in [
         ShareStep::Bind,
@@ -113,8 +119,11 @@ fn desktop_remote_access_sharing_native_original_parse_and_origin_refuse_without
 fn desktop_remote_access_sharing_native_stale_cancel_and_account_refuse_before_authority() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
-    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
+    let ticket = store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     store
         .record_provisioned(
             &ticket,
@@ -168,7 +177,12 @@ fn desktop_remote_access_sharing_native_stale_cancel_and_account_refuse_before_a
 fn desktop_remote_access_native_refuses_headless_corrupt_recordless_and_symlink_state() {
     let root = storage::private_test_directory();
     let headless = root.path().join("headless");
-    let store = Store::create(&headless, Origin::Headless, Draft::default().settings()).unwrap();
+    let store = Store::create(
+        &headless,
+        Origin::Headless,
+        Draft::default().settings().unwrap(),
+    )
+    .unwrap();
     let original = store.snapshot().unwrap();
     assert!(matches!(
         execute(request(&headless, Operation::Refresh, Scope::Unobserved)),
@@ -182,7 +196,12 @@ fn desktop_remote_access_native_refuses_headless_corrupt_recordless_and_symlink_
         Err(Failure::PrivateStorage)
     ));
     let desktop = root.path().join("desktop");
-    let _store = Store::create(&desktop, Origin::Desktop, Draft::default().settings()).unwrap();
+    let _store = Store::create(
+        &desktop,
+        Origin::Desktop,
+        Draft::default().settings().unwrap(),
+    )
+    .unwrap();
     std::fs::write(desktop.join("host-lifecycle.json"), b"{").unwrap();
     assert!(matches!(
         execute(request(&desktop, Operation::Refresh, Scope::Unobserved)),
@@ -195,8 +214,12 @@ fn desktop_remote_access_native_refuses_headless_corrupt_recordless_and_symlink_
     #[cfg(unix)]
     {
         let healthy = root.path().join("healthy");
-        let _healthy =
-            Store::create(&healthy, Origin::Desktop, Draft::default().settings()).unwrap();
+        let _healthy = Store::create(
+            &healthy,
+            Origin::Desktop,
+            Draft::default().settings().unwrap(),
+        )
+        .unwrap();
         let link = root.path().join("linked");
         std::os::unix::fs::symlink(&healthy, &link).unwrap();
         assert!(matches!(
@@ -210,7 +233,8 @@ fn desktop_remote_access_native_refuses_headless_corrupt_recordless_and_symlink_
 fn desktop_remote_access_native_stale_epoch_refuses_before_vault_manager_or_network() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let mut stale = store.snapshot().unwrap();
     stale.epoch += 1;
     let original = store.snapshot().unwrap();
@@ -244,7 +268,8 @@ fn desktop_remote_access_native_stale_epoch_refuses_before_vault_manager_or_netw
 fn desktop_remote_access_native_cancel_scope_cannot_revoke_a_new_epoch() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let original = store.snapshot().unwrap();
     let request = request(
         &path,
@@ -421,7 +446,12 @@ fn desktop_remote_access_acquisition_rechecks_epoch_and_same_epoch_settings_befo
     for revoke in [false, true] {
         let root = storage::private_test_directory();
         let state = root.path().join("desktop");
-        let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+        let store = Store::create(
+            &state,
+            Origin::Desktop,
+            Draft::default().settings().unwrap(),
+        )
+        .unwrap();
         let before = store.snapshot().unwrap();
         let mut work = request(
             &state,
@@ -466,7 +496,7 @@ fn desktop_remote_access_acquisition_cannot_adopt_new_foreign_or_replaced_instal
             &CancellationToken::new(),
             mpsc::sync_channel(1).0,
             |_, _| {
-                Store::create(&state, origin, Draft::default().settings()).unwrap();
+                Store::create(&state, origin, Draft::default().settings().unwrap()).unwrap();
                 Ok(())
             },
             |_, _| panic!("a new installation requires independent refreshed consent"),
@@ -498,8 +528,15 @@ fn desktop_remote_access_manual_route_is_explicit_and_never_opens_paths_by_defau
 fn desktop_remote_access_enable_requires_setup_phase_before_acquisition_or_publication() {
     let root = storage::private_test_directory();
     let state = root.path().join("desktop");
-    let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
-    store.request_enable(&Draft::default().settings()).unwrap();
+    let store = Store::create(
+        &state,
+        Origin::Desktop,
+        Draft::default().settings().unwrap(),
+    )
+    .unwrap();
+    store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     let snapshot = store.snapshot().unwrap();
     assert_eq!(snapshot.phase, Phase::EnableRequested);
     let mut work = request(
@@ -551,8 +588,11 @@ fn desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_re
     use festerm_host_setup::diagnostics::{Category, Recovery, Stage};
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
-    store.request_enable(&Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
+    store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     let owned = store.snapshot().unwrap();
     let work = request(&path, Operation::Enable, Scope::Absent);
     let diagnostic = Some(HostSetupDiagnostic {
@@ -581,8 +621,11 @@ fn desktop_remote_access_native_diagnostic_matches_new_owned_enable_epoch_not_re
 fn desktop_remote_access_confirmed_scope_survives_contended_run_history() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
-    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
+    let ticket = store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     store
         .record_provisioned(
             &ticket,
@@ -660,7 +703,8 @@ fn desktop_remote_access_final_failure_survives_unreadable_reobservation() {
     ] {
         let root = storage::private_test_directory();
         let path = root.path().join("desktop");
-        let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+        let store =
+            Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
         let before = store.snapshot().unwrap();
         let bytes = std::fs::read(path.join("host-lifecycle.json")).unwrap();
         let mut work = request(
@@ -762,7 +806,7 @@ fn desktop_remote_access_runtime_history_requires_current_provisioned_epoch() {
     let store = Store::create(
         &root.path().join("desktop"),
         Origin::Desktop,
-        Draft::default().settings(),
+        Draft::default().settings().unwrap(),
     )
     .unwrap();
     // Disabled projection must not be blocked or relabelled by obsolete run history.
@@ -825,7 +869,8 @@ fn desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_bef
         for bound in [false, true] {
             let root = storage::private_test_directory();
             let state = root.path().join("host");
-            let store = Store::create(&state, origin, Draft::default().settings()).unwrap();
+            let store =
+                Store::create(&state, origin, Draft::default().settings().unwrap()).unwrap();
             if bound {
                 let ticket = store
                     .request_enable(&store.snapshot().unwrap().settings)
@@ -924,7 +969,8 @@ fn desktop_remote_access_update_metadata_change_and_invalid_version_refuse_origi
 fn desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_scope() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let before = store.snapshot().unwrap();
     let directory = storage::private_directory(&path, false).unwrap();
     for bytes in [
@@ -946,8 +992,9 @@ fn desktop_remote_access_native_bad_runtime_logs_never_fail_refresh_or_change_sc
 fn desktop_remote_access_active_file_consent_changes_block_before_acquisition_or_effects() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop-files");
-    let mut settings = Draft::default().settings();
+    let mut settings = Draft::default().settings().unwrap();
     settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+        start_in: None,
         delete: false,
         root: root.path().to_path_buf(),
         write: false,
@@ -998,6 +1045,7 @@ fn desktop_remote_access_native_file_aware_review_allows_disabled_changes_and_ex
     let path = root.path().join("desktop-files");
     let draft = Draft {
         files: FileAccessDraft {
+            start_in: String::new(),
             delete: false,
             enabled: true,
             root: root.path().to_path_buf(),
@@ -1006,7 +1054,7 @@ fn desktop_remote_access_native_file_aware_review_allows_disabled_changes_and_ex
         account: "42".into(),
         ..Draft::default()
     };
-    let store = Store::create(&path, Origin::Desktop, draft.settings()).unwrap();
+    let store = Store::create(&path, Origin::Desktop, draft.settings().unwrap()).unwrap();
     let before = store.snapshot().unwrap();
     let mut work = request(
         &path,
@@ -1123,7 +1171,8 @@ fn desktop_remote_access_native_deadline_is_distinct_from_operator_cancel_and_ba
 fn desktop_remote_access_native_deadline_survives_successful_enable_revocation_fence() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let before = store.snapshot().unwrap();
     let mut work = request(&path, Operation::Enable, Scope::Present(before.into()));
     work.draft.account = "42".into();
@@ -1172,7 +1221,8 @@ fn desktop_remote_access_native_update_preserves_deadline_and_existing_failure_d
 fn desktop_remote_access_native_deadline_cannot_hide_revocation_fence_failure() {
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let before = store.snapshot().unwrap();
     let mut work = request(&path, Operation::Enable, Scope::Present(before.into()));
     work.draft.account = "42".into();
@@ -1664,7 +1714,12 @@ fn desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot
     for case in ["released", "changed"] {
         let root = storage::private_test_directory();
         let state = root.path().join("state");
-        let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+        let store = Store::create(
+            &state,
+            Origin::Desktop,
+            Draft::default().settings().unwrap(),
+        )
+        .unwrap();
         let expected = store.snapshot().unwrap();
         let directory = storage::private_directory(&state, false).unwrap();
         let held = storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
@@ -1725,7 +1780,12 @@ fn desktop_remote_access_final_scope_waits_for_real_contention_and_full_snapshot
 fn desktop_remote_access_final_scope_logical_expiry_never_reacquires_released_lock() {
     let root = storage::private_test_directory();
     let state = root.path().join("state");
-    let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store = Store::create(
+        &state,
+        Origin::Desktop,
+        Draft::default().settings().unwrap(),
+    )
+    .unwrap();
     let expected = store.snapshot().unwrap();
     let directory = storage::private_directory(&state, false).unwrap();
     let held =
@@ -1779,7 +1839,12 @@ fn desktop_remote_access_final_scope_bounds_busy_cancel_and_fatal_reads() {
     ] {
         let root = storage::private_test_directory();
         let state = root.path().join("state");
-        let store = Store::create(&state, Origin::Desktop, Draft::default().settings()).unwrap();
+        let store = Store::create(
+            &state,
+            Origin::Desktop,
+            Draft::default().settings().unwrap(),
+        )
+        .unwrap();
         let expected = store.snapshot().unwrap();
         let directory = storage::private_directory(&state, false).unwrap();
         let held = storage::open_private_file(&directory, Path::new("host-lifecycle.lock"), false)
@@ -1842,8 +1907,11 @@ fn desktop_remote_access_enable_completion_reads_history_after_operation_once() 
     use std::cell::Cell;
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
-    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
+    let ticket = store
+        .request_enable(&Draft::default().settings().unwrap())
+        .unwrap();
     store
         .record_provisioned(
             &ticket,
@@ -1899,8 +1967,11 @@ fn desktop_remote_access_enable_completion_history_enrichment_preserves_committe
     ] {
         let root = storage::private_test_directory();
         let path = root.path().join("desktop");
-        let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
-        let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+        let store =
+            Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
+        let ticket = store
+            .request_enable(&Draft::default().settings().unwrap())
+            .unwrap();
         store
             .record_provisioned(
                 &ticket,
@@ -2000,7 +2071,8 @@ fn desktop_remote_access_native_bound_enable_discard_needs_no_new_helper_or_clou
     use std::os::unix::fs::MetadataExt;
     let root = storage::private_test_directory();
     let path = root.path().join("desktop");
-    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let store =
+        Store::create(&path, Origin::Desktop, Draft::default().settings().unwrap()).unwrap();
     let directory = storage::private_directory(&path, false).unwrap();
     let identity =
         HostIdentity::load_or_create_from_private_directory(&directory, Path::new("host-identity"))
@@ -2100,5 +2172,36 @@ fn desktop_remote_access_native_bound_enable_discard_needs_no_new_helper_or_clou
             !path.join(unchanged).exists(),
             "must not create {unchanged}"
         );
+    }
+}
+
+#[test]
+fn desktop_files_start_directory_worker_refuses_before_acquisition_or_state_effects() {
+    for start in ["missing", "~/C:/folder"] {
+        let root = storage::private_test_directory();
+        let path = root.path().join("not-created");
+        let mut work = request(&path, Operation::Enable, Scope::Absent);
+        work.draft.files = FileAccessDraft {
+            enabled: true,
+            root: root.path().into(),
+            start_in: if start == "missing" {
+                root.path().join(start).to_str().unwrap().into()
+            } else {
+                start.into()
+            },
+            ..Default::default()
+        };
+        work.draft.account = "42".into();
+        let result = Native.execute_with(
+            work,
+            &CancellationToken::new(),
+            mpsc::sync_channel(1).0,
+            |_, _| -> Result<(), Failure> {
+                panic!("invalid starting directory must not acquire a bundle")
+            },
+            |_, _| panic!("invalid starting directory must not publish a bundle"),
+        );
+        assert!(matches!(result, Err(Failure::FileAccessReview)));
+        assert!(!path.exists());
     }
 }

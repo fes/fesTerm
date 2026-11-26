@@ -27,6 +27,7 @@ const RESERVED: &str = ".festerm-transfer-";
 
 pub struct Filesystem {
     root: Dir,
+    start_in: String,
     display_root: Option<rpc::DisplayRoot>,
     write: bool,
     delete: bool,
@@ -78,8 +79,9 @@ impl Filesystem {
             directory = directory.open_dir_nofollow(name)?;
         }
         trusted(&directory)?;
-        Ok(Arc::new(Self {
+        let filesystem = Arc::new(Self {
             root: directory,
+            start_in: policy.initial_directory().to_owned(),
             display_root: policy
                 .root
                 .to_str()
@@ -87,7 +89,14 @@ impl Filesystem {
             write: policy.write,
             delete: policy.delete,
             slots: Arc::new(Semaphore::new(2)),
-        }))
+        });
+        Ok(filesystem)
+    }
+
+    /// Owner preflight and fresh Files opening only; an unavailable initial
+    /// directory must never prevent preparation of the allowed root for HOST.
+    pub fn validate_start_directory(&self) -> io::Result<()> {
+        self.directory(&self.start_in).map(|_| ())
     }
 
     pub fn capabilities(&self) -> rpc::Capabilities {
@@ -106,7 +115,7 @@ impl Filesystem {
             version: rpc::HOST_REVIEWED_VERSION,
             write: base.write,
             operations: {
-                let mut operations = Vec::new();
+                let mut operations = vec!["start_directory".into()];
                 if self.write && self.delete {
                     operations.push("delete".into());
                 }
@@ -438,6 +447,20 @@ impl Session {
             return Err(ErrorCode::Denied.into());
         }
         let reply = match operation {
+            Operation::StartDirectory {} => {
+                if !self.reviewed_operations {
+                    return Err(ErrorCode::Denied.into());
+                }
+                self.filesystem.validate_start_directory()?;
+                Reply::StartDirectory {
+                    path: self
+                        .filesystem
+                        .start_in
+                        .clone()
+                        .try_into()
+                        .map_err(|_| ErrorCode::Invalid)?,
+                }
+            }
             Operation::DisplayRoot {} => {
                 if !self.reviewed_operations {
                     return Err(ErrorCode::Denied.into());
@@ -1001,6 +1024,7 @@ mod tests {
     fn session(write: bool) -> (std::path::PathBuf, Session) {
         let path = crate::test_support::private_directory("festerm-rooted-files");
         let filesystem = Filesystem::open(&rpc::Policy {
+            start_in: None,
             delete: false,
             root: path.clone(),
             write,
@@ -1034,6 +1058,68 @@ mod tests {
             .execute(operation, Vec::new(), &CancellationToken::new())
             .unwrap_or_else(|error| panic!("{:?}", error.code))
             .0
+    }
+
+    #[test]
+    fn start_directory_is_nofollow_navigation_not_an_allowed_root() {
+        let (path, mut session) = session(false);
+        std::fs::create_dir(path.join("child")).unwrap();
+        let mut policy = rpc::Policy {
+            root: path.clone(),
+            start_in: Some("/child".into()),
+            write: false,
+            delete: false,
+        };
+        let fs = Filesystem::open(&policy).unwrap();
+        session.filesystem = fs;
+        assert!(session
+            .execute(
+                Operation::StartDirectory {},
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        session.reviewed_operations = true;
+        assert!(
+            matches!(run(&mut session, Operation::StartDirectory {}), Reply::StartDirectory {path} if path.as_str() == "/child")
+        );
+        assert!(
+            session.filesystem.directory("/").is_ok(),
+            "start does not narrow root navigation"
+        );
+        policy.start_in = Some("/missing".into());
+        assert!(Filesystem::open(&policy)
+            .unwrap()
+            .validate_start_directory()
+            .is_err());
+        std::fs::write(path.join("file"), b"public").unwrap();
+        policy.start_in = Some("/file".into());
+        assert!(Filesystem::open(&policy)
+            .unwrap()
+            .validate_start_directory()
+            .is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("child", path.join("link")).unwrap();
+            policy.start_in = Some("/link".into());
+            assert!(Filesystem::open(&policy)
+                .unwrap()
+                .validate_start_directory()
+                .is_err());
+        }
+        std::fs::remove_dir(path.join("child")).unwrap();
+        assert!(
+            session
+                .execute(
+                    Operation::StartDirectory {},
+                    vec![],
+                    &CancellationToken::new()
+                )
+                .is_err(),
+            "metadata rechecks start existence"
+        );
+        drop(session);
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -1343,6 +1429,7 @@ mod tests {
         use crate::{files::FileService, protocol, transport};
         let path = crate::test_support::private_directory("festerm-files-wire");
         let files = FileService::rooted(&rpc::Policy {
+            start_in: None,
             delete: false,
             root: path.clone(),
             write: true,
