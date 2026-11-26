@@ -272,7 +272,14 @@ fn rooted(p: &str) -> Result<String, SftpError> {
     }
     Ok(p.into())
 }
-fn entry(name: String, m: rpc::Metadata) -> Result<Entry, SftpError> {
+fn permissions(read_only: bool) -> u32 {
+    if read_only {
+        0o500
+    } else {
+        0o700
+    }
+}
+fn entry(name: String, m: rpc::Metadata, permissions: Option<u32>) -> Result<Entry, SftpError> {
     let size = m
         .size
         .parse()
@@ -292,7 +299,7 @@ fn entry(name: String, m: rpc::Metadata) -> Result<Entry, SftpError> {
             .modified_ms
             .and_then(|v| v.parse::<i64>().ok())
             .map(|v| v / 1000),
-        permissions: None,
+        permissions,
         symlink: None,
     })
 }
@@ -315,10 +322,14 @@ async fn listing<S: AsyncRead + AsyncWrite + Unpin>(
     p: &str,
     o: &ListOptions,
 ) -> Result<Listing, SftpError> {
-    let h = client.open_directory(p).await.map_err(error)?;
+    let h = client.open_readable_directory(p).await.map_err(error)?;
     let mut entries = Vec::new();
     let mut truncated = false;
     let result = async {
+        let directory_read_only = client
+            .directory_metadata(&h)
+            .map_err(error)?
+            .map(|opened| opened.read_only);
         loop {
             if o.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
                 return Err(SftpError::Cancelled);
@@ -345,7 +356,7 @@ async fn listing<S: AsyncRead + AsyncWrite + Unpin>(
                     kind,
                     size: None,
                     modified: None,
-                    permissions: None,
+                    permissions: directory_read_only.map(|_| permissions(e.read_only)),
                     symlink: None,
                 });
             }
@@ -353,15 +364,20 @@ async fn listing<S: AsyncRead + AsyncWrite + Unpin>(
                 break;
             }
         }
-        Ok(())
+        Ok(directory_read_only)
     }
     .await;
-    if let Err(error) = result {
-        client.cancel();
-        return Err(error);
-    }
+    let directory_read_only = match result {
+        Ok(value) => value,
+        Err(error) => {
+            client.cancel();
+            return Err(error);
+        }
+    };
     client.close(&h).await.map_err(error)?;
-    Ok(finish_listing(p.into(), entries, truncated, o))
+    let mut snapshot = finish_listing(p.into(), entries, truncated, o);
+    snapshot.directory_read_only = directory_read_only;
+    Ok(snapshot)
 }
 struct HostTransfers(Arc<Lease>);
 impl Transfers for HostTransfers {
@@ -738,13 +754,13 @@ fn download<S: AsyncRead + AsyncWrite + Unpin>(
         tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(SftpError::Cancelled),
-            result = tokio::time::timeout(DEADLINE, client.stat(source)) => result.map_err(|_| SftpError::Timeout("Connection timed out".into()))?.map_err(error),
+            result = tokio::time::timeout(DEADLINE, client.stat_readable_path(source)) => result.map_err(|_| SftpError::Timeout("Connection timed out".into()))?.map_err(error),
         }
     });
     if cancel.is_cancelled() || matches!(metadata_result, Err(SftpError::Timeout(_))) {
         client.cancel();
     }
-    let metadata = metadata_result?;
+    let metadata = metadata_result?.metadata;
     let total = metadata
         .size
         .parse::<u64>()
@@ -774,7 +790,7 @@ fn download<S: AsyncRead + AsyncWrite + Unpin>(
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(SftpError::Cancelled),
-            result = tokio::time::timeout(DEADLINE, client.download(source, &mut sink)) => result.map_err(|_| SftpError::Timeout("Connection timed out".into()))?.map_err(error),
+            result = tokio::time::timeout(DEADLINE, client.download_readable_path(source, &mut sink)) => result.map_err(|_| SftpError::Timeout("Connection timed out".into()))?.map_err(error),
         };
         tokio::io::AsyncWriteExt::flush(&mut file).await.map_err(|_| SftpError::Io("Download could not be flushed".into()))?;
         result
@@ -1009,8 +1025,9 @@ impl HostConnector {
                                 let _ = reply.send(result);
                             }
                             Command::Stat(path, reply) => {
+                                let tagged = client.read_links_advertised();
                                 let result = rt.block_on(async {
-                                    tokio::time::timeout(DEADLINE, client.stat(&path)).await
+                                    tokio::time::timeout(DEADLINE, client.stat_readable_path(&path)).await
                                 });
                                 let result = match result {
                                     Ok(result) => result.map_err(error),
@@ -1022,7 +1039,8 @@ impl HostConnector {
                                 .and_then(|metadata| {
                                     entry(
                                         path::file_name_remote(&path).unwrap_or_default(),
-                                        metadata,
+                                        metadata.metadata,
+                                        tagged.then(|| permissions(metadata.read_only)),
                                     )
                                 });
                                 let _ = reply.send(result);
@@ -1561,6 +1579,7 @@ mod tests {
         let page = rt
             .block_on(listing(&mut client, "/", &ListOptions::default()))
             .unwrap();
+        assert_eq!(page.directory_read_only, None);
         assert!(page
             .entries
             .iter()
@@ -2056,48 +2075,97 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        rt.block_on(async {
-            for failure in [Some("not_found"), Some("denied"), None] {
+        for (tagged, failure) in [
+            (false, Some("not_found")),
+            (false, Some("denied")),
+            (false, None),
+            (true, Some("denied")),
+            (true, None),
+        ] {
+            let (mut client, server, alias) = rt.block_on(async {
                 let scope = rpc::HostScope { host: Default::default(), installation: Default::default(), epoch: "1".into() };
                 let expected = scope.clone();
                 let (stream, mut peer) = tokio::io::duplex(8192);
                 let server = tokio::spawn(async move {
-                    let limits = rpc::Capabilities { version: rpc::VERSION, write: false, chunk_limit: rpc::CHUNK_LIMIT, page_limit: rpc::PAGE_LIMIT, handle_limit: rpc::HANDLE_LIMIT };
+                    let limits = rpc::Capabilities { version: rpc::VERSION, write: tagged, chunk_limit: rpc::CHUNK_LIMIT, page_limit: rpc::PAGE_LIMIT, handle_limit: rpc::HANDLE_LIMIT };
                     write_frame(&mut peer, rpc::HOST_DESCRIPTION, &serde_json::to_vec(&rpc::HostDescription { version: rpc::HOST_LOCATIONS_VERSION, scope: expected, filesystem: Some(limits) }).unwrap()).await.unwrap();
                     assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::OPEN);
-                    let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":false,"operations":["locations","start_directory"],"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
+                    let mut operations = vec!["locations", "start_directory"];
+                    if tagged {
+                        operations.push("read_links");
+                    }
+                    let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":tagged,"operations":operations,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
                     write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&ready).unwrap()).await.unwrap();
-                    for step in 0..if failure.is_some() { 3 } else { 5 } {
+                    let steps = match (tagged, failure) {
+                        (_, Some(_)) => 3,
+                        (false, None) => 5,
+                        (true, None) => 12,
+                    };
+                    const START: &str = "/22222222222222222222222222222222/child";
+                    const ALIAS: &str = "/22222222222222222222222222222222/child/public-alias.md";
+                    for step in 0..steps {
                         let (kind, bytes) = read_frame(&mut peer).await.unwrap();
                         assert_eq!(kind, rpc::REQUEST);
                         let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
                         let reply = match step {
                             0 => {
                                 assert!(matches!(request.operation, rpc::Operation::Locations {}));
-                                serde_json::json!({"id":request.id,"result":{"type":"locations","locations":[{"selector":"22222222222222222222222222222222","label":"/owned/current","available":true,"mutations_available":false}]}})
+                                serde_json::json!({"id":request.id,"result":{"type":"locations","locations":[{"selector":"22222222222222222222222222222222","label":"/owned/current","available":true,"mutations_available":tagged}]}})
                             }
                             1 => {
                                 assert!(matches!(request.operation, rpc::Operation::StartDirectory {}));
-                                serde_json::json!({"id":request.id,"result":{"type":"start_directory","path":"/22222222222222222222222222222222/child"}})
+                                serde_json::json!({"id":request.id,"result":{"type":"start_directory","path":START}})
                             }
-                            2 => {
-                                assert!(matches!(request.operation, rpc::Operation::OpenDirectory { ref path } if path == "/22222222222222222222222222222222/child"));
+                            2 | 5 => {
+                                if tagged {
+                                    assert!(matches!(request.operation, rpc::Operation::OpenReadableDirectory { ref path } if path == START));
+                                } else {
+                                    assert!(matches!(request.operation, rpc::Operation::OpenDirectory { ref path } if path == START));
+                                }
                                 if let Some(failure) = failure {
                                     serde_json::json!({"id":request.id,"error":failure})
+                                } else if tagged {
+                                    serde_json::json!({"id":request.id,"result":{"type":"readable_directory","handle":7,"metadata":{"kind":"directory","size":"0","modified_ms":null},"read_only":true}})
                                 } else {
                                     serde_json::json!({"id":request.id,"result":{"type":"directory","handle":7}})
                                 }
                             }
-                            3 => {
+                            3 | 6 => {
                                 assert!(matches!(request.operation, rpc::Operation::ReadDirectory { handle:7, .. }));
-                                serde_json::json!({"id":request.id,"result":{"type":"entries","entries":[],"done":true,"skipped":0}})
+                                if tagged {
+                                    serde_json::json!({"id":request.id,"result":{"type":"readable_entries","entries":[{"name":"public-alias.md","kind":"file","read_only":true}],"done":true,"skipped":0}})
+                                } else {
+                                    serde_json::json!({"id":request.id,"result":{"type":"entries","entries":[],"done":true,"skipped":0}})
+                                }
                             }
-                            _ => {
+                            4 | 7 => {
                                 assert!(matches!(request.operation, rpc::Operation::Close { handle:7 }));
                                 serde_json::json!({"id":request.id,"result":{"type":"closed"}})
                             }
+                            8 => {
+                                assert!(matches!(request.operation, rpc::Operation::StatReadable { ref path } if path == ALIAS));
+                                serde_json::json!({"id":request.id,"result":{"type":"readable_stat","metadata":{"kind":"file","size":"16","modified_ms":null},"read_only":true}})
+                            }
+                            9 => {
+                                assert!(matches!(request.operation, rpc::Operation::OpenReadableFile { ref path } if path == ALIAS));
+                                serde_json::json!({"id":request.id,"result":{"type":"file","handle":8,"metadata":{"kind":"file","size":"16","modified_ms":null}}})
+                            }
+                            10 => {
+                                assert!(matches!(request.operation, rpc::Operation::Read {handle:8, ..}));
+                                serde_json::json!({"id":request.id,"result":{"type":"read","offset":"0","length":16,"eof":true}})
+                            }
+                            11 => {
+                                assert!(matches!(request.operation, rpc::Operation::Close { handle:8 }));
+                                serde_json::json!({"id":request.id,"result":{"type":"closed"}})
+                            }
+                            _ => unreachable!(),
                         };
                         write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&reply).unwrap()).await.unwrap();
+                        if step == 10 {
+                            let mut data = request.id.to_be_bytes().to_vec();
+                            data.extend_from_slice(b"# public canary\n");
+                            write_frame(&mut peer, rpc::DATA, &data).await.unwrap();
+                        }
                     }
                     // No fallback directory, mutation or retry follows the refusal.
                     assert!(read_frame(&mut peer).await.is_err());
@@ -2110,12 +2178,47 @@ mod tests {
                 } else {
                     let snapshot = first.unwrap().unwrap();
                     assert_eq!(snapshot.path, start);
-                    assert!(snapshot.entries.is_empty());
+                    if tagged {
+                        assert_eq!(snapshot.directory_read_only, Some(true));
+                        assert_eq!(snapshot.entries[0].name, "public-alias.md");
+                        assert_eq!(snapshot.entries[0].permissions, Some(0o500));
+                        assert_eq!(
+                            listing(&mut client, &start, &ListOptions::default()).await.unwrap(),
+                            snapshot,
+                        );
+                    } else {
+                        assert_eq!(snapshot.directory_read_only, None);
+                        assert!(snapshot.entries.is_empty());
+                    }
                 }
-                drop(client);
-                tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+                (client, server, format!("{start}/public-alias.md"))
+            });
+            if tagged && failure.is_none() {
+                let local = tempfile::tempdir().unwrap();
+                let count = download(
+                    &rt,
+                    &mut client,
+                    (&local_root::Root::open(local.path()).unwrap(), ""),
+                    &alias,
+                    &CancellationToken::new(),
+                    &|| Ok(()),
+                    None,
+                )
+                .unwrap();
+                assert_eq!(count, 16);
+                assert_eq!(
+                    std::fs::read(local.path().join("public-alias.md")).unwrap(),
+                    b"# public canary\n",
+                );
             }
-        });
+            drop(client);
+            rt.block_on(async {
+                tokio::time::timeout(Duration::from_secs(3), server)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            });
+        }
     }
 
     #[test]

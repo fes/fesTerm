@@ -123,6 +123,7 @@ impl FilesSession {
                 .find(|e| &e.name == name)?;
             if !entry.name_safe
                 || entry.symlink.is_some()
+                || (!local && entry.permissions.is_some_and(|bits| bits & 0o222 == 0))
                 || !matches!(entry.kind, EntryKind::File | EntryKind::Directory)
             {
                 return None;
@@ -329,6 +330,7 @@ mod tests {
         available: AtomicBool,
         remote_delete: AtomicBool,
         root_label: Mutex<String>,
+        locations: Mutex<Option<Vec<RemoteLocation>>>,
         paths: Mutex<Vec<String>>,
         stop: Mutex<Option<CancellationToken>>,
         review_reply: Mutex<Option<mpsc::SyncSender<Result<Review, String>>>>,
@@ -341,6 +343,7 @@ mod tests {
                 available: AtomicBool::new(true),
                 remote_delete: AtomicBool::new(true),
                 root_label: Mutex::new("Shared folder".into()),
+                locations: Mutex::default(),
                 paths: Mutex::default(),
                 stop: Mutex::default(),
                 review_reply: Mutex::default(),
@@ -350,6 +353,9 @@ mod tests {
         }
     }
     impl Transfers for Script {
+        fn remote_locations(&self) -> Option<Vec<RemoteLocation>> {
+            self.locations.lock().unwrap().clone()
+        }
         fn remote_root_label(&self) -> String {
             self.root_label.lock().unwrap().clone()
         }
@@ -597,7 +603,47 @@ mod tests {
             kittest::{By, Queryable},
             Harness,
         };
-        let (session, script, _) = fixture();
+        let (mut session, script, _) = fixture();
+        const LOCATION: &str = "/11111111111111111111111111111111";
+        *script.locations.lock().unwrap() = Some(vec![RemoteLocation {
+            path: LOCATION.into(),
+            label: "/owned".into(),
+            available: true,
+            mutations_available: true,
+        }]);
+        session.remote_write = true;
+        let pane = session.remote.as_mut().unwrap();
+        pane.path = LOCATION.into();
+        let snapshot = pane.listing.as_mut().unwrap();
+        snapshot.path = LOCATION.into();
+        snapshot.directory_read_only = Some(true);
+
+        let local_fs = Arc::new(FixtureFs {
+            kind: festerm_sftp::PaneKind::Local,
+            home: "",
+            entries: vec![fixture_entry("local.txt", false, 1, 1)],
+        });
+        let mut local = Pane::new(local_fs.clone(), String::new());
+        let mut local_snapshot = local_fs.list("", &ListOptions::default()).unwrap();
+        local_snapshot.entries[0].permissions = Some(0o500);
+        local.listing = Some(local_snapshot);
+        local.selected.insert("local.txt".into());
+        session.local = Some(local);
+        assert!(session.can_review_delete_side(true));
+        assert!(!session.deletion_available());
+        session.review_delete();
+        assert!(script.paths.lock().unwrap().is_empty());
+        session.local = None;
+
+        let snapshot = session.remote.as_mut().unwrap().listing.as_mut().unwrap();
+        snapshot.directory_read_only = Some(false);
+        for entry in &mut snapshot.entries {
+            entry.permissions = Some(if entry.name == "empty" { 0o500 } else { 0o700 });
+        }
+        assert!(
+            session.can_review_delete(),
+            "selected direct file remains deletable"
+        );
         let mut harness = Harness::builder()
             .with_size(egui::vec2(390.0, 844.0))
             .build_ui_state(
@@ -614,7 +660,7 @@ mod tests {
         harness.run_steps(3);
         let pane = harness.state().remote.as_ref().unwrap();
         assert_eq!(
-            pane.path, "/",
+            pane.path, LOCATION,
             "checkbox selects the folder without navigating"
         );
         assert!(pane.selected.contains("empty"));
@@ -625,9 +671,37 @@ mod tests {
             .unwrap()
             .click();
         harness.run_steps(3);
+        harness.get(
+            By::new()
+                .label("Delete selected")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.state_mut().review_delete();
+        assert!(script.paths.lock().unwrap().is_empty());
+        let snapshot = harness
+            .state_mut()
+            .remote
+            .as_mut()
+            .unwrap()
+            .listing
+            .as_mut()
+            .unwrap();
+        snapshot
+            .entries
+            .iter_mut()
+            .find(|entry| entry.name == "empty")
+            .unwrap()
+            .permissions = Some(0o700);
+        harness.run_steps(3);
         harness.get_by_label("Delete selected").click();
         harness.run_steps(3);
-        assert_eq!(*script.paths.lock().unwrap(), ["/empty", "/public.txt"]);
+        assert_eq!(
+            *script.paths.lock().unwrap(),
+            [
+                format!("{LOCATION}/empty"),
+                format!("{LOCATION}/public.txt")
+            ]
+        );
         harness.get(
             By::new()
                 .label("Delete reviewed entries")

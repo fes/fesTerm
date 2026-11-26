@@ -123,7 +123,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
                     .await
                     .map_err(|error| Self::error(path, "review deletion", error))?;
                 entries.push((handle, path.clone()));
-                let metadata = self.metadata_value(path, metadata)?;
+                let metadata = self.metadata_value(
+                    path,
+                    ReadablePathMetadata {
+                        metadata,
+                        read_only: false,
+                    },
+                )?;
                 let name = metadata.path.file_name()?;
                 items.push(SftpDirectoryItem {
                     name,

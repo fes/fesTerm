@@ -119,6 +119,8 @@ impl ListOptions {
 pub struct Listing {
     /// Normalized directory path that was listed.
     pub path: String,
+    /// Access reported for the directory handle that supplied this listing.
+    pub directory_read_only: Option<bool>,
     pub entries: Vec<Entry>,
     /// Raw entries examined (excluding `.` and `..`).
     pub scanned: usize,
@@ -155,6 +157,7 @@ pub fn finish_listing(
     entries.truncate(options.max_entries);
     Listing {
         path,
+        directory_read_only: None,
         entries,
         scanned,
         hidden_count,

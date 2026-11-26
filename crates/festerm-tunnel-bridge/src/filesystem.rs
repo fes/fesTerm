@@ -104,14 +104,30 @@ impl Filesystem {
     /// Owner preflight and fresh Files opening only; an unavailable initial
     /// directory must never prevent preparation of the allowed root for HOST.
     pub fn validate_start_directory(&self) -> io::Result<()> {
+        let mut budget = locations::ReadBudget::new(
+            tokio::time::Instant::now() + DEADLINE,
+            CancellationToken::new(),
+        );
+        self.validate_start_directory_with_budget(&mut budget)
+    }
+
+    fn validate_start_directory_with_budget(
+        &self,
+        budget: &mut locations::ReadBudget,
+    ) -> io::Result<()> {
+        budget.check()?;
         if self.locations.is_some() && self.start_in == "/" {
             return Ok(());
         }
-        let (directory, _parents) = self.read_directory(&self.start_in)?;
         if self.has_locations() {
-            locations::check_directory(self, &self.start_in, &directory.into_std_file())?;
+            let resolved =
+                locations::resolve_read(self, &self.start_in, Some(rpc::Kind::Directory), budget)
+                    .map_err(locations::ReadError::into_io)?;
+            resolved.proof.validate(self, &resolved.file, budget)?;
+        } else {
+            self.read_directory(&self.start_in)?;
         }
-        Ok(())
+        budget.check()
     }
 
     pub fn validate_owner_locations(&self) -> io::Result<()> {
@@ -167,6 +183,7 @@ impl Filesystem {
                 let mut operations = vec!["start_directory".into()];
                 if self.locations.is_some() {
                     operations.push("locations".into());
+                    operations.push(rpc::READ_LINKS_OPERATION.into());
                 }
                 if self.write && self.delete {
                     operations.push("delete".into());
@@ -460,15 +477,52 @@ enum Handle {
         path: String,
         file: File,
         stamp: Stamp,
+        readable_proof: Option<locations::ReadProof>,
         _parents: Vec<File>,
     },
     Directory {
         entries: Box<dyn Iterator<Item = io::Result<cap_std::fs::DirEntry>> + Send>,
         path: String,
         held: File,
+        readable_proof: Option<locations::ReadProof>,
+        read_only: bool,
         _parents: Vec<File>,
     },
+    // Retired read resources leave their bounded slot closeable.
+    Retired,
     Upload(Upload),
+}
+
+impl Handle {
+    fn is_readable(&self) -> bool {
+        matches!(
+            self,
+            Self::Read {
+                readable_proof: Some(_),
+                ..
+            } | Self::Directory {
+                readable_proof: Some(_),
+                ..
+            }
+        )
+    }
+    fn retained_descriptors(&self) -> usize {
+        match self {
+            Self::Read {
+                readable_proof: Some(proof),
+                ..
+            } => proof.retained_cost(),
+            Self::Directory {
+                readable_proof: Some(proof),
+                ..
+            } => proof.retained_cost() + 2,
+            Self::Read { _parents, .. } => 1 + _parents.len(),
+            Self::Directory { _parents, .. } => 3 + _parents.len(),
+            Self::EntryReview(_) => 2,
+            Self::Upload(upload) => 2 + usize::from(upload.expected.is_some()),
+            Self::Retired => 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -570,10 +624,199 @@ impl Session {
         if self.handles.len() >= rpc::HANDLE_LIMIT {
             return Err(ErrorCode::Busy.into());
         }
+        if handle.is_readable() || self.handles.values().any(Handle::is_readable) {
+            let held: usize = self
+                .handles
+                .values()
+                .map(Handle::retained_descriptors)
+                .sum();
+            if held.saturating_add(handle.retained_descriptors()) > locations::READ_DESCRIPTOR_LIMIT
+            {
+                return Err(ErrorCode::Busy.into());
+            }
+        }
         let id = self.next.checked_add(1).ok_or(ErrorCode::Busy)?;
         self.next = id;
         self.handles.insert(id, handle);
         Ok(id)
+    }
+
+    fn require_readable(&self) -> Outcome<()> {
+        if !self.reviewed_operations || !self.filesystem.has_locations() {
+            return Err(ErrorCode::Denied.into());
+        }
+        Ok(())
+    }
+
+    fn readable_page(
+        &mut self,
+        id: u32,
+        limit: u16,
+        budget: &mut locations::ReadBudget,
+    ) -> Outcome<Reply> {
+        let mut handle = self.handles.remove(&id).ok_or(ErrorCode::Invalid)?;
+        let result = (|| {
+            let Handle::Directory {
+                entries: iterator,
+                path,
+                held,
+                readable_proof: Some(proof),
+                read_only,
+                ..
+            } = &mut handle
+            else {
+                return Err(ErrorCode::Invalid.into());
+            };
+            // The active cursor is still live after removal from the map.
+            budget.retain(proof.retained_cost() + 2)?;
+            proof.validate(&self.filesystem, held, budget)?;
+            let mut entries = Vec::new();
+            let mut retained = Vec::new();
+            let (mut done, mut skipped) = (false, 0);
+            for _ in 0..rpc::PAGE_LIMIT * 4 {
+                budget.check()?;
+                if entries.len() == usize::from(limit) {
+                    break;
+                }
+                let Some(entry) = iterator.next() else {
+                    done = true;
+                    break;
+                };
+                let entry = entry?;
+                let name = entry.file_name();
+                let Some(name) = name.to_str().filter(|name| valid_name(name)) else {
+                    skipped += 1;
+                    continue;
+                };
+                let kind = entry.file_type()?;
+                #[cfg(windows)]
+                if !kind.is_symlink() {
+                    use cap_std::fs::MetadataExt;
+                    // Cached no-follow find metadata: never open a cloud or
+                    // other unknown reparse entry merely to render its row.
+                    if entry.metadata()?.file_attributes() & 0x400 != 0 {
+                        entries.push(rpc::ReadableEntry {
+                            name: name.into(),
+                            kind: rpc::Kind::Unsupported,
+                            read_only: true,
+                        });
+                        continue;
+                    }
+                }
+                if !kind.is_symlink() {
+                    // Preserve ordinary no-follow listing: enumerating a name/type
+                    // must not require opening that child's data for read access.
+                    let kind = if kind.is_dir() {
+                        rpc::Kind::Directory
+                    } else if kind.is_file() {
+                        rpc::Kind::File
+                    } else {
+                        rpc::Kind::Unsupported
+                    };
+                    entries.push(rpc::ReadableEntry {
+                        name: name.into(),
+                        read_only: *read_only || matches!(kind, rpc::Kind::Unsupported),
+                        kind,
+                    });
+                    continue;
+                }
+                let child = format!("{path}/{name}");
+                match locations::resolve_read_child(&self.filesystem, &child, held, budget) {
+                    Ok(resolved) => {
+                        let value = metadata(&resolved.file)?;
+                        entries.push(rpc::ReadableEntry {
+                            name: name.into(),
+                            kind: value.kind,
+                            read_only: *read_only || resolved.read_only,
+                        });
+                        retained.push(resolved);
+                        // Short pages keep at most one retained alias proof.
+                        // The next request resumes this same iterator.
+                        break;
+                    }
+                    Err(error) if error.is_unavailable() => {
+                        entries.push(rpc::ReadableEntry {
+                            name: name.into(),
+                            kind: rpc::Kind::Unsupported,
+                            read_only: true,
+                        });
+                    }
+                    Err(error) => return Err(error.into_io().into()),
+                }
+            }
+            for resolved in retained {
+                resolved
+                    .proof
+                    .validate(&self.filesystem, &resolved.file, budget)?;
+            }
+            proof.validate(&self.filesystem, held, budget)?;
+            Ok(Reply::ReadableEntries {
+                entries,
+                done,
+                skipped,
+            })
+        })();
+        // Failed cursors cannot resume after an observed fence or budget failure.
+        // Their resource-free slot remains compatible with Close cleanup.
+        self.handles.insert(
+            id,
+            if result.is_ok() {
+                handle
+            } else {
+                Handle::Retired
+            },
+        );
+        result
+    }
+
+    fn readable_chunk(
+        &mut self,
+        id: u32,
+        offset: u64,
+        length: u32,
+        budget: &mut locations::ReadBudget,
+    ) -> Outcome<(Reply, Option<Vec<u8>>)> {
+        let mut handle = self.handles.remove(&id).ok_or(ErrorCode::Invalid)?;
+        let result = (|| {
+            let Handle::Read {
+                file,
+                stamp: expected,
+                readable_proof: Some(proof),
+                ..
+            } = &mut handle
+            else {
+                return Err(ErrorCode::Invalid.into());
+            };
+            budget.retain(proof.retained_cost())?;
+            proof.validate(&self.filesystem, file, budget)?;
+            if stamp(file)? != *expected || offset > expected.length {
+                return Err(ErrorCode::Conflict.into());
+            }
+            file.seek(SeekFrom::Start(offset))?;
+            let mut bytes = vec![0; u64::from(length).min(expected.length - offset) as usize];
+            file.read_exact(&mut bytes)?;
+            if stamp(file)? != *expected {
+                return Err(ErrorCode::Conflict.into());
+            }
+            proof.validate(&self.filesystem, file, budget)?;
+            Ok((
+                Reply::Read {
+                    offset: offset.to_string(),
+                    length: bytes.len() as u32,
+                    eof: offset + bytes.len() as u64 == expected.length,
+                },
+                Some(bytes),
+            ))
+        })();
+        self.handles.insert(
+            id,
+            if result.is_ok() {
+                handle
+            } else {
+                Handle::Retired
+            },
+        );
+        result
     }
 
     #[cfg(test)]
@@ -583,7 +826,13 @@ impl Session {
         data: Vec<u8>,
         cancel: &CancellationToken,
     ) -> Outcome<(Reply, Option<Vec<u8>>)> {
-        self.execute_admitted(operation, data, cancel, &self.admission.clone())
+        self.execute_admitted(
+            operation,
+            data,
+            cancel,
+            &self.admission.clone(),
+            tokio::time::Instant::now() + DEADLINE,
+        )
     }
 
     fn execute_admitted(
@@ -592,16 +841,19 @@ impl Session {
         data: Vec<u8>,
         cancel: &CancellationToken,
         admission: &Admission,
+        deadline: tokio::time::Instant,
     ) -> Outcome<(Reply, Option<Vec<u8>>)> {
         if cancel.is_cancelled() {
             return Err(ErrorCode::Denied.into());
         }
+        let mut budget = locations::ReadBudget::new(deadline, cancel.clone());
         let reply = match operation {
             Operation::StartDirectory {} => {
                 if !self.reviewed_operations {
                     return Err(ErrorCode::Denied.into());
                 }
-                self.filesystem.validate_start_directory()?;
+                self.filesystem
+                    .validate_start_directory_with_budget(&mut budget)?;
                 Reply::StartDirectory {
                     path: self
                         .filesystem
@@ -670,6 +922,75 @@ impl Session {
                 self.handles.remove(&handle).ok_or(ErrorCode::Invalid)?;
                 Reply::Closed
             }
+            Operation::StatReadable { path } => {
+                self.require_readable()?;
+                let resolved = locations::resolve_read(&self.filesystem, &path, None, &mut budget)
+                    .map_err(locations::ReadError::into_io)?;
+                let value = metadata(&resolved.file)?;
+                resolved
+                    .proof
+                    .validate(&self.filesystem, &resolved.file, &mut budget)?;
+                Reply::ReadableStat {
+                    metadata: value,
+                    read_only: resolved.read_only,
+                }
+            }
+            Operation::OpenReadableDirectory { path } => {
+                self.require_readable()?;
+                let resolved = locations::resolve_read(
+                    &self.filesystem,
+                    &path,
+                    Some(rpc::Kind::Directory),
+                    &mut budget,
+                )
+                .map_err(locations::ReadError::into_io)?;
+                let value = metadata(&resolved.file)?;
+                budget.check_live(3)?;
+                let directory = Dir::from_std_file(resolved.file.try_clone()?);
+                let entries = Box::new(directory.entries()?);
+                drop(directory);
+                budget.retain(2)?;
+                resolved
+                    .proof
+                    .validate(&self.filesystem, &resolved.file, &mut budget)?;
+                Reply::ReadableDirectory {
+                    metadata: value,
+                    read_only: resolved.read_only,
+                    handle: self.insert(Handle::Directory {
+                        path,
+                        entries,
+                        held: resolved.file,
+                        readable_proof: Some(resolved.proof),
+                        read_only: resolved.read_only,
+                        _parents: Vec::new(),
+                    })?,
+                }
+            }
+            Operation::OpenReadableFile { path } => {
+                self.require_readable()?;
+                let resolved = locations::resolve_read(
+                    &self.filesystem,
+                    &path,
+                    Some(rpc::Kind::File),
+                    &mut budget,
+                )
+                .map_err(locations::ReadError::into_io)?;
+                let value = metadata(&resolved.file)?;
+                let captured = stamp(&resolved.file)?;
+                resolved
+                    .proof
+                    .validate(&self.filesystem, &resolved.file, &mut budget)?;
+                Reply::File {
+                    metadata: value,
+                    handle: self.insert(Handle::Read {
+                        path,
+                        file: resolved.file,
+                        stamp: captured,
+                        readable_proof: Some(resolved.proof),
+                        _parents: Vec::new(),
+                    })?,
+                }
+            }
             Operation::Stat { path } => {
                 let (file, _parents) = match self.filesystem.read_directory(&path) {
                     Ok((directory, parents)) => (directory.into_std_file(), parents),
@@ -696,6 +1017,8 @@ impl Session {
                         entries: Box::new(directory.entries()?),
                         path,
                         held,
+                        readable_proof: None,
+                        read_only: false,
                         _parents: parents,
                     })?,
                 }
@@ -704,55 +1027,66 @@ impl Session {
                 if limit == 0 || limit > rpc::PAGE_LIMIT {
                     return Err(ErrorCode::Invalid.into());
                 }
-                let Some(Handle::Directory {
-                    entries: iterator,
-                    path,
-                    held,
-                    ..
-                }) = self.handles.get_mut(&handle)
-                else {
-                    return Err(ErrorCode::Invalid.into());
-                };
-                if self.filesystem.has_locations() {
-                    locations::check_directory(&self.filesystem, path, held)?;
-                }
-                let mut entries = Vec::new();
-                let (mut done, mut skipped) = (false, 0);
-                for _ in 0..rpc::PAGE_LIMIT * 4 {
-                    if entries.len() == usize::from(limit) {
-                        break;
+                if matches!(
+                    self.handles.get(&handle),
+                    Some(Handle::Directory {
+                        readable_proof: Some(_),
+                        ..
+                    })
+                ) {
+                    self.require_readable()?;
+                    self.readable_page(handle, limit, &mut budget)?
+                } else {
+                    let Some(Handle::Directory {
+                        entries: iterator,
+                        path,
+                        held,
+                        ..
+                    }) = self.handles.get_mut(&handle)
+                    else {
+                        return Err(ErrorCode::Invalid.into());
+                    };
+                    if self.filesystem.has_locations() {
+                        locations::check_directory(&self.filesystem, path, held)?;
                     }
-                    let Some(entry) = iterator.next() else {
-                        done = true;
-                        break;
-                    };
-                    let entry = entry?;
-                    let name = entry.file_name();
-                    let Some(name) = name.to_str().filter(|name| valid_name(name)) else {
-                        skipped += 1;
-                        continue;
-                    };
-                    let kind = entry.file_type()?;
-                    entries.push(rpc::Entry {
-                        name: name.into(),
-                        kind: if kind.is_symlink() {
-                            rpc::Kind::Unsupported
-                        } else if kind.is_dir() {
-                            rpc::Kind::Directory
-                        } else if kind.is_file() {
-                            rpc::Kind::File
-                        } else {
-                            rpc::Kind::Unsupported
-                        },
-                    });
-                }
-                if self.filesystem.has_locations() {
-                    locations::check_directory(&self.filesystem, path, held)?;
-                }
-                Reply::Entries {
-                    entries,
-                    done,
-                    skipped,
+                    let mut entries = Vec::new();
+                    let (mut done, mut skipped) = (false, 0);
+                    for _ in 0..rpc::PAGE_LIMIT * 4 {
+                        if entries.len() == usize::from(limit) {
+                            break;
+                        }
+                        let Some(entry) = iterator.next() else {
+                            done = true;
+                            break;
+                        };
+                        let entry = entry?;
+                        let name = entry.file_name();
+                        let Some(name) = name.to_str().filter(|name| valid_name(name)) else {
+                            skipped += 1;
+                            continue;
+                        };
+                        let kind = entry.file_type()?;
+                        entries.push(rpc::Entry {
+                            name: name.into(),
+                            kind: if kind.is_symlink() {
+                                rpc::Kind::Unsupported
+                            } else if kind.is_dir() {
+                                rpc::Kind::Directory
+                            } else if kind.is_file() {
+                                rpc::Kind::File
+                            } else {
+                                rpc::Kind::Unsupported
+                            },
+                        });
+                    }
+                    if self.filesystem.has_locations() {
+                        locations::check_directory(&self.filesystem, path, held)?;
+                    }
+                    Reply::Entries {
+                        entries,
+                        done,
+                        skipped,
+                    }
                 }
             }
             Operation::OpenRead { path } => {
@@ -766,6 +1100,7 @@ impl Session {
                     path,
                     file,
                     stamp: captured,
+                    readable_proof: None,
                     _parents: parents,
                 })?;
                 Reply::File {
@@ -781,6 +1116,16 @@ impl Session {
                 let offset = rpc::decimal(&offset).ok_or(ErrorCode::Invalid)?;
                 if length == 0 || length as usize > rpc::CHUNK_LIMIT {
                     return Err(ErrorCode::Invalid.into());
+                }
+                if matches!(
+                    self.handles.get(&handle),
+                    Some(Handle::Read {
+                        readable_proof: Some(_),
+                        ..
+                    })
+                ) {
+                    self.require_readable()?;
+                    return self.readable_chunk(handle, offset, length, &mut budget);
                 }
                 let Some(Handle::Read {
                     file,
@@ -855,6 +1200,7 @@ impl Session {
                             path: original,
                             file,
                             stamp: captured,
+                            readable_proof: None,
                             ..
                         }) = self.handles.get(&handle)
                         else {
@@ -1195,7 +1541,7 @@ async fn serve_authorized_mode(
                     if tokio::time::Instant::now() >= deadline {
                         return Err(io::Error::from(io::ErrorKind::TimedOut).into());
                     }
-                    session.execute_admitted(request.operation, data, &token, &admission)
+                    session.execute_admitted(request.operation, data, &token, &admission, deadline)
                 });
             // Admission of this concrete disclosure precedes releasing its
             // result to async framing. No lease crosses filesystem/network I/O.
@@ -1266,9 +1612,10 @@ mod tests {
 
     fn handle(reply: Reply) -> u32 {
         match reply {
-            Reply::File { handle, .. } | Reply::Upload { handle } | Reply::Directory { handle } => {
-                handle
-            }
+            Reply::File { handle, .. }
+            | Reply::Upload { handle }
+            | Reply::Directory { handle }
+            | Reply::ReadableDirectory { handle, .. } => handle,
             _ => panic!("missing handle"),
         }
     }
@@ -1314,6 +1661,429 @@ mod tests {
         let selector = session.filesystem.location_metadata().unwrap()[0].virtual_root();
         (base, session, selector)
     }
+    #[test]
+    fn readable_links_requests_refuse_without_explicit_locations() {
+        let (path, mut session) = session(true);
+        for operation in [
+            Operation::StatReadable { path: "/".into() },
+            Operation::OpenReadableDirectory { path: "/".into() },
+            Operation::OpenReadableFile {
+                path: "/file".into(),
+            },
+        ] {
+            assert!(matches!(
+                session.execute(operation, vec![], &CancellationToken::new()),
+                Err(Failure {
+                    code: ErrorCode::Denied,
+                    ..
+                })
+            ));
+            assert!(session.handles.is_empty());
+        }
+        drop(session);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn readable_fixture() -> Option<(tempfile::TempDir, Session, String)> {
+        let (base, session, selector) = mutation_fixture();
+        if !session.filesystem.location_metadata().unwrap()[0].available {
+            let slash =
+                festerm_unix_security::open_absolute_directory_read_nofollow(Path::new("/"))
+                    .unwrap();
+            assert_eq!(
+                festerm_unix_security::open_contained_data_directory(&slash, Path::new(""))
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::Unsupported
+            );
+            eprintln!("readable-links native fixture unavailable on unsupported native floor");
+            return None;
+        }
+        Some((base, session, selector))
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readable_links_same_inode_cutover_never_supplies_replacement_proof() {
+        use std::os::unix::fs::symlink;
+        let Some((base, mut session, selector)) = readable_fixture() else {
+            return;
+        };
+        let directory = base.path().join("allowed/inside");
+        std::fs::write(directory.join("target"), b"original").unwrap();
+        symlink("target", directory.join("alias")).unwrap();
+        let alias = format!("{selector}/inside/alias");
+        let read = handle(run(
+            &mut session,
+            Operation::OpenReadableFile {
+                path: alias.clone(),
+            },
+        ));
+        std::fs::remove_file(directory.join("alias")).unwrap();
+        std::fs::hard_link(directory.join("target"), directory.join("alias")).unwrap();
+        assert!(session
+            .execute(
+                Operation::BeginUpload {
+                    path: alias,
+                    size: "3".into(),
+                    expected: Some(read)
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        run(&mut session, Operation::Close { handle: read });
+        if session.filesystem.location_metadata().unwrap()[0].mutations_available {
+            let target = format!("{selector}/inside/target");
+            let strict = handle(run(
+                &mut session,
+                Operation::OpenRead {
+                    path: target.clone(),
+                },
+            ));
+            let upload = handle(run(
+                &mut session,
+                Operation::BeginUpload {
+                    path: target,
+                    size: "3".into(),
+                    expected: Some(strict),
+                },
+            ));
+            run(&mut session, Operation::Close { handle: upload });
+            run(&mut session, Operation::Close { handle: strict });
+        }
+        assert_eq!(
+            std::fs::read(directory.join("target")).unwrap(),
+            b"original"
+        );
+        assert_eq!(std::fs::read(directory.join("alias")).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 2);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readable_links_directory_rows_and_descendants_are_read_only() {
+        use std::os::unix::fs::symlink;
+        let Some((base, mut session, selector)) = readable_fixture() else {
+            return;
+        };
+        let allowed = base.path().join("allowed");
+        std::fs::write(allowed.join("inside/target"), b"original").unwrap();
+        symlink("inside", allowed.join("alias")).unwrap();
+        symlink("inside", allowed.join("alias-two")).unwrap();
+        let root = handle(run(
+            &mut session,
+            Operation::OpenReadableDirectory {
+                path: selector.clone(),
+            },
+        ));
+        let mut entries = Vec::new();
+        let mut pages = 0;
+        loop {
+            let Reply::ReadableEntries {
+                entries: page,
+                done,
+                ..
+            } = run(
+                &mut session,
+                Operation::ReadDirectory {
+                    handle: root,
+                    limit: rpc::PAGE_LIMIT,
+                },
+            )
+            else {
+                panic!("tagged page");
+            };
+            pages += 1;
+            assert!(pages <= 4, "short pages must advance the same cursor");
+            assert!(page.iter().filter(|entry| entry.read_only).count() <= 1);
+            entries.extend(page);
+            if done {
+                break;
+            }
+        }
+        assert!(pages >= 2);
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().any(|entry| entry.name == "alias"
+            && matches!(entry.kind, rpc::Kind::Directory)
+            && entry.read_only));
+        assert!(entries.iter().any(|entry| entry.name == "alias-two"
+            && matches!(entry.kind, rpc::Kind::Directory)
+            && entry.read_only));
+        assert!(entries.iter().any(|entry| entry.name == "inside"
+            && matches!(entry.kind, rpc::Kind::Directory)
+            && !entry.read_only));
+        run(&mut session, Operation::Close { handle: root });
+        let alias = format!("{selector}/alias");
+        assert!(session
+            .execute(
+                Operation::OpenDirectory {
+                    path: alias.clone()
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(session
+            .execute(
+                Operation::OpenRead {
+                    path: format!("{alias}/target")
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        Arc::get_mut(&mut session.filesystem).unwrap().start_in = alias.clone();
+        session.filesystem.validate_owner_locations().unwrap();
+        assert!(
+            matches!(run(&mut session, Operation::StartDirectory {}), Reply::StartDirectory { path } if path.as_str() == alias)
+        );
+        let Reply::ReadableDirectory {
+            handle: cursor,
+            metadata,
+            read_only,
+        } = run(
+            &mut session,
+            Operation::OpenReadableDirectory {
+                path: alias.clone(),
+            },
+        )
+        else {
+            panic!("tagged directory");
+        };
+        assert!(read_only);
+        assert!(matches!(metadata.kind, rpc::Kind::Directory));
+        let Reply::ReadableEntries { entries, .. } = run(
+            &mut session,
+            Operation::ReadDirectory {
+                handle: cursor,
+                limit: rpc::PAGE_LIMIT,
+            },
+        ) else {
+            panic!("tagged page");
+        };
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].read_only);
+        assert!(matches!(entries[0].kind, rpc::Kind::File));
+        assert!(session
+            .execute(
+                Operation::Mkdir {
+                    path: format!("{alias}/refused")
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(session
+            .execute(
+                Operation::BeginUpload {
+                    path: format!("{alias}/refused"),
+                    size: "0".into(),
+                    expected: None
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(session
+            .execute(
+                Operation::ReviewEntry {
+                    path: format!("{alias}/target"),
+                    purpose: rpc::ReviewPurpose::Delete
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        run(&mut session, Operation::Close { handle: cursor });
+        assert_eq!(
+            std::fs::read_dir(allowed.join("inside")).unwrap().count(),
+            1
+        );
+        assert_eq!(
+            std::fs::read(allowed.join("inside/target")).unwrap(),
+            b"original"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readable_links_runtime_start_keeps_original_deadline_and_cancellation() {
+        let Some((_base, session, _selector)) = readable_fixture() else {
+            return;
+        };
+        let cancel = CancellationToken::new();
+        let mut session = session;
+        let admission = session.admission.clone();
+        assert!(session
+            .execute_admitted(
+                Operation::StartDirectory {},
+                vec![],
+                &cancel,
+                &admission,
+                tokio::time::Instant::now() - std::time::Duration::from_secs(1)
+            )
+            .is_err());
+        let mut budget =
+            locations::ReadBudget::new(tokio::time::Instant::now() + DEADLINE, cancel.clone());
+        cancel.cancel();
+        assert_eq!(
+            session
+                .filesystem
+                .validate_start_directory_with_budget(&mut budget)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        // A separate owner preflight has its own fresh budget; expiry is not
+        // persisted and never replaces the runtime command's deadline.
+        session.filesystem.validate_start_directory().unwrap();
+        assert!(matches!(
+            run(&mut session, Operation::StartDirectory {}),
+            Reply::StartDirectory { .. }
+        ));
+        assert!(session.handles.is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readable_links_descriptor_admission_refuses_before_handle_limit_and_releases() {
+        use std::os::unix::fs::symlink;
+        let Some((base, mut session, selector)) = readable_fixture() else {
+            return;
+        };
+        let allowed = base.path().join("allowed");
+        std::fs::write(allowed.join("inside/target"), b"original").unwrap();
+        symlink("inside/target", allowed.join("second")).unwrap();
+        symlink("second", allowed.join("first")).unwrap();
+        let mut held = Vec::new();
+        loop {
+            match session.execute(
+                Operation::OpenReadableFile {
+                    path: format!("{selector}/first"),
+                },
+                vec![],
+                &CancellationToken::new(),
+            ) {
+                Ok((Reply::File { handle, .. }, _)) => {
+                    held.push(handle);
+                    assert!(
+                        held.len() < rpc::HANDLE_LIMIT,
+                        "descriptor cap must bind before slot count"
+                    );
+                }
+                Err(Failure {
+                    code: ErrorCode::Busy,
+                    ..
+                }) => break,
+                _ => panic!("expected bounded descriptor admission"),
+            }
+        }
+        assert!(!held.is_empty());
+        for handle in held {
+            run(&mut session, Operation::Close { handle });
+        }
+        assert!(session.handles.is_empty());
+        let fresh = handle(run(
+            &mut session,
+            Operation::OpenReadableFile {
+                path: format!("{selector}/first"),
+            },
+        ));
+        run(&mut session, Operation::Close { handle: fresh });
+        assert_eq!(
+            std::fs::read(allowed.join("inside/target")).unwrap(),
+            b"original"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readable_links_ordinary_unreadable_file_does_not_block_parent_listing() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some((base, mut session, selector)) = readable_fixture() else {
+            return;
+        };
+        if festerm_unix_security::current_user_id().unwrap() == 0 {
+            eprintln!("ordinary unreadable file control requires a non-root OS account");
+            return;
+        }
+        let directory = base.path().join("allowed/inside");
+        let secret = directory.join("unreadable");
+        std::fs::write(&secret, b"unchanged").unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert_eq!(
+            File::open(&secret).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let path = format!("{selector}/inside");
+        let cursor = handle(run(
+            &mut session,
+            Operation::OpenReadableDirectory { path: path.clone() },
+        ));
+        let Reply::ReadableEntries { entries, .. } = run(
+            &mut session,
+            Operation::ReadDirectory {
+                handle: cursor,
+                limit: rpc::PAGE_LIMIT,
+            },
+        ) else {
+            panic!("tagged page");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "unreadable");
+        assert!(matches!(entries[0].kind, rpc::Kind::File));
+        assert!(session
+            .execute(
+                Operation::OpenReadableFile {
+                    path: format!("{path}/unreadable")
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert_eq!(session.handles.len(), 1);
+        run(&mut session, Operation::Close { handle: cursor });
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(secret).unwrap(), b"unchanged");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn readable_links_expired_cursor_releases_resources_and_remains_closeable() {
+        let Some((_base, mut session, selector)) = readable_fixture() else {
+            return;
+        };
+        let cursor = handle(run(
+            &mut session,
+            Operation::OpenReadableDirectory { path: selector },
+        ));
+        let cancel = CancellationToken::new();
+        let admission = session.admission.clone();
+        assert!(session
+            .execute_admitted(
+                Operation::ReadDirectory {
+                    handle: cursor,
+                    limit: rpc::PAGE_LIMIT
+                },
+                vec![],
+                &cancel,
+                &admission,
+                tokio::time::Instant::now() - std::time::Duration::from_secs(1)
+            )
+            .is_err());
+        assert!(matches!(
+            session.handles.get(&cursor),
+            Some(Handle::Retired)
+        ));
+        assert!(matches!(
+            run(&mut session, Operation::Close { handle: cursor }),
+            Reply::Closed
+        ));
+        assert!(session.handles.is_empty());
+    }
+
     #[test]
     #[cfg(unix)]
     fn allowed_locations_mutation_leaves_share_qualified_review_and_replacement_route() {
@@ -2930,6 +3700,7 @@ mod tests {
                 Vec::new(),
                 &cancel,
                 &admission,
+                deadline,
             );
             assert_eq!(result.is_ok(), mode == "allowed");
             assert_eq!(
@@ -3005,6 +3776,7 @@ mod tests {
                 Vec::new(),
                 &cancel,
                 &admission,
+                deadline,
             );
             (session, result)
         });

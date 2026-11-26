@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "40424b98a5c2cc63f5faf34eca10f526552cdd3eebcf55b574f83f3b6ff48b45"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "b83525619eb540c1f6fb16b027df7ed136701a4d60df856a211ce69902545121"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -80,7 +80,7 @@ Caveats:
 
 Use for: Displaying allowed locations without exposing request selectors.
 
-- [`FilesSource`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Physical labels and captured location metadata; virtual callbacks stay immutable.
+- [`FilesSource`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Physical labels, opened access and immutable virtual paths.
 - [`SftpCleanupReporter`](../../app/festerm/src/sftp_file_manager.rs) — Bounded masked notices retain private typed diagnostics.
 
 Caveats:

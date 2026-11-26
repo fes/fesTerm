@@ -1,5 +1,10 @@
 //! Retained roots for the explicitly negotiated allowlist. A selector is part
 //! of each immutable virtual path; pane selection never retargets an object.
+mod links;
+pub(super) use links::{
+    resolve_read, resolve_read_child, ReadBudget, ReadError, ReadProof, READ_DESCRIPTOR_LIMIT,
+};
+
 use super::*;
 use std::path::PathBuf;
 

@@ -38,6 +38,9 @@ pub(in super::super) fn paths(
             "Select up to 8 regular files or empty folders. Links are not supported.".into(),
         );
     }
+    if items.iter().any(|item| !files_item_writable(item)) {
+        return Err("Select files or empty folders that can be changed.".into());
+    }
     items
         .iter()
         .map(|item| match &item.path {

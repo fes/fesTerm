@@ -1375,6 +1375,46 @@ mod tests {
             tab.file_operations.draft.is_none(),
             "write must not authorize delete even beneath UI"
         );
+        tab.files_source =
+            Some(super::super::host_files::FilesSource::reviewed_delete_fixture(true));
+        tab.host_files_cancel = Some(tokio_util::sync::CancellationToken::new());
+        let mut snapshot = tab.remote_pane.snapshot.clone().unwrap();
+        let metadata = tab.remote_pane.directory_metadata.clone();
+        snapshot.entries[0].permissions = Some(0o500);
+        tab.remote_pane
+            .set_snapshot(snapshot.clone(), metadata.clone());
+        harness.run();
+        assert!(harness
+            .get_by_label("Delete selected Remote items")
+            .accesskit_node()
+            .is_disabled());
+        let tab = harness.state_mut();
+        assert!(tab.remote_delete_available());
+        tab.review_file_operation(PaneFocus::Remote, true);
+        assert!(tab.file_operations.preparing.is_none());
+        assert_eq!(
+            tab.operation_error.as_ref().unwrap().1,
+            "Select files or empty folders that can be changed."
+        );
+
+        snapshot.entries[0].permissions = Some(0o700);
+        tab.remote_pane.set_snapshot(snapshot, metadata);
+        harness.run();
+        assert!(!harness
+            .get_by_label("Delete selected Remote items")
+            .accesskit_node()
+            .is_disabled());
+        let tab = harness.state_mut();
+        let request = Request {
+            focus: PaneFocus::Remote,
+            directory: tab.remote_pane.current_path.clone(),
+            scope: tab.file_operations.displayed.clone(),
+            operation: Operation::Delete(tab.remote_pane.selected_items()),
+        };
+        assert_eq!(
+            reviewed_delete_paths(&request, &tab.file_operations.connection).unwrap(),
+            ["/reviewed/remote.txt"]
+        );
         tab.review_file_operation(PaneFocus::Remote, false);
         let mut request = tab.file_operations.draft.as_ref().unwrap().request.clone();
         request.operation = Operation::CreateDirectory("owned-new".into());

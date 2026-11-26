@@ -7801,8 +7801,8 @@ Delete and verify further writes/publication/deletion refuse with recovery
 and originals preserved. Mutation controls and failures must reflect current
 eligibility. Existing grants and OS
 permissions must not be broadened for a test. The user's `/` plus `~` example is
-not consent to change the production HOME grant. All new allowlist native cases
-remain unrun; isolated macOS API prerequisites are not whole-product acceptance.
+not consent to change the production HOME grant. Native allowlist client workflows remain unrun; isolated macOS API and
+in-process components are not whole-product acceptance.
 The new macOS scope currently requires the qualified 27.2.1 containment
 boundary. On older macOS versions, verify explicit refusal before setup effects
 and preserve legacy singleton operation; do not substitute a weaker lookup to
@@ -7823,8 +7823,9 @@ original directory and all unrelated data. Portable framed and rendered fixtures
 do not qualify this native recovery case.
 
 
-Read-only link preparation for DTFILES-02 / DT-07 and MOB-11 adds native metadata component
-tests only; ordinary Files links remain unavailable. Positive macOS 27.2.1 and
+Read-only link preparation for DTFILES-02 / DT-07 and MOB-11 provides native
+metadata helpers and component tests. Strict/legacy operations retain link
+refusal; qualify the separately negotiated client path extension below. Positive macOS 27.2.1 and
 Linux retained-link extraction prerequisites do not qualify a resolver or user
 workflow. The standalone Windows probe timed out with no output; protected state
 was preserved, but its extraction result is unknown. Run the repository's actual
@@ -7843,3 +7844,37 @@ refuse outside intermediate hops before traversal, and verify alias/descendant
 writes and replacement proofs remain refused even after path cutover to the same
 object. Retain same-handle page/chunk checks, account/root retirement and existing
 limits. No grant broadening or OS permission changes are part of these checks.
+
+
+DTFILES-02 / DT-07 / MOB-11 read-only alias extension: on each supported host,
+use owned fixtures in two allowed folders and an outside canary. List file and
+directory links, enter a directory link and download/preview a linked file.
+Show directory links as folders, propagate read-only access to descendants,
+preserve the original virtual alias in queued paths and show full host labels.
+With Write/Delete enabled, refuse alias upload, mkdir, Delete and replacement
+proof, including a same-inode name cutover; direct allowed targets retain their
+normal supported operations. Unknown, outside, ungranted intermediate, dangling
+and looping targets remain unavailable. Directory metadata must come from the
+same opened cursor as its pages. A cancelled, exhausted or invalidated cursor
+must release native resources and remain closeable without replay. Change a
+root/alias/parent between pages or chunks and verify no further disclosure.
+Revoke the account/grant and verify inactive metadata and controls retire.
+Qualify owner and runtime alias Start without default fallback, while old clients
+keep strict refusal. Capture desktop and mobile views with several ordinary rows,
+read-only aliases and an unsupported entry; an unreadable ordinary file must not
+prevent listing its allowed parent. Native whole-workflow and mounted-volume
+qualification remain pending; the focused in-process suite is not a replacement.
+
+Resource qualification for that extension must include repeated `dir/..`
+witnesses, deep ordinary directories, adjacent alias rows across short pages,
+and several simultaneously held reads/cursors. Popped witness identities are
+coalesced, not silently replaced. Keep per-request live and retained stream
+native descriptor costs within 48, including two Unix iterator descriptors and
+conservative native scratch. A graph can hit that resource limit before the
+maximum eight hops. One resolved alias per page reduces peak resources; the
+existing 1024-page Desktop snapshot bound can therefore refuse an alias-heavy
+folder before its entry limit. This is a documented availability tradeoff, not
+permission to publish partial output on actual resource/fence failure. Verify
+runtime Start does not renew its original deadline/token and that leaf `file/`
+or `file/.` payloads never become ordinary file reads. Reserved host staging
+prefixes remain inaccessible through both relative and absolute aliases.

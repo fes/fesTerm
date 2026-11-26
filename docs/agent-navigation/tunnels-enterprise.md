@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "9522e7415399ff519f10214f37b1e6337290adf23d45f4833f750a8bb4e835ed"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "16eb80c229355fefce364cfcd9cdaf433d3122ee3983cd9a8f62fca4504edc2e"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -102,9 +102,9 @@ Caveats:
 
 Use for: Files locations, transfer cancellation and retained channels.
 
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded transfers, locations and transient navigation.
-- [`Location`](../../crates/festerm-tunnel-bridge/src/filesystem/locations.rs) — Retained roots, contained reads and strict mutation acquisition.
-- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared optional client adapter; preserves publication, cleanup and authority fences.
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Negotiated reads and strict replacement proofs.
+- [`ReadProof`](../../crates/festerm-tunnel-bridge/src/filesystem/locations/links.rs) — Read-only union traversal and snapshot fences.
+- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared transfers and opened-directory/row access facts.
 
 Evidence:
 - [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Aborts a partial upload; retains the stream.

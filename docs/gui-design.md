@@ -4380,8 +4380,15 @@ another allowed location contains it. Editing only Start in for a historical
 singleton preserves its read rules. The allowlist review explains ordinary-data
 reads and retains the separate read/write/Delete controls. Desktop's remote Home
 action still means virtual `/` (the chooser for a new multi-location grant).
-Link-following remains unavailable. Native start-directory qualification remains
-pending under DT-05/DT-07 and MOB-11.
+Peers advertising the optional read-only link operations can browse file and
+directory aliases whose traversal stays within the explicit allowed union.
+Directory access comes from the opened cursor; alias descendants and linked
+rows disable upload, mkdir and Delete in the existing file manager. Unknown
+reparse entries remain unavailable. Keep full host labels and original virtual
+alias paths in previews and queued transfers; never rewrite a job into target
+write authority. Strict legacy operations retain link refusal. Start resolution
+uses the original runtime deadline and cancellation scope. Native link and
+start-directory workflows remain pending under DT-05/DT-07 and MOB-11.
 
 
 For an explicitly reviewed Files allowlist, keep the location chooser inside the

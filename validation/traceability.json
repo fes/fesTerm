@@ -7711,7 +7711,8 @@
       "requirements": [
         "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
         "docs/gui-design.md#account-host-and-session-browser",
-        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#read-only-link-preparation-retained-metadata-only"
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#read-only-link-preparation-retained-metadata-only",
+        "docs/dev-tunnel-files-protocol.md#optional-read-only-paths-through-links"
       ],
       "decisions": [
         "ADR-0067",
@@ -7804,7 +7805,29 @@
         "private_data_parent_link_home_snapshot_and_resolver_parent_match",
         "private_data_parent_refresh_root_parent_and_ancestor_changes_precede_leaf_open",
         "private_data_parent_fifo_substitution_is_nonblocking_and_terminal",
-        "retained_ntfs_symlinks_extract_relative_file_and_absolute_directory"
+        "retained_ntfs_symlinks_extract_relative_file_and_absolute_directory",
+        "readable_link_wire_variants_are_additive_and_strict",
+        "readable_links_do_not_retry_a_denied_readable_path_as_strict",
+        "readable_links_reject_a_page_that_disagrees_with_its_opened_directory",
+        "readable_links_negotiate_per_connection_and_keep_reads_separate_from_expected_proof",
+        "readable_links_expired_cursor_releases_resources_and_remains_closeable",
+        "readable_links_nested_root_upward_uses_verified_enclosing_root",
+        "readable_links_budget_cancel_and_unsupported_resource_errors_are_fatal",
+        "readable_links_requests_refuse_without_explicit_locations",
+        "readable_links_directory_rows_and_descendants_are_read_only",
+        "readable_links_union_directory_file_and_direct_access_keep_provenance",
+        "readable_links_alias_root_and_popped_directory_changes_fail_validation",
+        "readable_links_same_inode_cutover_never_supplies_replacement_proof",
+        "readable_links_outside_intermediate_dangling_and_loop_are_unavailable",
+        "files_endpoint_readable_rows_and_preview_keep_alias_path_and_strict_review",
+        "readable_links_ordinary_unreadable_file_does_not_block_parent_listing",
+        "readable_links_runtime_start_keeps_original_deadline_and_cancellation",
+        "readable_links_descriptor_admission_refuses_before_handle_limit_and_releases",
+        "readable_links_raw_reserved_targets_and_unknown_reparse_are_not_admitted",
+        "readable_links_native_reserved_and_trailing_syntax_refuse_before_normalization",
+        "readable_links_listed_child_binds_original_parent_and_link_kind",
+        "readable_links_unix_depth_is_constant_and_popped_witnesses_coalesce",
+        "readable_links_finite_repeated_alias_keeps_pending_suffix_in_cycle_state"
       ],
       "manual_scenarios": [
         "DT-07"
@@ -7815,7 +7838,8 @@
         "Windows/macOS/Linux native reviewed deletion/capture/restore and packaged default-off delete consent/UI remain unqualified; Windows GNU metadata checks are not native execution. Mobile Files and remote rename/chmod/link parity remain separate required work; old rooted v1 write consent never authorizes deletion.",
         "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending.",
         "Native metadata preparation only: no Files operation follows links and no target or mutation authority is added. macOS 27.2.1 and Linux isolated retained-extraction prerequisites passed. Windows standalone attempt timed out without output; protected state was preserved but execution stage/extraction is unknown. Actual qualified Windows NTFS Rust tests are required for that primitive. Older macOS unsupported-platform tests are not positive extraction evidence. Full allowlist union resolver, disclosure/root/account fences, original alias paths, strict expected-handle rejection and Desktop/mobile read-only presentation remain pending.",
-        "The Mac native private-parent token reuses complete ownership-enforcing owner/mode/ACL ancestry with fresh root and parent binding; it does not grant link target access. Native HOME metadata controls, strict unchanged-file regression and Windows symbolic-link required-CI evidence are separate from the still-pending allowed-union resolver and client read-only presentation. A locally deferred Windows privilege result is not qualification. No service link-read capability is advertised by this slice."
+        "The Mac native private-parent token reuses complete ownership-enforcing owner/mode/ACL ancestry with fresh root and parent binding; it does not grant link target access. Native HOME metadata controls, strict unchanged-file regression and Windows symbolic-link required-CI evidence are separate from the still-pending allowed-union resolver and client read-only presentation. A locally deferred Windows privilege result is not qualification. No service link-read capability is advertised by this slice.",
+        "The additive read_links source preserves strict mutations and replacement proof; bounded union traversal and Desktop/mobile read-only path controls require fresh native whole-workflow qualification, including allowed cross-root aliases, outside/intermediate refusal, directory/file target changes, grants-on mutation denial, direct-target controls and original-path retention. Component tests do not qualify deployed clients or mounted-volume workflows."
       ]
     },
     {
@@ -7880,7 +7904,8 @@
         "MOB-11"
       ],
       "requirements": [
-        "docs/dev-tunnel-files-protocol.md#mobile-read-only-client"
+        "docs/dev-tunnel-files-protocol.md#mobile-read-only-client",
+        "docs/dev-tunnel-files-protocol.md#optional-read-only-paths-through-links"
       ],
       "decisions": [
         "ADR-0067",
@@ -7919,7 +7944,11 @@
         "host_files_choose_location_requires_new_valid_metadata_and_never_opens_a_folder",
         "host_files_initial_listing_is_required_before_ready",
         "files_admitted_initial_listing_is_used_once_and_mismatched_path_refuses_ready",
-        "files_failed_view_offers_explicit_location_choice_only_for_host_context"
+        "files_failed_view_offers_explicit_location_choice_only_for_host_context",
+        "readable_link_wire_variants_are_additive_and_strict",
+        "readable_links_do_not_retry_a_denied_readable_path_as_strict",
+        "readable_links_reject_a_page_that_disagrees_with_its_opened_directory",
+        "readable_links_negotiate_per_connection_and_keep_reads_separate_from_expected_proof"
       ],
       "manual_scenarios": [
         "MOB-11"
@@ -7928,7 +7957,8 @@
       "prerequisites": [
         "Pinned Android Linux/Windows/Mac ordinary browse/download/Markdown preview and profile reopen components are accepted in validation/dev-tunnels/mobile-files-android-native-components.json. Separate Linux active-upload Cancel/same-queue continuation is accepted. Three iOS pairs, active-transfer background/return/reconnect, conflict/replacement and live account/lock/suspend retirement remain unqualified; no uniform-release claim.",
         "Mobile upload/mkdir/reviewed Delete/rename/chmod/link parity and destination replacement/Keep Both are outside this read-only tranche.",
-        "Compact controls, physical-root display and neutral unsupported-entry presentation require corrected native mobile qualification. Native iOS/Android allowlist navigation, Start and same-host failed-view recovery remain pending. Physical labels add no allowed roots or symlink-following authority."
+        "Compact controls, physical-root display and neutral unsupported-entry presentation require corrected native mobile qualification. Native iOS/Android allowlist navigation, Start and same-host failed-view recovery remain pending. Physical labels add no allowed roots or symlink-following authority.",
+        "The additive read_links source preserves strict mutations and replacement proof; bounded union traversal and Desktop/mobile read-only path controls require fresh native whole-workflow qualification, including allowed cross-root aliases, outside/intermediate refusal, directory/file target changes, grants-on mutation denial, direct-target controls and original-path retention. Component tests do not qualify deployed clients or mounted-volume workflows."
       ]
     },
     {

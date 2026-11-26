@@ -133,12 +133,26 @@ pub struct Handle {
 }
 enum State {
     EntryReview,
-    Directory,
-    Read { path: String, size: u64 },
-    Upload { size: u64, written: u64 },
+    Directory {
+        metadata: Option<ReadablePathMetadata>,
+    },
+    Read {
+        path: String,
+        size: u64,
+        strict: bool,
+    },
+    Upload {
+        size: u64,
+        written: u64,
+    },
+}
+#[derive(Clone, Debug)]
+pub struct ReadablePathMetadata {
+    pub metadata: rpc::Metadata,
+    pub read_only: bool,
 }
 pub struct Page {
-    pub entries: Vec<rpc::Entry>,
+    pub entries: Vec<rpc::ReadableEntry>,
     pub done: bool,
     pub skipped: u16,
 }
@@ -531,11 +545,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                     version,
                     rpc::HOST_REVIEWED_VERSION | rpc::HOST_LOCATIONS_VERSION
                 ) && capabilities.validate(&caps)
+                    && (version == rpc::HOST_LOCATIONS_VERSION
+                        || !capabilities.allows_read_links())
                     && (version != rpc::HOST_LOCATIONS_VERSION
-                        || capabilities
-                            .operations
-                            .iter()
-                            .any(|name| name == "locations")
+                        || capabilities.allows_locations()
                             && capabilities.allows_start_directory()) =>
                 {
                     Ok(Some(capabilities))
@@ -573,6 +586,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     }
     pub fn capabilities(&self) -> &rpc::Capabilities {
         &self.capabilities
+    }
+    /// Capability negotiated on this stream. Current authority is checked by each RPC.
+    pub fn read_links_advertised(&self) -> bool {
+        self.locations_scope
+            && self
+                .operations
+                .as_ref()
+                .is_some_and(rpc::OperationCapabilities::allows_read_links)
     }
     /// Observed operation capability only; never proof of current remote consent.
     pub fn delete_advertised(&self) -> bool {
@@ -873,6 +894,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             _ => self.protocol(),
         }
     }
+    pub async fn stat_readable_path(&mut self, value: &str) -> Result<ReadablePathMetadata> {
+        if !self.read_links_advertised() {
+            return Ok(ReadablePathMetadata {
+                metadata: self.stat(value).await?,
+                read_only: false,
+            });
+        }
+        path(value)?;
+        match self
+            .exchange(Operation::StatReadable { path: value.into() }, None)
+            .await?
+        {
+            (
+                Reply::ReadableStat {
+                    metadata: info,
+                    read_only,
+                },
+                None,
+            ) if metadata(&info).is_ok()
+                && (!matches!(info.kind, rpc::Kind::Unsupported) || read_only) =>
+            {
+                Ok(ReadablePathMetadata {
+                    metadata: info,
+                    read_only,
+                })
+            }
+            _ => self.protocol(),
+        }
+    }
     pub async fn open_directory(&mut self, value: &str) -> Result<Handle> {
         path(value)?;
         self.capacity()?;
@@ -880,18 +930,58 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             .exchange(Operation::OpenDirectory { path: value.into() }, None)
             .await?
         {
-            (Reply::Directory { handle }, None) => self.insert(handle, State::Directory),
+            (Reply::Directory { handle }, None) => {
+                self.insert(handle, State::Directory { metadata: None })
+            }
             _ => self.protocol(),
         }
     }
-    pub async fn read_directory(&mut self, handle: &Handle, limit: u16) -> Result<Page> {
-        if !matches!(self.state(handle)?, State::Directory)
-            || limit == 0
-            || limit > self.capabilities.page_limit
+    pub async fn open_readable_directory(&mut self, value: &str) -> Result<Handle> {
+        if !self.read_links_advertised() {
+            return self.open_directory(value).await;
+        }
+        path(value)?;
+        self.capacity()?;
+        match self
+            .exchange(
+                Operation::OpenReadableDirectory { path: value.into() },
+                None,
+            )
+            .await?
         {
+            (
+                Reply::ReadableDirectory {
+                    handle,
+                    metadata: info,
+                    read_only,
+                },
+                None,
+            ) if matches!(info.kind, rpc::Kind::Directory) && metadata(&info).is_ok() => self
+                .insert(
+                    handle,
+                    State::Directory {
+                        metadata: Some(ReadablePathMetadata {
+                            metadata: info,
+                            read_only,
+                        }),
+                    },
+                ),
+            _ => self.protocol(),
+        }
+    }
+    /// Metadata and access captured by the open that created this directory cursor.
+    pub fn directory_metadata(&self, handle: &Handle) -> Result<Option<&ReadablePathMetadata>> {
+        match self.state(handle)? {
+            State::Directory { metadata } => Ok(metadata.as_ref()),
+            _ => Err(Error::Invalid),
+        }
+    }
+    pub async fn read_directory(&mut self, handle: &Handle, limit: u16) -> Result<Page> {
+        let directory_read_only = self.directory_metadata(handle)?.map(|info| info.read_only);
+        if limit == 0 || limit > self.capabilities.page_limit {
             return Err(Error::Invalid);
         }
-        match self
+        let (entries, done, skipped) = match self
             .exchange(
                 Operation::ReadDirectory {
                     handle: handle.id,
@@ -908,20 +998,46 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                     skipped,
                 },
                 None,
-            ) if entries.len() <= usize::from(limit)
-                && entries.len() + usize::from(skipped) <= usize::from(rpc::PAGE_LIMIT) * 4
-                && entries
-                    .iter()
-                    .all(|entry| rpc::valid_name(&entry.name) && !entry.name.contains('/')) =>
-            {
-                Ok(Page {
+            ) if directory_read_only.is_none() && entries.len() <= usize::from(limit) => (
+                entries
+                    .into_iter()
+                    .map(|entry| rpc::ReadableEntry {
+                        name: entry.name,
+                        kind: entry.kind,
+                        read_only: false,
+                    })
+                    .collect::<Vec<_>>(),
+                done,
+                skipped,
+            ),
+            (
+                Reply::ReadableEntries {
                     entries,
                     done,
                     skipped,
-                })
-            }
-            _ => self.protocol(),
+                },
+                None,
+            ) if directory_read_only.is_some() => (entries, done, skipped),
+            _ => return self.protocol(),
+        };
+        if entries.len() > usize::from(limit)
+            || entries.len() + usize::from(skipped) > usize::from(rpc::PAGE_LIMIT) * 4
+            || entries.iter().any(|entry| {
+                !rpc::valid_name(&entry.name)
+                    || entry.name.contains('/')
+                    || directory_read_only.is_some_and(|read_only| {
+                        !entry.read_only
+                            && (read_only || matches!(entry.kind, rpc::Kind::Unsupported))
+                    })
+            })
+        {
+            return self.protocol();
         }
+        Ok(Page {
+            entries,
+            done,
+            skipped,
+        })
     }
     pub async fn review_entry(&mut self, value: &str) -> Result<(Handle, rpc::Metadata)> {
         self.ready()?;
@@ -988,13 +1104,28 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         }
     }
 
+    /// Strict acquisition for callers including exact replacement review.
     pub async fn open_read(&mut self, value: &str) -> Result<(Handle, rpc::Metadata)> {
+        self.open_read_path(value, false).await
+    }
+    pub async fn open_readable_file(&mut self, value: &str) -> Result<(Handle, rpc::Metadata)> {
+        let readable = self.read_links_advertised();
+        self.open_read_path(value, readable).await
+    }
+    async fn open_read_path(
+        &mut self,
+        value: &str,
+        readable: bool,
+    ) -> Result<(Handle, rpc::Metadata)> {
         path(value)?;
         self.capacity()?;
-        match self
-            .exchange(Operation::OpenRead { path: value.into() }, None)
-            .await?
-        {
+        let path = value.into();
+        let operation = if readable {
+            Operation::OpenReadableFile { path }
+        } else {
+            Operation::OpenRead { path }
+        };
+        match self.exchange(operation, None).await? {
             (
                 Reply::File {
                     handle,
@@ -1007,6 +1138,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
                     State::Read {
                         path: value.into(),
                         size: metadata(&info)?,
+                        strict: !readable,
                     },
                 )?;
                 Ok((handle, info))
@@ -1068,7 +1200,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             return Err(Error::Invalid);
         }
         if let Some(handle) = expected {
-            if !matches!(self.state(handle)?, State::Read { path, .. } if path == value) {
+            if !matches!(self.state(handle)?, State::Read { path, strict: true, .. } if path == value)
+            {
                 return Err(Error::Invalid);
             }
         }
@@ -1182,11 +1315,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
         value: &str,
         sink: &mut (impl AsyncWrite + Unpin),
     ) -> Result<u64> {
+        self.download_path(value, sink, false).await
+    }
+    pub async fn download_readable_path(
+        &mut self,
+        value: &str,
+        sink: &mut (impl AsyncWrite + Unpin),
+    ) -> Result<u64> {
+        let readable = self.read_links_advertised();
+        self.download_path(value, sink, readable).await
+    }
+    async fn download_path(
+        &mut self,
+        value: &str,
+        sink: &mut (impl AsyncWrite + Unpin),
+        readable: bool,
+    ) -> Result<u64> {
         let transfer = Transfer {
             client: self,
             complete: false,
         };
-        let (handle, info) = transfer.client.open_read(value).await?;
+        let (handle, info) = transfer.client.open_read_path(value, readable).await?;
         let size = metadata(&info)?;
         let mut offset = 0;
         loop {
@@ -3236,11 +3385,19 @@ mod tests {
         scope: &rpc::HostScope,
         operations: Vec<String>,
     ) {
+        reviewed_host_open(peer, scope, rpc::HOST_VERSION, operations).await;
+    }
+    async fn reviewed_host_open(
+        peer: &mut DuplexStream,
+        scope: &rpc::HostScope,
+        version: u16,
+        operations: Vec<String>,
+    ) {
         write_frame(
             peer,
             rpc::HOST_DESCRIPTION,
             &json(&rpc::HostDescription {
-                version: rpc::HOST_VERSION,
+                version,
                 scope: scope.clone(),
                 filesystem: Some(limits()),
             })
@@ -3251,7 +3408,14 @@ mod tests {
         let (kind, bytes) = crate::wire::read_frame(peer).await.unwrap();
         assert_eq!(kind, rpc::OPEN);
         let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(open.version, rpc::HOST_REVIEWED_VERSION);
+        assert_eq!(
+            open.version,
+            if version == rpc::HOST_LOCATIONS_VERSION {
+                version
+            } else {
+                rpc::HOST_REVIEWED_VERSION
+            }
+        );
         assert_eq!(open.scope, *scope);
         reply(
             peer,
@@ -3278,7 +3442,7 @@ mod tests {
     }
     #[tokio::test]
     async fn allowed_locations_v4_opening_refuses_off_and_missing_mandatory_operations() {
-        for case in 0..4 {
+        for case in 0..5 {
             let scope = reviewed_scope();
             let expected = scope.clone();
             let (stream, mut peer) = tokio::io::duplex(8192);
@@ -3304,7 +3468,13 @@ mod tests {
                     let operations = match case {
                         1 => vec!["start_directory".into()],
                         2 => vec!["locations".into()],
-                        _ => vec!["locations".into(), "start_directory".into()],
+                        3 => vec!["locations".into(), "start_directory".into()],
+                        _ => vec![
+                            "locations".into(),
+                            "start_directory".into(),
+                            rpc::READ_LINKS_OPERATION.into(),
+                            rpc::READ_LINKS_OPERATION.into(),
+                        ],
                     };
                     reply(
                         &mut peer,
@@ -3349,6 +3519,339 @@ mod tests {
                 }
             }
         }
+    }
+
+    async fn readable_peer_open(peer: &mut DuplexStream, scope: &rpc::HostScope, links: bool) {
+        let mut operations = vec!["locations".into(), "start_directory".into()];
+        if links {
+            operations.push(rpc::READ_LINKS_OPERATION.into());
+        }
+        reviewed_host_open(peer, scope, rpc::HOST_LOCATIONS_VERSION, operations).await;
+    }
+    fn readable_directory_reply(handle: u32, read_only: bool) -> Reply {
+        Reply::ReadableDirectory {
+            handle,
+            metadata: rpc::Metadata {
+                kind: rpc::Kind::Directory,
+                size: "0".into(),
+                modified_ms: None,
+            },
+            read_only,
+        }
+    }
+    fn readable_file_info() -> rpc::Metadata {
+        rpc::Metadata {
+            kind: rpc::Kind::File,
+            size: "1".into(),
+            modified_ms: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn readable_links_negotiate_per_connection_and_keep_reads_separate_from_expected_proof() {
+        const PATH: &str = "/01234567890123456789012345678901/alias";
+        for links in [false, true] {
+            let scope = reviewed_scope();
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                readable_peer_open(&mut peer, &expected, links).await;
+
+                let stat = request(&mut peer).await;
+                let metadata = readable_file_info();
+                let result = if links {
+                    assert!(
+                        matches!(stat.operation, Operation::StatReadable { path } if path == PATH)
+                    );
+                    Reply::ReadableStat {
+                        metadata,
+                        read_only: true,
+                    }
+                } else {
+                    assert!(matches!(stat.operation, Operation::Stat { path } if path == PATH));
+                    Reply::Stat { metadata }
+                };
+                reply(&mut peer, stat.id, result).await;
+
+                let strict = request(&mut peer).await;
+                assert!(
+                    matches!(strict.operation, Operation::OpenDirectory { path } if path == PATH)
+                );
+                reply(&mut peer, strict.id, Reply::Directory { handle: 1 }).await;
+                let opened = request(&mut peer).await;
+                let result = if links {
+                    assert!(
+                        matches!(opened.operation, Operation::OpenReadableDirectory { path } if path == PATH)
+                    );
+                    readable_directory_reply(2, true)
+                } else {
+                    assert!(
+                        matches!(opened.operation, Operation::OpenDirectory { path } if path == PATH)
+                    );
+                    Reply::Directory { handle: 2 }
+                };
+                reply(&mut peer, opened.id, result).await;
+
+                for handle in [2, 1] {
+                    let page = request(&mut peer).await;
+                    assert!(
+                        matches!(page.operation, Operation::ReadDirectory { handle: got, limit: 1 } if got == handle)
+                    );
+                    let result = if links && handle == 2 {
+                        Reply::ReadableEntries {
+                            entries: vec![rpc::ReadableEntry {
+                                name: "child".into(),
+                                kind: rpc::Kind::File,
+                                read_only: true,
+                            }],
+                            done: true,
+                            skipped: 0,
+                        }
+                    } else {
+                        Reply::Entries {
+                            entries: vec![rpc::Entry {
+                                name: "child".into(),
+                                kind: rpc::Kind::File,
+                            }],
+                            done: true,
+                            skipped: 0,
+                        }
+                    };
+                    reply(&mut peer, page.id, result).await;
+                }
+
+                let file = request(&mut peer).await;
+                if links {
+                    assert!(
+                        matches!(file.operation, Operation::OpenReadableFile { path } if path == PATH)
+                    );
+                } else {
+                    assert!(matches!(file.operation, Operation::OpenRead { path } if path == PATH));
+                }
+                reply(
+                    &mut peer,
+                    file.id,
+                    Reply::File {
+                        handle: 3,
+                        metadata: readable_file_info(),
+                    },
+                )
+                .await;
+                let strict = request(&mut peer).await;
+                assert!(matches!(strict.operation, Operation::OpenRead { path } if path == PATH));
+                reply(
+                    &mut peer,
+                    strict.id,
+                    Reply::File {
+                        handle: 4,
+                        metadata: readable_file_info(),
+                    },
+                )
+                .await;
+                let upload = request(&mut peer).await;
+                assert!(
+                    matches!(upload.operation, Operation::BeginUpload { path, expected: Some(4), .. } if path == PATH)
+                );
+                reply(&mut peer, upload.id, Reply::Upload { handle: 5 }).await;
+
+                let opened = request(&mut peer).await;
+                if links {
+                    assert!(
+                        matches!(opened.operation, Operation::OpenReadableFile { path } if path == PATH)
+                    );
+                } else {
+                    assert!(
+                        matches!(opened.operation, Operation::OpenRead { path } if path == PATH)
+                    );
+                }
+                reply(
+                    &mut peer,
+                    opened.id,
+                    Reply::File {
+                        handle: 6,
+                        metadata: readable_file_info(),
+                    },
+                )
+                .await;
+                let read = request(&mut peer).await;
+                assert!(
+                    matches!(read.operation, Operation::Read { handle: 6, offset, .. } if offset == "0")
+                );
+                reply(
+                    &mut peer,
+                    read.id,
+                    Reply::Read {
+                        offset: "0".into(),
+                        length: 1,
+                        eof: true,
+                    },
+                )
+                .await;
+                let mut data = read.id.to_be_bytes().to_vec();
+                data.push(b'a');
+                write_frame(&mut peer, rpc::DATA, &data).await.unwrap();
+                let close = request(&mut peer).await;
+                assert!(matches!(close.operation, Operation::Close { handle: 6 }));
+                reply(&mut peer, close.id, Reply::Closed).await;
+                assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
+            });
+            let (mut client, _) = Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(client.read_links_advertised(), links);
+            assert_eq!(
+                client.stat_readable_path(PATH).await.unwrap().read_only,
+                links
+            );
+            let strict = client.open_directory(PATH).await.unwrap();
+            let readable = client.open_readable_directory(PATH).await.unwrap();
+            assert!(client.directory_metadata(&strict).unwrap().is_none());
+            assert_eq!(
+                client
+                    .directory_metadata(&readable)
+                    .unwrap()
+                    .map(|info| info.read_only),
+                links.then_some(true)
+            );
+            assert_eq!(
+                client.read_directory(&readable, 1).await.unwrap().entries[0].read_only,
+                links
+            );
+            assert!(!client.read_directory(&strict, 1).await.unwrap().entries[0].read_only);
+            let (readable, _) = client.open_readable_file(PATH).await.unwrap();
+            assert!(matches!(
+                client.directory_metadata(&readable),
+                Err(Error::Invalid)
+            ));
+            if links {
+                assert!(matches!(
+                    client.begin_upload(PATH, 1, Some(&readable)).await,
+                    Err(Error::Invalid)
+                ));
+            }
+            let (strict, _) = client.open_read(PATH).await.unwrap();
+            client.begin_upload(PATH, 1, Some(&strict)).await.unwrap();
+            let mut downloaded = Vec::new();
+            assert_eq!(
+                client
+                    .download_readable_path(PATH, &mut downloaded)
+                    .await
+                    .unwrap(),
+                1
+            );
+            assert_eq!(downloaded, b"a");
+            client.cancel();
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn readable_links_reject_a_page_that_disagrees_with_its_opened_directory() {
+        for (opened_readable, tagged_page) in [(true, false), (false, true), (true, true)] {
+            let scope = reviewed_scope();
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                readable_peer_open(&mut peer, &expected, true).await;
+                let open = request(&mut peer).await;
+                let opened = if opened_readable {
+                    readable_directory_reply(1, true)
+                } else {
+                    Reply::Directory { handle: 1 }
+                };
+                reply(&mut peer, open.id, opened).await;
+                let page = request(&mut peer).await;
+                let result = if tagged_page {
+                    Reply::ReadableEntries {
+                        entries: vec![rpc::ReadableEntry {
+                            name: "child".into(),
+                            kind: rpc::Kind::Directory,
+                            read_only: false,
+                        }],
+                        done: true,
+                        skipped: 0,
+                    }
+                } else {
+                    Reply::Entries {
+                        entries: Vec::new(),
+                        done: true,
+                        skipped: 0,
+                    }
+                };
+                reply(&mut peer, page.id, result).await;
+                assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
+            });
+            let (mut client, _) = Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let directory = if opened_readable {
+                client.open_readable_directory("/alias").await.unwrap()
+            } else {
+                client.open_directory("/alias").await.unwrap()
+            };
+            assert!(matches!(
+                client.read_directory(&directory, 1).await,
+                Err(Error::Protocol)
+            ));
+            assert!(!client.available());
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn readable_links_do_not_retry_a_denied_readable_path_as_strict() {
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            readable_peer_open(&mut peer, &expected, true).await;
+            let call = request(&mut peer).await;
+            assert!(
+                matches!(call.operation, Operation::OpenReadableFile { path } if path == "/alias")
+            );
+            let refusal = rpc::Response {
+                id: call.id,
+                result: None,
+                error: Some(rpc::ErrorCode::Denied),
+                recovery_path: None,
+            };
+            write_frame(&mut peer, rpc::RESPONSE, &json(&refusal).unwrap())
+                .await
+                .unwrap();
+            let call = request(&mut peer).await;
+            assert!(matches!(call.operation, Operation::Ping {}));
+            reply(&mut peer, call.id, Reply::Pong).await;
+        });
+        let (mut client, _) = Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            client.open_readable_file("/alias").await,
+            Err(Error::Remote {
+                code: rpc::ErrorCode::Denied,
+                ..
+            })
+        ));
+        client.ping().await.unwrap();
+        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -3462,6 +3965,11 @@ mod tests {
     {
         for operations in [
             vec!["delete".into(), "delete".into()],
+            vec![
+                "locations".into(),
+                "start_directory".into(),
+                rpc::READ_LINKS_OPERATION.into(),
+            ],
             vec!["optional".into(); rpc::OPERATION_LIMIT + 1],
             vec!["x".repeat(rpc::OPERATION_NAME_LIMIT + 1)],
             vec!["bad\nname".into()],
