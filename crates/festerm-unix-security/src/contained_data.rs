@@ -1,5 +1,8 @@
 //! HOST's explicitly reviewed ordinary-data reads. Private state/publication
 //! continue to use the existing strict primitives in lib.rs.
+mod link;
+pub use link::{pin_data_link, RetainedDataLink};
+
 use nix::libc;
 use std::{
     ffi::CString,

@@ -21,6 +21,8 @@ pub fn has_console_window() -> bool {
 
 #[cfg(windows)]
 mod imp {
+    pub(super) mod retained_link;
+
     use std::{
         fs::{File, OpenOptions},
         io, mem,
@@ -4286,6 +4288,9 @@ mod imp {
         }
     }
 }
+
+#[cfg(windows)]
+pub use imp::retained_link::{RetainedDataLink, WindowsLinkTarget};
 
 #[cfg(windows)]
 pub use imp::{

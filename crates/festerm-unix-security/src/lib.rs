@@ -13,8 +13,8 @@ mod contained_data;
 pub use contained_data::open_mutation_file_nofollow;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use contained_data::{
-    open_contained_data_directory, open_contained_data_file, qualify_data_mutation_ancestor,
-    same_data_object,
+    open_contained_data_directory, open_contained_data_file, pin_data_link,
+    qualify_data_mutation_ancestor, same_data_object, RetainedDataLink,
 };
 #[cfg(target_os = "macos")]
 pub use contained_data::{open_trusted_data_file, ownership_enforcing_data_filesystem};

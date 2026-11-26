@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "1423f7964827e8c42c7b2e82247d7e916de7ecf976a9ee4fe05ae91119a7145c"} -->
+<!-- agent-navigation: {"domain": "config-secrets", "generator": "2", "model": "codex-source-verified", "sources": "55ea4448b63242228de3c27aa3ad58b2ddfc8426648ae873d439e375dc8739de"} -->
 # Configuration, workspace, and secrets
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -22,7 +22,6 @@ Evidence:
 Caveats:
 - Diagnostics hide the selected file path and TOML.
 - Unknown or busy writes latch the save gate until restart.
-- The selected source is intentionally private to this module.
 
 ## Config schema
 
@@ -39,7 +38,6 @@ Evidence:
 Caveats:
 - Workspace metadata is valid only when workspace_enabled is true and the document is non-empty.
 - Profile IDs and workspace tab profile_id references must stay unique and valid.
-- Config files store metadata, never session content or secret bytes.
 
 ## Secret boundary
 
@@ -60,11 +58,12 @@ Caveats:
 
 ## File security
 
-Use for: Private publication.
+Use for: Private publication and link metadata.
 
 - [`make_private_directory`](../../crates/festerm-unix-security/src/lib.rs) — Checks private ownership.
 - [`create_current_user_only_file`](../../crates/festerm-windows-security/src/lib.rs) — Creates a private DACL file.
-- [`open_ios_selected_directory`](../../crates/festerm-secret-store/src/native_root.rs) — Searches ancestors; reads the selected root.
+- [`pin_data_link`](../../crates/festerm-unix-security/src/contained_data/link.rs) — Metadata only.
+- [`open_ios_selected_directory`](../../crates/festerm-secret-store/src/native_root.rs) — Checks the selected root.
 
 Evidence:
 - [`private_directory_clears_inherited_access`](../../crates/festerm-unix-security/src/lib.rs) — Checks inherited ACL cleanup.
@@ -72,7 +71,6 @@ Evidence:
 
 Caveats:
 - Private creation retains owner, ACL, no-follow, descriptor and receipt-child checks.
-- Configuration and workspace files contain metadata, never credential or terminal content.
 - File-security helpers are about publication safety, not connection authority.
 
 ## Program storage settings
