@@ -996,7 +996,16 @@ async fn run_to_completion(
 ) -> io::Result<()> {
     let log = RuntimeLog::new(state, record);
     persist_diagnostic(&store, record, Some(&log))?;
-    let result = run_reserved(store.clone(), state, snapshot, record, cancel.clone()).await;
+    // Keep the serving state machine off callers' startup stacks, including
+    // refusal paths whose outer futures still contain the maximum await state.
+    let result = Box::pin(run_reserved(
+        store.clone(),
+        state,
+        snapshot,
+        record,
+        cancel.clone(),
+    ))
+    .await;
     let result = if cancel.is_cancelled() && result.as_ref().is_err_and(crate::cloud::is_cancelled)
     {
         Ok(())

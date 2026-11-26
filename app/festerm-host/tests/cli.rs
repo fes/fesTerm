@@ -94,7 +94,13 @@ fn host_process_recovery_managed_entries_fail_closed_without_registration_and_st
             .arg(&state)
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "origin={origin:?} command={run} status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(output.stdout.is_empty());
         assert!(!String::from_utf8_lossy(&output.stderr).contains("invalid_arguments"));
         let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
@@ -102,7 +108,12 @@ fn host_process_recovery_managed_entries_fail_closed_without_registration_and_st
             .arg(&state)
             .output()
             .unwrap();
-        assert!(output.status.success());
+        assert!(
+            output.status.success(),
+            "origin={origin:?} command={status} status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert!(report["managed_result"].is_null());
         assert!(report["last_run"].is_null());
@@ -269,7 +280,13 @@ fn headless_run_requires_current_consent_and_history_never_claims_liveness() {
         .arg(&state)
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "origin=Headless command=run status={:?} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(std::fs::read_dir(&state).unwrap().count(), 2);
     let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
         .args(["run-status", "--state-dir"])
@@ -696,4 +713,47 @@ fn host_start_directory_capability_is_separate_and_has_no_state_effects() {
         .as_bytes()
     );
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[cfg(feature = "owner-routing")]
+#[test]
+fn host_runtime_public_entry_futures_fit_stack_budget() {
+    use festerm_host_setup::{
+        controller,
+        lifecycle::{Origin, Store},
+    };
+    use std::{future::Future, path::Path, sync::Arc};
+    use tokio_util::sync::CancellationToken;
+    // Infer the production dependency's future types without constructing or
+    // polling them: no store, runtime, native admission or filesystem effects.
+    fn bytes<A, F: Future>(_: impl FnOnce(A) -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    let direct = bytes(
+        |(store, state, cancel): (Arc<Store>, &'static Path, CancellationToken)| {
+            controller::run(store, state, cancel)
+        },
+    );
+    let managed = bytes(|(state, cancel): (&'static Path, CancellationToken)| {
+        controller::managed::run_from_path(state, Origin::Headless, cancel)
+    });
+    let worker = bytes(|(state, cancel): (&'static Path, CancellationToken)| {
+        controller::managed::run_windows_desktop_worker_from_path(state, cancel)
+    });
+    eprintln!("entry_future_bytes direct={direct} managed={managed} windows_worker={worker}");
+    // Project layout budget for entry state across CLI/signal/Tokio copies:
+    // 8 KiB leaves >6x room above the measured boxed entry and headroom for
+    // bootstrap/poll frames. This is not a total stack guarantee or an OS
+    // stack-size change; the serving state machine belongs on the heap.
+    const ENTRY_FUTURE_BUDGET: usize = 8 * 1024;
+    for (entry, size) in [
+        ("direct", direct),
+        ("managed", managed),
+        ("windows-worker", worker),
+    ] {
+        assert!(
+            size <= ENTRY_FUTURE_BUDGET,
+            "{entry} entry future is {size} bytes; budget={ENTRY_FUTURE_BUDGET}"
+        );
+    }
 }
