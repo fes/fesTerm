@@ -148,6 +148,9 @@ fn bounded_operations<'de, D: serde::Deserializer<'de>>(
 }
 impl OperationCapabilities {
     /// Unknown optional names are inert; protected policy remains strictly typed.
+    pub fn allows_display_root(&self) -> bool {
+        self.operations.iter().any(|name| name == "display_root")
+    }
     pub fn allows_delete(&self) -> bool {
         self.operations.iter().any(|name| name == "delete")
     }
@@ -167,6 +170,12 @@ impl OperationCapabilities {
                 .operations
                 .iter()
                 .filter(|name| name.as_str() == "delete")
+                .count()
+                <= 1
+            && self
+                .operations
+                .iter()
+                .filter(|name| name.as_str() == "display_root")
                 .count()
                 <= 1
             && (!self.allows_delete() || self.write)
@@ -194,6 +203,46 @@ pub struct Discovery {
     pub filesystem: Option<Capabilities>,
 }
 
+/// Authorized presentation metadata only; never a filesystem request path.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct DisplayRoot(String);
+impl DisplayRoot {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl std::fmt::Debug for DisplayRoot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DisplayRoot([redacted])")
+    }
+}
+impl TryFrom<String> for DisplayRoot {
+    type Error = &'static str;
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        let bytes = value.as_bytes();
+        let absolute = value.starts_with('/')
+            || (bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\'))
+            || value.strip_prefix("\\\\").is_some_and(|unc| {
+                let mut parts = unc.split('\\');
+                parts.next().is_some_and(|part| !part.is_empty())
+                    && parts.next().is_some_and(|part| !part.is_empty())
+            });
+        if !absolute || value.len() > 4096 || value.chars().any(char::is_control) {
+            return Err("invalid display root");
+        }
+        Ok(Self(value))
+    }
+}
+impl From<DisplayRoot> for String {
+    fn from(value: DisplayRoot) -> Self {
+        value.0
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -204,6 +253,7 @@ pub struct Request {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    DisplayRoot {},
     ReviewEntry {
         path: String,
         purpose: ReviewPurpose,
@@ -277,6 +327,9 @@ pub struct Entry {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Result {
+    DisplayRoot {
+        root: DisplayRoot,
+    },
     ReadyV3 {
         capabilities: OperationCapabilities,
     },
@@ -391,6 +444,90 @@ pub fn decimal(value: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_root_is_portable_bounded_and_redacted() {
+        for value in [
+            "/Users/example",
+            "C:\\Users\\example",
+            "\\\\server\\share",
+            "/",
+        ] {
+            let root = DisplayRoot::try_from(value.to_owned()).unwrap();
+            assert_eq!(root.as_str(), value);
+            let reply = Result::DisplayRoot { root };
+            let encoded = serde_json::to_vec(&reply).unwrap();
+            assert!(serde_json::from_slice::<Result>(&encoded).is_ok());
+            assert!(!format!("{reply:?}").contains(value));
+        }
+        for value in [
+            "relative".to_owned(),
+            "C:relative".into(),
+            "\\\\".into(),
+            "\\\\server".into(),
+            "/bad\npath".into(),
+            format!("/{}", "x".repeat(4096)),
+        ] {
+            assert!(DisplayRoot::try_from(value.clone()).is_err());
+            let encoded = serde_json::json!({"type":"display_root", "root":value});
+            assert!(serde_json::from_value::<Result>(encoded).is_err());
+        }
+        assert!(DisplayRoot::try_from(format!("/{}", "x".repeat(4095))).is_ok());
+    }
+
+    #[test]
+    fn display_root_keeps_historical_greetings_strict_and_optional_names_inert() {
+        // Frozen ReadyV3/capability definitions from 2815f9fc: the historical
+        // decoder knows no display-root field or operation semantics.
+        #[derive(Deserialize, Serialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldCapabilities {
+            version: u16,
+            write: bool,
+            #[serde(deserialize_with = "bounded_operations")]
+            operations: Vec<String>,
+            chunk_limit: usize,
+            page_limit: u16,
+            handle_limit: usize,
+        }
+        #[derive(Deserialize, Serialize)]
+        #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+        enum OldResult {
+            ReadyV3 { capabilities: OldCapabilities },
+        }
+        let old = br#"{"type":"ready_v3","capabilities":{"version":3,"write":false,"operations":[],"chunk_limit":65536,"page_limit":64,"handle_limit":8}}"#;
+        let old_value: serde_json::Value = serde_json::from_slice(old).unwrap();
+        let current_reads_old: Result = serde_json::from_slice(old).unwrap();
+        assert_eq!(serde_json::to_vec(&current_reads_old).unwrap(), old);
+        // Use actual constants so this fixture guards the shape, not an
+        // invented capability negotiation.
+        let capabilities = OperationCapabilities {
+            version: HOST_REVIEWED_VERSION,
+            write: false,
+            operations: vec![],
+            chunk_limit: CHUNK_LIMIT,
+            page_limit: PAGE_LIMIT,
+            handle_limit: HANDLE_LIMIT,
+        };
+        let greeting = Result::ReadyV3 {
+            capabilities: capabilities.clone(),
+        };
+        let bytes = serde_json::to_vec(&greeting).unwrap();
+        let historical: OldResult = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(serde_json::to_vec(&historical).unwrap(), bytes);
+        assert!(serde_json::from_value::<OldResult>(old_value).is_ok());
+        let mut advertised = serde_json::to_value(&greeting).unwrap();
+        advertised["capabilities"]["operations"] = serde_json::json!(["display_root"]);
+        let OldResult::ReadyV3 {
+            capabilities: old_caps,
+        } = serde_json::from_value::<OldResult>(advertised.clone()).unwrap();
+        assert_eq!(old_caps.operations, ["display_root"]);
+        assert!(!old_caps.operations.iter().any(|name| name == "delete"));
+        assert!(serde_json::from_value::<Result>(advertised).is_ok());
+        let mut unsolicited = serde_json::to_value(greeting).unwrap();
+        unsolicited["display_root"] = "/Users/example".into();
+        assert!(serde_json::from_value::<OldResult>(unsolicited).is_err());
+    }
 
     #[test]
     fn host_files_opening_is_strict_and_keeps_legacy_messages_separate() {

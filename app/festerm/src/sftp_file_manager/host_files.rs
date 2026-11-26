@@ -16,6 +16,7 @@ pub(super) struct FilesSource {
     epoch: u64,
     binding: String,
     pub(super) delete_advertised: bool,
+    pub(super) display_root: Option<festerm_tunnel_bridge::file_protocol::DisplayRoot>,
 }
 impl FilesSource {
     #[cfg(test)]
@@ -28,6 +29,7 @@ impl FilesSource {
             epoch: 1,
             binding: "owned-test-binding".into(),
             delete_advertised,
+            display_root: None,
         }
     }
 
@@ -40,6 +42,7 @@ impl FilesSource {
         let info = files.host_info();
         Ok(Self {
             delete_advertised: files.delete_advertised(),
+            display_root: None,
             host: target.locator.clone(),
             port: info.route.port,
             account_id,
@@ -189,7 +192,7 @@ async fn files_operations(
         connection_scope: scope,
         reporter: _,
     } = notifications;
-    let source = FilesSource::new(&target, connection.account_id, &connection.browsing)?;
+    let mut source = FilesSource::new(&target, connection.account_id, &connection.browsing)?;
     let lifetime = connection.lifetime;
     let mut browsing = FilesEndpoint::new(
         connection.browsing,
@@ -206,6 +209,12 @@ async fn files_operations(
         ),
     ));
     let manager = transfers.as_mut().expect("installed Files manager");
+    source.display_root = browsing
+        .client_without_reviews()
+        .map_err(|error| error.to_string())?
+        .display_root()
+        .await
+        .map_err(|error| error.to_string())?;
     let (snapshot, metadata, skipped) = browsing
         .directory_snapshot("/")
         .await

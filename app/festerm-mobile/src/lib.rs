@@ -3581,6 +3581,10 @@ impl MobileApp {
                 back = header.back;
                 chip_action = header.chip;
                 let menu = egui::Popup::menu(&header.more).show(|ui| {
+                    #[cfg(feature = "host-clients")]
+                    if self.workspace == workspaces::Workspace::Files {
+                        self.show_host_files_profile_control(ui);
+                    }
                     if ui.button("Documents").clicked() {
                         self.park_active();
                         self.documents.active = None;

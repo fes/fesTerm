@@ -496,6 +496,29 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (19.0, 17.0),
             ]),
         ],
+        Icon::NewFolder => &[
+            Primitive::Polyline(&[
+                (3.0, 8.0),
+                (3.0, 5.0),
+                (10.0, 5.0),
+                (13.0, 8.0),
+            ]),
+            Primitive::Polyline(&[
+                (3.0, 8.0),
+                (21.0, 8.0),
+                (21.0, 20.0),
+                (3.0, 20.0),
+                (3.0, 8.0),
+            ]),
+            Primitive::Polyline(&[
+                (12.0, 11.0),
+                (12.0, 17.0),
+            ]),
+            Primitive::Polyline(&[
+                (9.0, 14.0),
+                (15.0, 14.0),
+            ]),
+        ],
         Icon::NewProfile => &[
             Primitive::Polyline(&[
                 (12.0, 5.0),

@@ -82,24 +82,19 @@ impl MobileApp {
                 && !session.transfers_sheet
                 && session.conflict().is_none()
         });
-        let save = egui::Frame::new()
-            .inner_margin(egui::Margin::symmetric(theme::space::LG as i8, 0))
-            .show(ui, |ui| {
-                widgets::button(
-                    ui,
-                    widgets::ButtonKind::Secondary,
-                    if existing {
-                        "Edit Files profile"
-                    } else {
-                        "Save as profile"
-                    },
-                    ready,
-                )
-            });
-        if save.inner.clicked() {
+        let save = ui.add_enabled(
+            ready,
+            egui::Button::new(if existing {
+                "Edit Files profile"
+            } else {
+                "Save as profile"
+            })
+            .min_size(egui::vec2(0.0, 44.0)),
+        );
+        if save.clicked() {
             self.begin_host_files_profile();
+            ui.close();
         }
-        ui.add_space(theme::space::SM);
     }
 
     fn begin_host_files_profile(&mut self) {
@@ -415,7 +410,7 @@ mod tests {
     fn saving_a_new_shortcut_rebinds_only_after_explicit_save_and_preserves_typed_name() {
         for width in [360.0, 375.0] {
             use egui_kittest::{kittest::Queryable, Harness};
-            use files_fixture::{FixtureFs, FixtureTransfers};
+            use files_fixture::{fixture_entry, FixtureFs, FixtureTransfers};
             use std::sync::Arc;
             let (mut app, id, _) = fixture();
             let mut target = app.saved_host_files_target(&id).unwrap();
@@ -433,7 +428,23 @@ mod tests {
                 Arc::new(FixtureFs {
                     kind,
                     home: "/",
-                    entries: vec![],
+                    entries: (0..10)
+                        .map(|index| {
+                            fixture_entry(
+                                &format!(
+                                    "{}-{index}.txt",
+                                    if kind == festerm_sftp::PaneKind::Remote {
+                                        "remote"
+                                    } else {
+                                        "local"
+                                    }
+                                ),
+                                false,
+                                5,
+                                1,
+                            )
+                        })
+                        .collect(),
                 })
             };
             app.files = Some(Box::new(files::FilesSession::ready(
@@ -450,17 +461,42 @@ mod tests {
                 &egui::Context::default(),
             )));
             app.files_ctx.host = Some(target);
+            app.files_ctx.only = true;
+            app.surface = Surface::Terminal;
+            app.workspace = workspaces::Workspace::Files;
             let mut harness = Harness::builder()
-                .with_size(egui::vec2(width, 844.0))
-                .build_ui_state(|ui, app: &mut MobileApp| app.show_files_body(ui), app);
+                .with_size(egui::vec2(width, 853.0))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            harness.run_steps(5);
+            let remote = harness.get_by_label("New remote folder").rect();
+            let local = harness.get_by_label("New local folder").rect();
+            for rect in [remote, local] {
+                assert!(rect.width() >= 44.0 && rect.height() >= 44.0);
+                assert!(rect.left() >= 16.0 && rect.right() <= width - 16.0);
+            }
+            let upload = harness.get_by_label("Upload").rect();
+            let download = harness.get_by_label("Download").rect();
+            assert_eq!(upload.top(), download.top(), "transfers share one row");
+            assert!(
+                harness.get_by_label("remote-2.txt").rect().bottom() <= upload.top(),
+                "three complete remote rows at {width}"
+            );
+            assert!(
+                harness.get_by_label("local-2.txt").rect().bottom()
+                    <= harness.get_by_label("Transfers").rect().top(),
+                "three complete local rows at {width}"
+            );
+            assert!(
+                harness.query_by_label("Save as profile").is_none(),
+                "Save must not consume list space"
+            );
+            harness.get_by_label("More").click();
             harness.run_steps(3);
             let save = harness.get_by_label("Save as profile");
-            let rect = save.rect();
-            assert!(
-                rect.left() >= 16.0 && rect.right() <= width - 16.0,
-                "Files action must keep body padding at {width}: {rect:?}"
-            );
-            assert!(rect.height() >= 44.0);
+            assert!(save.rect().height() >= 44.0);
             save.click();
             harness.run_steps(3);
             let app = harness.state_mut();

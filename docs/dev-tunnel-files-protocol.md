@@ -203,7 +203,8 @@ Only this mode receives distinct kind32/ID0 ReadyV3:
 {"id":0,"result":{"type":"ready_v3","capabilities":{"version":3,"write":true,"operations":[],"chunk_limit":65536,"page_limit":64,"handle_limit":8}}}
 ```
 
-ReadyV3 uses a bounded explicit `operations:["delete"]` list, not a new policy
+ReadyV3 uses a bounded explicit optional-operation list (for example
+`operations:["delete"]`), not a new policy
 language: at most 16 names, each 1–32 UTF-8 bytes without control characters.
 Unknown optional names are ignored and grant nothing; duplicate known names
 refuse. Only implemented, explicitly consented operations are advertised.
@@ -634,3 +635,35 @@ The last deletion result stays visible across repeated connection-failure frames
 Both remain explicit failures with
 no automatic retry or replay. These source/framed/UI tests do not qualify native
 mobile Files behavior, durable recovery, recursive Delete or background work.
+
+
+### Optional display-root presentation
+
+A reviewed Files stream may advertise `display_root` in its existing bounded
+optional operation names. After authenticated Files opening and successful
+native-root admission, a new client may send `{"op":"display_root"}` and receive
+`{"type":"display_root","root":"/Users/example"}` using the existing request ID
+and response envelope. The request carries no filesystem path. It is read-only
+and retains ordinary per-request account, policy, deadline and disclosure checks.
+Legacy/Open2 does not offer this operation. Ready and ReadyV3 greeting fields
+and legacy bytes are unchanged; old clients ignore the optional name, and new
+clients send no query when it is absent.
+
+Desktop and mobile Files query the browsing stream once before the first
+directory snapshot. The connection view retains the typed, Debug-redacted label;
+Desktop clears its label on authority retirement. Desktop changes only the root
+breadcrumb label; each clickable target and the inline path editor remain
+virtual. Up is disabled at the configured virtual root. Ordinary SFTP labels
+and path semantics are unchanged.
+
+The response label is at most 4096 UTF-8 bytes, control-character-free and an
+absolute POSIX, Windows drive or UNC display path. Portable validation does not
+use the client's native path parser. Debug output redacts it. Both clients use
+the existing filename display sanitizer when painting the label, replacing bidi/invisible formatters while
+preserving ordinary RTL letters and the raw typed metadata. A local current-
+authority check masks cached physical labels before polling, without filesystem
+or network I/O. It lives only in the authorized view and never in inventory, credentials, profiles or request
+path construction. All actual filesystem requests still use the virtual `/`
+namespace with the configured parent fence and no-follow behavior. Old servers
+fall back to Shared folder, without inventing a physical Home path. This adds
+no mounted-volume, multi-root or symlink-following authority.

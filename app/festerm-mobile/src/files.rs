@@ -94,6 +94,9 @@ impl TransferRow {
 pub(crate) mod deletion;
 
 pub(crate) trait Transfers: Send + Sync {
+    fn remote_root_label(&self) -> String {
+        "/".into()
+    }
     #[cfg(feature = "host-clients")]
     fn delete_available(&self) -> bool {
         false
@@ -452,7 +455,7 @@ impl Pane {
     pub(crate) fn crumbs(&self, root_label: &str) -> Vec<(String, String)> {
         let remote = self.fs.kind() == festerm_sftp::PaneKind::Remote;
         let mut crumbs = vec![(
-            if remote { "/" } else { root_label }.to_owned(),
+            root_label.to_owned(),
             if remote { "/" } else { "" }.to_owned(),
         )];
         let mut path = String::new();
@@ -565,6 +568,12 @@ pub(crate) struct FilesSession {
 }
 
 impl FilesSession {
+    pub(crate) fn remote_root_label(&self) -> String {
+        self.transfers
+            .as_ref()
+            .map_or_else(|| "/".into(), |transfers| transfers.remote_root_label())
+    }
+
     pub(crate) fn connecting(
         title: String,
         subtitle: String,
@@ -1208,6 +1217,76 @@ mod tests {
         pane.toggle("README.md");
         assert!(pane.selected_files().is_empty());
         assert_eq!(pane.crumbs("Documents")[1].0, "srv");
+    }
+
+    #[test]
+    fn files_physical_root_is_display_only_and_unsupported_entries_are_unavailable() {
+        use egui_kittest::{
+            kittest::{By, Queryable},
+            Harness,
+        };
+        for root in ["/Users/example", "C:\\Users\\example", "Shared folder"] {
+            for width in [360.0, 375.0] {
+                let ctx = egui::Context::default();
+                let mut transfers = FixtureTransfers::new(Vec::new());
+                transfers.display_root = Some(root.into());
+                let mut data = ready(Arc::new(transfers));
+                data.start_dir = Some("/".into());
+                data.remote_write = false;
+                let mut session = FilesSession::ready("Files".into(), "Host".into(), data, &ctx);
+                settle(&mut session, &ctx);
+                let pane = session.remote.as_mut().unwrap();
+                let mut entry = crate::files_fixture::fixture_entry("src", false, 0, 1);
+                entry.kind = EntryKind::Other;
+                pane.listing.as_mut().unwrap().entries.push(entry);
+                assert_eq!(pane.crumbs(root)[0], (root.into(), "/".into()));
+                assert!(!pane.can_go_up());
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(width, 853.0))
+                    .build_ui_state(
+                        |ui, session: &mut FilesSession| {
+                            crate::files_ui::show(ui, session);
+                        },
+                        session,
+                    );
+                harness.run();
+                harness.get_by_label(root);
+                harness.get(
+                    By::new()
+                        .label("src — Unavailable")
+                        .predicate(|node| node.is_disabled()),
+                );
+                harness.get(
+                    By::new()
+                        .label("New remote folder")
+                        .predicate(|node| node.is_disabled()),
+                );
+                harness.get(
+                    By::new()
+                        .label("New local folder")
+                        .predicate(|node| !node.is_disabled()),
+                );
+                assert_eq!(
+                    harness
+                        .get_all(
+                            By::new()
+                                .label("Parent folder")
+                                .predicate(|node| node.is_disabled())
+                        )
+                        .count(),
+                    2,
+                    "both the virtual remote root and Documents root disable Up"
+                );
+                assert!(harness
+                    .state()
+                    .remote
+                    .as_ref()
+                    .unwrap()
+                    .selected_files()
+                    .is_empty());
+                assert_eq!(harness.state().remote.as_ref().unwrap().path, "/");
+            }
+        }
     }
 
     #[test]

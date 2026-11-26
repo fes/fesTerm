@@ -50,6 +50,7 @@ tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-powershell = { path = "../../crates/festerm-powershell" }
 festerm-serial = { path = "../../crates/festerm-serial" }
+festerm-sftp = { path = "../../crates/festerm-sftp" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
