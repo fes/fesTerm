@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "435b8c0defbfc10660e583808b2ab745f3f34716c0e3c39bcbb0b365175a0628"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "50f2553ef5670579977d51834cb8be1340f75e12e7cc264370bd86235a3ae779"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

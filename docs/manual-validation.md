@@ -6286,6 +6286,22 @@ update and true missing owner-only consent. Provider-owner with no enrolled
 keys alone is not missing owner-only consent. No permission grant, automatic
 retry, plaintext fallback or rollback-check bypass is authorized by a diagnostic.
 
+HOST-04 interrupted bound setup: native HOST27 reproduced noninteractive
+Recovery authentication refusal after cancelled reauthentication, with the
+original bound receipt and pending intent retained. The GUI-local **Review
+interrupted setup…** / **Discard interrupted setup** route preserves the host
+and sessions, keeps access off and claims no cloud presence. Portable fixtures
+cover full snapshot/cloud-byte CAS, malformed or foreign facts, cancelled/busy
+work, one-use review, publication errors and byte-exact archive preservation.
+A separate portable version27 manager-stop component is not integrated native
+discard evidence. Qualify signed GUI28 against the retained HOST27: discard
+only the current interrupted setup, separately Disable with exact native stop
+proof, then separately Enable and approve a fresh same-account device flow.
+Verify original binding/settings, cloud receipt, catalog and durable sessions
+remain intact; no Create/Delete, replacement, implicit Start or file grant may
+result from discard. New signed native recovery remains pending; no store reset,
+credential recreation, manual journal edit or permission bypass qualifies it.
+
 HOST-04 / DT-05 / DIAG-01 initial runtime preparation also records finite
 `host.runtime` outcomes for `helper_validation` and `initial_policy_prepare`
 before `relay_open`. Each existing call records only `ok` or `error`, using the

@@ -182,6 +182,21 @@ pub struct UncertainRecovery {
     epoch: u64,
 }
 
+/// Live review of an exact retained-bound interrupted Enable. No credential,
+/// provider observation or Enable authority; never serialized or logged.
+#[derive(Clone)]
+pub struct BoundEnableDiscardReview {
+    snapshot: Snapshot,
+    cloud_bytes: Vec<u8>,
+    used: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl std::fmt::Debug for BoundEnableDiscardReview {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("BoundEnableDiscardReview { .. }")
+    }
+}
+
 /// Cloud presence is not endpoint readiness. No variant claims Ready until
 /// service/channel/principal checks are composed by their separate owners.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -907,6 +922,100 @@ impl<'a> CloudHostAdapter<'a> {
         self.store
             .release_uncertain_enable(&record.ticket, recovery.epoch)?;
         Ok(Phase::Disabled)
+    }
+
+    /// Read-only proposal for a separate owner review. Initial credential history
+    /// is neither decoded nor retired; the cloud journal is captured byte-for-byte.
+    pub fn review_bound_enable_discard(
+        &self,
+        expected: &Snapshot,
+    ) -> io::Result<BoundEnableDiscardReview> {
+        self.store.with_locked(|directory, current| {
+            if current != expected {
+                return Err(refused("host.bound_enable_discard_scope_changed"));
+            }
+            let cloud_bytes = storage::read_private(directory, Path::new(RECORD), 16 * 1024)?;
+            self.require_bound_enable_discard(directory, current, &cloud_bytes)?;
+            Ok(BoundEnableDiscardReview {
+                snapshot: current.clone(),
+                cloud_bytes: cloud_bytes.to_vec(),
+                used: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            })
+        })
+    }
+
+    /// Explicit local discard only. Never opens a credential store or provider,
+    /// changes cloud facts, stops a process, or composes a new Enable.
+    pub fn discard_bound_enable(
+        &self,
+        reviewed: &BoundEnableDiscardReview,
+        cancel: &CancellationToken,
+    ) -> io::Result<Snapshot> {
+        if reviewed
+            .used
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(refused("host.bound_enable_discard_review_consumed"));
+        }
+        if cancel.is_cancelled() {
+            return Err(refused("host.cloud_cancelled"));
+        }
+        // Missing operation history is not permission to create a new lock.
+        let _operation = self.store.with_locked(|directory, _| {
+            Lease::exclusive(storage::open_private_file(
+                directory,
+                Path::new(LOCK),
+                false,
+            )?)
+        })?;
+        self.store
+            .discard_bound_enable_if_current(&reviewed.snapshot, |directory, current| {
+                if cancel.is_cancelled() {
+                    return Err(refused("host.cloud_cancelled"));
+                }
+                let bytes = storage::read_private(directory, Path::new(RECORD), 16 * 1024)?;
+                if bytes.as_slice() != reviewed.cloud_bytes.as_slice() {
+                    return Err(refused("host.bound_enable_discard_scope_changed"));
+                }
+                self.require_bound_enable_discard(directory, current, &bytes)
+            })
+    }
+
+    fn require_bound_enable_discard(
+        &self,
+        directory: &File,
+        snapshot: &Snapshot,
+        bytes: &[u8],
+    ) -> io::Result<()> {
+        if snapshot.origin != Origin::Desktop
+            || snapshot.phase != Phase::Reconciling
+            || snapshot
+                .pending_ticket()
+                .is_none_or(|ticket| ticket.epoch() >= snapshot.epoch)
+        {
+            return Err(refused("host.bound_enable_discard_unavailable"));
+        }
+        let record: Record =
+            serde_json::from_slice(bytes).map_err(|_| refused("host.cloud_journal_invalid"))?;
+        validate(&record, snapshot, directory, || self.os_user())?;
+        let exact = record
+            .receipt
+            .as_ref()
+            .ok_or_else(|| refused("host.bound_enable_discard_unavailable"))?;
+        if !record.authenticated
+            || !record.submitted
+            || record.resource.as_ref() != Some(&exact.resource)
+            || exact.resource.create_protocol != CreateProtocol::Auto
+            || exact.resource.create_access != CreateAccess::OwnerDefault
+            || snapshot.binding.as_ref() != Some(&binding(&record, exact))
+            || snapshot.pending_ticket() != Some(&record.ticket)
+            || legacy_create_intent(&record)
+            || retired_original(directory, &record)?.is_some()
+        {
+            return Err(refused("host.bound_enable_discard_unavailable"));
+        }
+        crate::owned_migration::admit_enable(directory, snapshot)?;
+        Ok(())
     }
 
     /// The prompt is short-lived foreground display only; never log it or put
@@ -4797,6 +4906,369 @@ mod tests {
             }
             assert_eq!(network.state.borrow().creates, 1);
         }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_bound_enable_cancel_after_expired_auth_can_finish_locally() {
+        let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+        let adapter = CloudHostAdapter::fixture(&store);
+        let initial = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&initial, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
+        let next = foreground(&adapter);
+        network.state.borrow_mut().confirm_error = Some(AccountError::Denied);
+        let cancelled = CancellationToken::new();
+        assert!(adapter
+            .sign_in_with(
+                &next,
+                &cancelled,
+                |_| cancelled.cancel(),
+                &network,
+                &secrets
+            )
+            .await
+            .is_err());
+        let revoked = store.snapshot().unwrap();
+        assert_eq!(revoked.phase, Phase::Reconciling);
+        assert!(revoked.binding.is_some());
+        assert!(adapter
+            .reconcile_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), revoked);
+        assert!(crate::controller::fixture_disable(&store, &root.path().join("host")).is_err());
+        // Reobserve after the failed normal Disable, which itself advances revocation.
+        let revoked = store.snapshot().unwrap();
+        let cloud_before = store
+            .with_locked(|directory, _| {
+                storage::read_private(directory, Path::new(RECORD), 16 * 1024)
+            })
+            .unwrap();
+        let history = b"{\"version\":1,\"records\":[\"retained-a\",\"retained-b\"]}";
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(
+                    directory,
+                    Path::new(initial_authorization_history::NAME),
+                    history,
+                )
+            })
+            .unwrap();
+        let counts = (
+            network.state.borrow().creates,
+            network.state.borrow().observes,
+            network.state.borrow().sign_ins,
+        );
+        let reviewed = adapter.review_bound_enable_discard(&revoked).unwrap();
+        let stopped = adapter.discard_bound_enable(&reviewed, &cancel).unwrap();
+        assert_eq!(stopped.phase, Phase::StopRequested);
+        assert_eq!(stopped.epoch, revoked.epoch);
+        assert_eq!(stopped.binding, revoked.binding);
+        assert_eq!(stopped.settings, revoked.settings);
+        assert!(stopped.pending_ticket().is_none());
+        assert_eq!(
+            counts,
+            (
+                network.state.borrow().creates,
+                network.state.borrow().observes,
+                network.state.borrow().sign_ins
+            )
+        );
+        store
+            .with_locked(|directory, _| {
+                assert_eq!(
+                    storage::read_private(directory, Path::new(RECORD), 16 * 1024)?,
+                    cloud_before
+                );
+                assert_eq!(
+                    storage::read_private(
+                        directory,
+                        Path::new(initial_authorization_history::NAME),
+                        128 * 1024
+                    )?
+                    .as_slice(),
+                    history
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert!(adapter.discard_bound_enable(&reviewed, &cancel).is_err());
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
+        let disabled = store.snapshot().unwrap();
+        assert_eq!(disabled.phase, Phase::Disabled);
+        assert_eq!(disabled.epoch, revoked.epoch);
+        assert_eq!(disabled.binding, revoked.binding);
+        // Only a separate fresh Enable can now perform the existing device flow.
+        let fresh = foreground(&adapter);
+        adapter
+            .sign_in_with(&fresh, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        assert_eq!(network.state.borrow().sign_ins, counts.2 + 1);
+        network.state.borrow_mut().confirm_error = None;
+        network.state.borrow_mut().created = None;
+        assert_eq!(
+            adapter
+                .provision_with(&fresh, &cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Phase::StopRequested
+        );
+        assert_eq!(
+            network.state.borrow().creates,
+            1,
+            "missing pinned resource must not Create"
+        );
+        assert_eq!(store.snapshot().unwrap().binding, revoked.binding);
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    async fn bound_pending_fixture(
+        root: &Path,
+        adapter: &CloudHostAdapter<'_>,
+        network: &FixtureNetwork<'_>,
+        secrets: &MemorySecretStore,
+    ) -> Snapshot {
+        let initial = foreground(adapter);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&initial, &cancel, |_| {}, network, secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&initial, &cancel, network, secrets)
+            .await
+            .unwrap();
+        crate::controller::fixture_disable(adapter.store, &root.join("host")).unwrap();
+        let next = foreground(adapter);
+        adapter.store.cancel_enable(&next.record.ticket).unwrap();
+        adapter.store.snapshot().unwrap()
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_bound_enable_discard_refuses_unproven_cloud_facts() {
+        for fault in [
+            "receipt",
+            "submitted",
+            "account",
+            "user",
+            "identity",
+            "ticket",
+            "protocol",
+            "access",
+            "incarnation",
+            "retired",
+            "malformed",
+        ] {
+            let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+            let adapter = CloudHostAdapter::fixture(&store);
+            let network = FixtureNetwork::new(&store);
+            let expected = bound_pending_fixture(root.path(), &adapter, &network, &secrets).await;
+            store
+                .with_locked(|directory, _| {
+                    let mut record = read(directory)?.unwrap();
+                    match fault {
+                        "receipt" => record.receipt = None,
+                        "submitted" => record.submitted = false,
+                        "account" => record.account_id += 1,
+                        "user" => record.os_user = "foreign-user".into(),
+                        "identity" => record.fingerprint = "foreign-fingerprint".into(),
+                        "ticket" => {
+                            let mut ticket = serde_json::to_value(&record.ticket).unwrap();
+                            ticket["epoch"] = 1.into();
+                            record.ticket = serde_json::from_value(ticket).unwrap();
+                        }
+                        "protocol" => {
+                            record.resource.as_mut().unwrap().create_protocol =
+                                CreateProtocol::LegacyTcp;
+                            record.receipt.as_mut().unwrap().resource =
+                                record.resource.clone().unwrap();
+                        }
+                        "access" => {
+                            record.resource.as_mut().unwrap().create_access =
+                                CreateAccess::LegacyGithubUsers;
+                            record.receipt.as_mut().unwrap().resource =
+                                record.resource.clone().unwrap();
+                        }
+                        "incarnation" => {
+                            record.receipt.as_mut().unwrap().created = "foreign-incarnation".into()
+                        }
+                        "retired" => storage::replace_private(
+                            directory,
+                            &retirement_path(&record),
+                            &encode(&record)?,
+                        )?,
+                        "malformed" => {
+                            return storage::replace_private(
+                                directory,
+                                Path::new(RECORD),
+                                b"malformed",
+                            )
+                        }
+                        _ => unreachable!(),
+                    }
+                    write(directory, &record)
+                })
+                .unwrap();
+            let bytes = store
+                .with_locked(|directory, _| {
+                    storage::read_private(directory, Path::new(RECORD), 16 * 1024)
+                })
+                .unwrap();
+            assert!(
+                adapter.review_bound_enable_discard(&expected).is_err(),
+                "{fault}"
+            );
+            assert_eq!(store.snapshot().unwrap(), expected, "{fault}");
+            assert_eq!(
+                store
+                    .with_locked(|directory, _| storage::read_private(
+                        directory,
+                        Path::new(RECORD),
+                        16 * 1024
+                    ))
+                    .unwrap(),
+                bytes,
+                "{fault}"
+            );
+            assert_eq!(network.state.borrow().creates, 1);
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_bound_enable_discard_fences_snapshot_record_busy_and_cancelled_reviews() {
+        for race in ["snapshot", "record", "busy", "cancel", "missing-lock"] {
+            let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+            let adapter = CloudHostAdapter::fixture(&store);
+            let network = FixtureNetwork::new(&store);
+            let expected = bound_pending_fixture(root.path(), &adapter, &network, &secrets).await;
+            let reviewed = adapter.review_bound_enable_discard(&expected).unwrap();
+            let cancel = CancellationToken::new();
+            let lease = if race == "busy" {
+                Some(adapter.operation().unwrap())
+            } else {
+                None
+            };
+            match race {
+                "snapshot" => store.revoke().unwrap(),
+                "record" => store
+                    .with_locked(|directory, _| {
+                        let mut bytes =
+                            storage::read_private(directory, Path::new(RECORD), 16 * 1024)?;
+                        bytes.push(b'\n');
+                        storage::replace_private(directory, Path::new(RECORD), &bytes)
+                    })
+                    .unwrap(),
+                "cancel" => cancel.cancel(),
+                "missing-lock" => {
+                    std::fs::remove_file(root.path().join("host").join(LOCK)).unwrap()
+                }
+                _ => {}
+            }
+            let current = store.snapshot().unwrap();
+            let bytes = store
+                .with_locked(|directory, _| {
+                    storage::read_private(directory, Path::new(RECORD), 16 * 1024)
+                })
+                .unwrap();
+            assert!(
+                adapter.discard_bound_enable(&reviewed, &cancel).is_err(),
+                "{race}"
+            );
+            drop(lease);
+            assert!(
+                adapter
+                    .discard_bound_enable(&reviewed, &CancellationToken::new())
+                    .is_err(),
+                "review cannot replay after {race}"
+            );
+            assert_eq!(store.snapshot().unwrap(), current);
+            assert_eq!(
+                store
+                    .with_locked(|directory, _| storage::read_private(
+                        directory,
+                        Path::new(RECORD),
+                        16 * 1024
+                    ))
+                    .unwrap(),
+                bytes
+            );
+            assert_eq!(network.state.borrow().creates, 1);
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_bound_enable_discard_never_adopts_foreign_incarnation_on_fresh_enable() {
+        let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+        let adapter = CloudHostAdapter::fixture(&store);
+        let network = FixtureNetwork::new(&store);
+        let expected = bound_pending_fixture(root.path(), &adapter, &network, &secrets).await;
+        let reviewed = adapter.review_bound_enable_discard(&expected).unwrap();
+        adapter
+            .discard_bound_enable(&reviewed, &CancellationToken::new())
+            .unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
+        let fresh = foreground(&adapter);
+        let before = adapter.load().unwrap();
+        let scope = store.snapshot().unwrap();
+        network.state.borrow_mut().created.as_mut().unwrap().created = "foreign-incarnation".into();
+        let error = adapter
+            .provision_with(&fresh, &CancellationToken::new(), &network, &secrets)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "host.cloud_generation_changed");
+        assert!(adapter.load().unwrap() == before);
+        assert_eq!(store.snapshot().unwrap(), scope);
+        assert_eq!(network.state.borrow().creates, 1);
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_bound_enable_discard_never_recreates_missing_macos_desktop_credential() {
+        let (root, store, secrets) = fixture_for_origin(Origin::Desktop);
+        let adapter = CloudHostAdapter::fixture(&store);
+        let network = FixtureNetwork::new(&store);
+        let expected = bound_pending_fixture(root.path(), &adapter, &network, &secrets).await;
+        let reference = reference(&adapter.load().unwrap()).unwrap();
+        secrets.delete(&reference).unwrap();
+        let reviewed = adapter.review_bound_enable_discard(&expected).unwrap();
+        adapter
+            .discard_bound_enable(&reviewed, &CancellationToken::new())
+            .unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
+        let fresh = foreground(&adapter);
+        let sign_ins = network.state.borrow().sign_ins;
+        let error = adapter
+            .sign_in_using(
+                &fresh,
+                &CancellationToken::new(),
+                |_| panic!("no device flow without original item"),
+                &network,
+                &secrets,
+                true,
+                |_, _| panic!("no replacement native item"),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "host.cloud_credential_requires_reconciliation"
+        );
+        assert_eq!(network.state.borrow().sign_ins, sign_ins);
+        assert_eq!(network.state.borrow().creates, 1);
     }
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]

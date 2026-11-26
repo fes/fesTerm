@@ -218,6 +218,7 @@ pub enum Operation {
     ObserveNative,
     InspectOwner,
     Reconcile,
+    DiscardBoundEnable,
     Enable,
     ApproveOwner,
     Start,
@@ -428,6 +429,7 @@ pub struct View {
     pub owner_approved: bool,
     pub owner_revision: Option<u64>,
     pub cleanup: Option<CleanupContext>,
+    pub bound_enable_discard: Option<festerm_host_setup::cloud::BoundEnableDiscardReview>,
     pub cleanup_verified_for_manual_review: bool,
     pub device_code: Option<DeviceCode>,
     pub device_copied: Option<bool>,
@@ -569,6 +571,7 @@ struct Request {
     owner_revision: Option<u64>,
     sharing: Option<ShareTask>,
     release: Option<festerm_host_setup::services::ReleaseMetadata>,
+    bound_enable_discard: Option<festerm_host_setup::cloud::BoundEnableDiscardReview>,
 }
 
 #[derive(Default)]
@@ -583,6 +586,7 @@ struct Report {
     owner_approved: bool,
     owner_revision: Option<u64>,
     cleanup: Option<CleanupContext>,
+    bound_enable_discard: Option<festerm_host_setup::cloud::BoundEnableDiscardReview>,
     cleanup_verified_for_manual_review: bool,
     failure: Option<Failure>,
     diagnostic: Option<HostSetupDiagnostic>,
@@ -855,6 +859,11 @@ impl Controller {
                 if operation == Operation::Enable && !self.view.draft.valid_files() {
                     self.view.review = None;
                     self.view.failure = Some(Failure::FileAccessReview);
+                } else if operation == Operation::DiscardBoundEnable
+                    && self.view.bound_enable_discard.is_none()
+                {
+                    self.view.review = None;
+                    self.view.failure = Some(Failure::Reconciliation);
                 } else if operation == Operation::Update && !self.view.update_eligible() {
                     self.view.review = None;
                     self.view.failure = Some(Failure::UpdateBlocked);
@@ -863,7 +872,7 @@ impl Controller {
                 } else if matches!(self.view.scope, Scope::Unobserved) {
                     self.view.failure = Some(Failure::RefreshFirst);
                 } else {
-                    if operation == Operation::Update {
+                    if matches!(operation, Operation::Update | Operation::DiscardBoundEnable) {
                         self.view.access_requested = Some(false);
                     }
                     self.view.review = Some(operation);
@@ -1042,6 +1051,7 @@ impl Controller {
             owner_revision: self.view.owner_revision,
             sharing: self.share_request.take(),
             release: self.view.release.clone(),
+            bound_enable_discard: self.view.bound_enable_discard.clone(),
         };
         self.view.cleanup_verified_for_manual_review = false;
         if matches!(operation, Operation::Enable | Operation::Update) {
@@ -1255,6 +1265,7 @@ impl Controller {
                             self.view.owner_approved = report.owner_approved;
                             self.view.owner_revision = report.owner_revision;
                             self.view.cleanup = report.cleanup;
+                            self.view.bound_enable_discard = report.bound_enable_discard;
                             self.view.cleanup_verified_for_manual_review =
                                 report.cleanup_verified_for_manual_review;
                             self.view.diagnostic = if !self.view.cancelling
@@ -1302,6 +1313,7 @@ impl Controller {
                             self.view.runtime_history.clear();
                             self.view.process = None;
                             self.view.release = None;
+                            self.view.bound_enable_discard = None;
                             self.view.diagnostic = None;
                             self.view.failure = Some(error);
                         }
