@@ -7829,9 +7829,15 @@ Linux retained-link extraction prerequisites do not qualify a resolver or user
 workflow. The standalone Windows probe timed out with no output; protected state
 was preserved, but its extraction result is unknown. Run the repository's actual
 Windows NTFS primitive tests, including reparse edit controls, before accepting
-that junction component; native Windows symbolic links remain unqualified.
-The Mac metadata helper requires NODEV and nonblocking/no-controlling-terminal
-acquisition; non-NODEV private-chain link support remains pending. Later link-read qualification must use two allowed roots and an
+that junction component. Native Windows symbolic-link qualification additionally
+requires relative-file and absolute-directory controls, original-target identity
+preservation and exact no-follow cleanup. A local privilege deferral is not a
+positive native result; required CI must run both forms without changing OS
+permissions. Mac private-parent metadata qualification must include an owned
+actual OS Home fixture, complete ownership-enforcing private ancestry, fresh
+root/parent checks, stale proof and raced-FIFO refusal. The existing NODEV route
+and ordinary regular-file regressions remain required. These native metadata
+components do not qualify client link navigation. Later link-read qualification must use two allowed roots and an
 outside canary, exercise directory and regular-file aliases across the union,
 refuse outside intermediate hops before traversal, and verify alias/descendant
 writes and replacement proofs remain refused even after path cutover to the same

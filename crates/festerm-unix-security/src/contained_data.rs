@@ -1,5 +1,11 @@
 //! HOST's explicitly reviewed ordinary-data reads. Private state/publication
 //! continue to use the existing strict primitives in lib.rs.
+#[cfg(target_os = "macos")]
+mod private_parent;
+#[cfg(target_os = "macos")]
+pub use private_parent::{
+    qualify_private_data_parent, qualify_private_data_parent_checked, PrivateDataParent,
+};
 mod link;
 pub use link::{pin_data_link, RetainedDataLink};
 
@@ -412,7 +418,7 @@ pub fn ownership_enforcing_data_filesystem(file: &File) -> io::Result<bool> {
 /// Caller has qualified the complete actual parent chain. This verifies the
 /// exact leaf before the unchanged strict open; any later failure is terminal.
 #[cfg(target_os = "macos")]
-pub fn open_trusted_data_file(parent: &File, name: &Path) -> io::Result<File> {
+fn open_trusted_data_file(parent: &File, name: &Path) -> io::Result<File> {
     use std::os::unix::fs::MetadataExt;
     crate::imp::one_component(name)?;
     if name.as_os_str().as_bytes().contains(&b'/') {

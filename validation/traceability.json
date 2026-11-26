@@ -7798,7 +7798,13 @@
         "retained_ntfs_junction_extracts_and_revalidates_with_live_writers",
         "retained_link_raced_fifo_refuses_after_metadata_without_following_or_blocking",
         "retained_link_non_nodev_parent_refuses_before_metadata_open",
-        "retained_link_late_symbol_missing_and_ssize_error_fail_closed"
+        "retained_link_late_symbol_missing_and_ssize_error_fail_closed",
+        "private_data_parent_inputs_keep_independent_bounds_and_root_separator",
+        "private_data_parent_regular_home_read_and_checked_budget_are_terminal",
+        "private_data_parent_link_home_snapshot_and_resolver_parent_match",
+        "private_data_parent_refresh_root_parent_and_ancestor_changes_precede_leaf_open",
+        "private_data_parent_fifo_substitution_is_nonblocking_and_terminal",
+        "retained_ntfs_symlinks_extract_relative_file_and_absolute_directory"
       ],
       "manual_scenarios": [
         "DT-07"
@@ -7808,7 +7814,8 @@
         "Current-source native/provider Desktop Files discovery, browse/upload/download/mkdir/preview, exact replacement review, cancellation and account retirement remain unqualified; portable protocol and rendered fixtures do not replace these checks.",
         "Windows/macOS/Linux native reviewed deletion/capture/restore and packaged default-off delete consent/UI remain unqualified; Windows GNU metadata checks are not native execution. Mobile Files and remote rename/chmod/link parity remain separate required work; old rooted v1 write consent never authorizes deletion.",
         "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending.",
-        "Native metadata preparation only: no Files operation follows links and no target or mutation authority is added. macOS 27.2.1 and Linux isolated retained-extraction prerequisites passed. Windows standalone attempt timed out without output; protected state was preserved but execution stage/extraction is unknown. Actual qualified Windows NTFS Rust tests are required for that primitive. Older macOS unsupported-platform tests are not positive extraction evidence. Full allowlist union resolver, disclosure/root/account fences, original alias paths, strict expected-handle rejection and Desktop/mobile read-only presentation remain pending."
+        "Native metadata preparation only: no Files operation follows links and no target or mutation authority is added. macOS 27.2.1 and Linux isolated retained-extraction prerequisites passed. Windows standalone attempt timed out without output; protected state was preserved but execution stage/extraction is unknown. Actual qualified Windows NTFS Rust tests are required for that primitive. Older macOS unsupported-platform tests are not positive extraction evidence. Full allowlist union resolver, disclosure/root/account fences, original alias paths, strict expected-handle rejection and Desktop/mobile read-only presentation remain pending.",
+        "The Mac native private-parent token reuses complete ownership-enforcing owner/mode/ACL ancestry with fresh root and parent binding; it does not grant link target access. Native HOME metadata controls, strict unchanged-file regression and Windows symbolic-link required-CI evidence are separate from the still-pending allowed-union resolver and client read-only presentation. A locally deferred Windows privilege result is not qualification. No service link-read capability is advertised by this slice."
       ]
     },
     {

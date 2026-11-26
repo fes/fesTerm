@@ -806,12 +806,28 @@ no-follow entry identity again. The snapshot grants neither target access nor
 mutation/replacement authority. Unsupported filesystems, reparse forms, malformed
 or oversized payloads refuse; there is no ambient-path fallback or permission
 repair. Unix payload bytes must not be lossily converted into another pathname.
-The macOS metadata helper currently requires local APFS with NODEV and opens
+The macOS metadata helper retains its local APFS/NODEV route and opens
 nonblocking without acquiring a controlling terminal. Its macOS 13 symbol is
 resolved only after platform qualification with the native return signature,
 so adding this helper does not impose that symbol on the older binary target.
-A non-NODEV private-chain link route remains unimplemented; a predicate on one
-parent handle alone does not establish the complete private-chain contract.
+A separate opaque private-parent token reuses the existing complete chain from
+`/`: ownership-enforcing local APFS and unchanged owner/mode/ACL checks on every
+actual directory. Bind the configured root to its retained identity and the
+walked parent to a fresh contained lookup, including a fresh current-root check
+after the walk. A predicate on one parent handle never substitutes for that proof.
+
+Keep native leaf acquisition inside the token; expose neither a raw parent
+handle nor a caller-selected bypass flag. Private link acquisition also matches
+the resolver's exact held parent. Retain and refresh the complete proof before
+each non-NODEV link metadata open, including revalidation. Trust or identity
+change and lookup/budget errors are terminal once this route is selected. Only
+initial evaluated unsafe trust returns `None` for the existing ordinary-file
+NODEV fallback. Preserve that file route's permissions, accepted root spelling
+and error classification. Root and relative-parent inputs retain separate
+4096-byte bounds; do not cap their concatenation at 4096. A checked-step callback
+can charge the existing RPC work/deadline/cancellation budget for the combined
+walk, repeated complete-root lookup and leaf operations. This adds no pool,
+service grant, target traversal or same-UID/root attacker isolation promise.
 
 For the later resolver, retained payloads define the destinations to be checked
 against the explicit allowed union before traversal. Windows sharing is not
@@ -838,3 +854,15 @@ fixture does not qualify native symbolic-link extraction. Full union resolution,
 outside/intermediate refusal, shared budgets and Desktop/mobile read-only
 presentation remain pending under DTFILES-02 / DT-07 and MOB-11. No existing native record
 is relabelled as current-product link support.
+
+
+Native symbolic-link qualification extends the Windows metadata fixture to one
+relative file link and one absolute DOS directory link. It must prove typed
+payload decoding, unchanged revalidation and denied replacement access while
+pinned, then successful exact-identity disposal after release. Preserve the
+original ordinary targets and exact no-follow cleanup. Required Windows CI uses
+existing effective permissions and refuses missing symlink creation privilege;
+an explicitly deferred local run is not positive evidence. Do not change
+Developer Mode, token privileges or OS permissions. The junction fixture retains
+the separate attribute-only edit controls. These metadata cases still do not
+authorize following a target or add a Files operation.

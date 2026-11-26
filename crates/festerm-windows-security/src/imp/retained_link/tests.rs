@@ -1,14 +1,21 @@
 use super::*;
 use crate::imp::{
-    create_current_user_only_directory, delete_directory_by_handle, open_absolute_data_directory,
-    open_contained_data_directory,
+    create_current_user_only_directory, create_current_user_only_file, delete_directory_by_handle,
+    open_absolute_data_directory, open_contained_data_directory, remove_reviewed_empty_directory,
+    remove_reviewed_file,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    os::windows::fs::{symlink_dir, symlink_file},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use windows_sys::{
     Wdk::Storage::FileSystem::FILE_DIRECTORY_FILE,
     Win32::{
-        Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, GENERIC_WRITE},
+        Foundation::{
+            ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PRIVILEGE_NOT_HELD,
+            ERROR_SHARING_VIOLATION, GENERIC_WRITE,
+        },
         Storage::FileSystem::{DELETE, FILE_WRITE_ATTRIBUTES},
         System::Ioctl::FSCTL_SET_REPARSE_POINT,
     },
@@ -133,20 +140,16 @@ fn set_payload(file: &File, payload: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-struct JunctionFixture {
+struct FixtureRoot {
     temp: File,
     _ancestors: Vec<File>,
     name: PathBuf,
-    root_id: (u32, u64),
-    paths: [PathBuf; 2],
-    payloads: [Vec<u8>; 2],
-    targets: Vec<File>,
-    junction_id: Option<(u32, u64)>,
-    initialized: bool,
+    path: PathBuf,
+    identity: (u32, u64),
 }
 
-impl JunctionFixture {
-    fn new() -> Self {
+impl FixtureRoot {
+    fn create() -> (Self, File) {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let ticks = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -159,8 +162,62 @@ impl JunctionFixture {
         ));
         let temp_path = std::env::temp_dir();
         let (temp, ancestors) = open_absolute_data_directory(&temp_path).unwrap();
-        let paths = ["target-a", "target-b"].map(|target| temp_path.join(&name).join(target));
-        let payloads = paths.each_ref().map(|path| {
+        let root = create_current_user_only_directory(&temp, &name).unwrap();
+        let fixture = Self {
+            temp,
+            _ancestors: ancestors,
+            path: temp_path.join(&name),
+            name,
+            identity: directory_identity(&root).unwrap(),
+        };
+        (fixture, root)
+    }
+
+    fn pin(&self) -> File {
+        let (root, _) = open_contained_data_directory(&self.temp, &self.name).unwrap();
+        assert_eq!(file_identity(&root).unwrap(), self.identity);
+        root
+    }
+
+    fn open_for_cleanup(&self) -> io::Result<File> {
+        let root = open_relative(
+            &self.temp,
+            &self.name,
+            FILE_READ_ATTRIBUTES | DELETE,
+            ALL_SHARE,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE,
+            ptr::null(),
+        )?;
+        if directory_identity(&root)? != self.identity {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        Ok(root)
+    }
+}
+
+struct JunctionFixture {
+    root: FixtureRoot,
+    paths: [PathBuf; 2],
+    payloads: [Vec<u8>; 2],
+    targets: Vec<File>,
+    junction_id: Option<(u32, u64)>,
+    initialized: bool,
+}
+
+impl JunctionFixture {
+    fn new() -> Self {
+        let (owned_root, root) = FixtureRoot::create();
+        let paths = ["target-a", "target-b"].map(|target| owned_root.path.join(target));
+        let mut fixture = Self {
+            root: owned_root,
+            paths,
+            payloads: Default::default(),
+            targets: Vec::new(),
+            junction_id: None,
+            initialized: false,
+        };
+        fixture.payloads = fixture.paths.each_ref().map(|path| {
             let target = path.to_str().unwrap();
             make_payload(
                 IO_REPARSE_TAG_MOUNT_POINT,
@@ -169,18 +226,6 @@ impl JunctionFixture {
                 target,
             )
         });
-        let root = create_current_user_only_directory(&temp, &name).unwrap();
-        let mut fixture = Self {
-            temp,
-            _ancestors: ancestors,
-            name,
-            root_id: file_identity(&root).unwrap(),
-            paths,
-            payloads,
-            targets: Vec::new(),
-            junction_id: None,
-            initialized: false,
-        };
         for name in ["target-a", "target-b"] {
             fixture
                 .targets
@@ -193,25 +238,8 @@ impl JunctionFixture {
         fixture
     }
 
-    fn pin_root(&self) -> File {
-        let (root, _) = open_contained_data_directory(&self.temp, &self.name).unwrap();
-        assert_eq!(file_identity(&root).unwrap(), self.root_id);
-        root
-    }
-
     fn clean(&mut self) -> io::Result<()> {
-        let root = open_relative(
-            &self.temp,
-            &self.name,
-            FILE_READ_ATTRIBUTES | DELETE,
-            ALL_SHARE,
-            FILE_OPEN,
-            FILE_DIRECTORY_FILE,
-            ptr::null(),
-        )?;
-        if directory_identity(&root)? != self.root_id {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
+        let root = self.root.open_for_cleanup()?;
         if let Some(saved) = self.junction_id {
             let link = self.open_junction(&root, DELETE)?;
             if file_identity(&link)? != saved {
@@ -321,7 +349,7 @@ fn attribute_edit_denied(error: &io::Error) -> bool {
 #[test]
 fn retained_ntfs_junction_extracts_and_revalidates_with_live_writers() {
     let fixture = JunctionFixture::new();
-    let root = fixture.pin_root();
+    let root = fixture.root.pin();
     let name = Path::new(JUNCTION);
     for bad in [
         "junction:stream",
@@ -339,7 +367,7 @@ fn retained_ntfs_junction_extracts_and_revalidates_with_live_writers() {
         );
     }
     // The fixture root is an ordinary directory held with compatible read sharing.
-    let plain = RetainedDataLink::open(&fixture.temp, &fixture.name)
+    let plain = RetainedDataLink::open(&fixture.root.temp, &fixture.root.name)
         .err()
         .expect("plain fixture directory produced a link snapshot");
     assert_eq!(plain.kind(), io::ErrorKind::Unsupported, "{plain:?}");
@@ -351,8 +379,8 @@ fn retained_ntfs_junction_extracts_and_revalidates_with_live_writers() {
     assert_sharing_violation(
         "parent DELETE access with the snapshot retained",
         open_relative(
-            &fixture.temp,
-            &fixture.name,
+            &fixture.root.temp,
+            &fixture.root.name,
             DELETE,
             ALL_SHARE,
             FILE_OPEN,
@@ -361,7 +389,7 @@ fn retained_ntfs_junction_extracts_and_revalidates_with_live_writers() {
         ),
     );
     snapshot.revalidate().unwrap();
-    let root = fixture.pin_root();
+    let root = fixture.root.pin();
     // Rename requires DELETE access.
     assert_sharing_violation(
         "replacement DELETE access",
@@ -422,4 +450,196 @@ fn retained_ntfs_junction_extracts_and_revalidates_with_live_writers() {
     let fresh = RetainedDataLink::open(&root, name).unwrap();
     fixture.assert_target(&fresh, next);
     fresh.revalidate().unwrap();
+}
+
+const TARGET_FILE: &str = "target-file";
+const TARGET_DIR: &str = "target-dir";
+const FILE_LINK: &str = "relative-file-link";
+const DIR_LINK: &str = "absolute-directory-link";
+
+struct OwnedSymlink {
+    name: &'static str,
+    identity: (u32, u64),
+    directory: bool,
+    payload: Box<[u8]>,
+    disposed: bool,
+}
+
+fn open_fixture_leaf(root: &File, name: &str, access: u32) -> io::Result<File> {
+    open_relative(
+        root,
+        Path::new(name),
+        FILE_READ_ATTRIBUTES | access,
+        ALL_SHARE,
+        FILE_OPEN,
+        0,
+        ptr::null(),
+    )
+}
+
+struct SymlinkFixture {
+    root: FixtureRoot,
+    file: Option<File>,
+    directory: Option<File>,
+    links: Vec<OwnedSymlink>,
+}
+
+impl SymlinkFixture {
+    fn new() -> Self {
+        let (owned_root, root) = FixtureRoot::create();
+        let mut fixture = Self {
+            root: owned_root,
+            file: None,
+            directory: None,
+            links: Vec::new(),
+        };
+        fixture.file = Some(create_current_user_only_file(&root, Path::new(TARGET_FILE)).unwrap());
+        fixture.directory =
+            Some(create_current_user_only_directory(&root, Path::new(TARGET_DIR)).unwrap());
+        fixture
+    }
+
+    fn record_link(&mut self, root: &File, name: &'static str, directory: bool) {
+        let link = open_fixture_leaf(root, name, 0).unwrap();
+        let payload = read_payload(&link).unwrap();
+        assert!(payload.starts_with(&IO_REPARSE_TAG_SYMLINK.to_le_bytes()));
+        assert_eq!(
+            file_information(&link).unwrap().dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0,
+            directory
+        );
+        // The fixed symbolic-link header carries tag, lengths, offsets and flags.
+        eprintln!(
+            "{name} native header {:?}, bytes {}",
+            &payload[..payload.len().min(20)],
+            payload.len()
+        );
+        self.links.push(OwnedSymlink {
+            name,
+            identity: file_identity(&link).unwrap(),
+            directory,
+            payload,
+            disposed: false,
+        });
+    }
+
+    fn remove_links(&mut self, root: &File) -> io::Result<()> {
+        while let Some(saved) = self.links.last_mut() {
+            if !saved.disposed {
+                let link = open_fixture_leaf(root, saved.name, DELETE)?;
+                let directory =
+                    file_information(&link)?.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+                if file_identity(&link)? != saved.identity
+                    || directory != saved.directory
+                    || read_payload(&link)? != saved.payload
+                {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+                // Remember a successful disposition even if absence verification
+                // fails. A retry may only verify absence, never delete a reused name.
+                delete_directory_by_handle(&link)?;
+                saved.disposed = true;
+                drop(link);
+            }
+            match open_fixture_leaf(root, saved.name, 0) {
+                Err(error) if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) => {}
+                Err(error) => return Err(error),
+                Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
+            }
+            eprintln!("{} released pin allowed exact alias removal", saved.name);
+            self.links.pop();
+        }
+        Ok(())
+    }
+
+    fn assert_originals(&self, root: &File) {
+        // Verify the originals directly by metadata. This never opens through an alias.
+        let file = open_fixture_leaf(root, TARGET_FILE, 0).unwrap();
+        assert_eq!(
+            file_identity(&file).unwrap(),
+            file_identity(self.file.as_ref().unwrap()).unwrap()
+        );
+        let info = file_information(&file).unwrap();
+        assert_eq!(
+            info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT),
+            0
+        );
+        assert_eq!((info.nFileSizeHigh, info.nFileSizeLow), (0, 0));
+        let directory = open_fixture_leaf(root, TARGET_DIR, 0).unwrap();
+        assert_eq!(
+            directory_identity(&directory).unwrap(),
+            directory_identity(self.directory.as_ref().unwrap()).unwrap()
+        );
+    }
+
+    fn clean(&mut self) -> io::Result<()> {
+        let root = self.root.open_for_cleanup()?;
+        self.remove_links(&root)?;
+        if let Some(file) = self.file.take() {
+            remove_reviewed_file(&file)?;
+        }
+        if let Some(directory) = self.directory.take() {
+            remove_reviewed_empty_directory(&directory)?;
+        }
+        delete_directory_by_handle(&root)
+    }
+}
+
+impl Drop for SymlinkFixture {
+    fn drop(&mut self) {
+        if let Err(error) = self.clean() {
+            if std::thread::panicking() {
+                eprintln!("retained symlink fixture cleanup failed: {error}");
+            } else {
+                panic!("retained symlink fixture cleanup failed: {error}");
+            }
+        }
+    }
+}
+
+#[test]
+fn retained_ntfs_symlinks_extract_relative_file_and_absolute_directory() {
+    let mut fixture = SymlinkFixture::new();
+    let root = fixture.root.pin();
+    if let Err(error) = symlink_file(TARGET_FILE, fixture.root.path.join(FILE_LINK)) {
+        if error.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD as i32)
+            && std::env::var_os("FESTERM_REQUIRE_WINDOWS_SYMLINKS")
+                .is_none_or(|value| value.is_empty())
+        {
+            eprintln!("Native Windows symlink qualification deferred; creation returned 1314");
+            return;
+        }
+        panic!("Native relative file symlink creation failed: {error:?}");
+    }
+    fixture.record_link(&root, FILE_LINK, false);
+    let absolute = fixture.root.path.join(TARGET_DIR);
+    symlink_dir(&absolute, fixture.root.path.join(DIR_LINK)).unwrap();
+    fixture.record_link(&root, DIR_LINK, true);
+
+    let expected = [
+        (
+            WindowsLinkTarget::ParentRelative(TARGET_FILE.into()),
+            fixture.file.as_ref().unwrap(),
+        ),
+        (
+            WindowsLinkTarget::AbsoluteDos(absolute),
+            fixture.directory.as_ref().unwrap(),
+        ),
+    ];
+    assert_eq!(fixture.links.len(), expected.len());
+    fixture.assert_originals(&root);
+    for (saved, (target, original)) in fixture.links.iter().zip(expected) {
+        let snapshot = RetainedDataLink::open(&root, Path::new(saved.name)).unwrap();
+        assert_eq!(file_identity(&snapshot.link).unwrap(), saved.identity);
+        assert_ne!(saved.identity, file_identity(original).unwrap());
+        assert!(
+            snapshot.target() == &target,
+            "{} substitute changed",
+            saved.name
+        );
+        snapshot.revalidate().unwrap();
+        assert_sharing_violation(saved.name, open_fixture_leaf(&root, saved.name, DELETE));
+        snapshot.revalidate().unwrap();
+    }
+    fixture.remove_links(&root).unwrap();
+    fixture.assert_originals(&root);
 }
