@@ -33,9 +33,9 @@ use festerm_ssh::{
     connect_gui_sftp_session, GuiSftpSessionConnectError, GuiSftpSessionConnectOutcome,
     HostIdentity, HostKeyDecisionResolver, SftpCollision, SftpCollisionDecision,
     SftpCollisionResolution, SftpCollisionScope, SftpDirectoryItem, SftpDirectorySnapshot,
-    SftpEntryType, SftpLocation, SftpPath, SftpPathMetadata, SftpTransferEvent, SftpTransferId,
-    SftpTransferManager, SftpTransferRequest, SftpTransferState, SshAuthentication,
-    SshConnectionProfile, SshPrivateKey,
+    SftpEntryType, SftpLocation, SftpPath, SftpPathMetadata, SftpTransferDirection,
+    SftpTransferEvent, SftpTransferId, SftpTransferManager, SftpTransferRequest, SftpTransferState,
+    SshAuthentication, SshConnectionProfile, SshPrivateKey,
 };
 use festerm_ui_egui::{
     chrome::ChipStatus,
@@ -2552,6 +2552,16 @@ impl SftpFileManagerTab {
 
     fn submit_worker_command(&mut self, command: WorkerCommand) -> Result<(), String> {
         if let WorkerCommand::Enqueue(requests) = &command {
+            if requests
+                .iter()
+                .any(|request| request.direction() == SftpTransferDirection::Upload)
+            {
+                if let Some(reason) = self.files_upload_refusal() {
+                    self.operation_error =
+                        Some(("Could not queue the transfer.".into(), reason.into()));
+                    return Err(reason.into());
+                }
+            }
             let maximum = SftpTransferManager::max_batch_items();
             if requests.len() > maximum {
                 let details = format!(
@@ -4197,6 +4207,7 @@ impl SftpFileManagerTab {
             .summary()
             .expect("non-empty transfer drawer has a summary");
         let path_labels = self.file_operation_labels();
+        let upload_retry_refusal = self.files_upload_refusal();
         let mut commands = Vec::new();
         ui.add_space(10.0);
         egui::Frame::new()
@@ -4282,11 +4293,20 @@ impl SftpFileManagerTab {
                                 {
                                     commands.push(WorkerCommand::CancelTransfer(item.transfer_id));
                                 }
-                                if matches!(item.state, SftpTransferState::Failed { .. })
-                                    && ui.button("Retry").clicked()
-                                {
-                                    commands
-                                        .push(WorkerCommand::Enqueue(vec![item.request.clone()]));
+                                if matches!(item.state, SftpTransferState::Failed { .. }) {
+                                    let refusal = upload_retry_refusal.filter(|_| {
+                                        item.request.direction() == SftpTransferDirection::Upload
+                                    });
+                                    let retry = ui
+                                        .add_enabled(refusal.is_none(), egui::Button::new("Retry"));
+                                    if let Some(reason) = refusal {
+                                        retry.clone().on_disabled_hover_text(reason);
+                                    }
+                                    if retry.clicked() {
+                                        commands.push(WorkerCommand::Enqueue(vec![item
+                                            .request
+                                            .clone()]));
+                                    }
                                 }
                             });
                         });
@@ -4696,6 +4716,7 @@ impl SftpFileManagerTab {
                 WorkerEvent::FilesConnected { .. }
                     | WorkerEvent::FilesDirectoryLoaded { .. }
                     | WorkerEvent::FilesDirectoryFailed { .. }
+                    | WorkerEvent::FilesDirectoryMissing { .. }
                     | WorkerEvent::ReviewedDeletePrepared { .. }
                     | WorkerEvent::Connected { .. }
                     | WorkerEvent::RemoteDirectoryLoaded { .. }
@@ -4756,6 +4777,25 @@ impl SftpFileManagerTab {
                 if skipped > 0 {
                     self.operation_error = Some(("Some entries are unavailable".into(), format!("{skipped} unsupported or inaccessible entries were omitted by the host.")));
                 }
+            }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            WorkerEvent::FilesDirectoryMissing {
+                request_id,
+                connection_scope,
+                details,
+            } => {
+                if request_id != self.remote_pane.pending_request_id
+                    || !self.file_operations.connection.matches(&connection_scope)
+                    || !matches!(self.connection_state, SftpConnectionState::Ready)
+                {
+                    return;
+                }
+                self.close_namespaced_remote_path_editor();
+                self.remote_pane
+                    .set_error("Could not load this Files folder.".into(), details);
+                // Keep navigation/recovery available, but no mutation may use
+                // the old snapshot until a fresh successful listing arrives.
+                self.remote_pane.stale = true;
             }
             #[cfg(feature = "experimental-dev-tunnels")]
             WorkerEvent::FilesDirectoryFailed {
@@ -5165,6 +5205,12 @@ enum WorkerEvent {
         snapshot: SftpDirectorySnapshot,
         metadata: SftpPathMetadata,
         skipped: usize,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    FilesDirectoryMissing {
+        request_id: u64,
+        connection_scope: Arc<()>,
+        details: String,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     FilesDirectoryFailed {
@@ -11063,8 +11109,8 @@ pub(crate) mod tests {
         tab.apply_event(WorkerEvent::FilesDirectoryLoaded {
             request_id: refresh_id,
             connection_scope,
-            snapshot: original_snapshot,
-            metadata: original_metadata,
+            snapshot: original_snapshot.clone(),
+            metadata: original_metadata.clone(),
             skipped: 0,
         });
         assert!(tab.remote_pane.loading);
@@ -11100,6 +11146,73 @@ pub(crate) mod tests {
             .any(|clipped| has_selector(&clipped.shape)));
 
         let tab = harness.state_mut();
+        // A stale completion cannot clear the current navigation's loading state.
+        let pending_scope = tab.file_operations.connection.capture();
+        tab.apply_event(WorkerEvent::FilesDirectoryMissing {
+            request_id: request_id.wrapping_add(1),
+            connection_scope: pending_scope.clone(),
+            details: "missing folder".into(),
+        });
+        assert!(tab.remote_pane.loading);
+        tab.apply_event(WorkerEvent::FilesDirectoryMissing {
+            request_id,
+            connection_scope: Arc::new(()),
+            details: "missing folder from retired connection".into(),
+        });
+        assert!(tab.remote_pane.loading);
+        tab.apply_event(WorkerEvent::FilesDirectoryMissing {
+            request_id,
+            connection_scope: pending_scope,
+            details: format!("Missing /{TARGET_SELECTOR}/large"),
+        });
+        assert!(matches!(tab.connection_state, SftpConnectionState::Ready));
+        assert!(tab.files_source.is_some());
+        assert!(tab.remote_pane.stale);
+        assert!(!tab.remote_pane.loading);
+        assert_eq!(tab.remote_pane.current_path, first);
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        // Drawer Retry submits directly, bypassing selection-based buttons.
+        let retry_request = SftpTransferRequest::new(local.path.clone(), first.clone()).unwrap();
+        assert!(tab
+            .submit_worker_command(WorkerCommand::Enqueue(vec![retry_request.clone()]))
+            .is_err());
+        tab.queue_transfer(PaneFocus::Local);
+        assert!(tab
+            .enqueue_external_drop_upload(vec![PathBuf::from("/owned/missing-drop.txt")])
+            .is_err());
+        assert!(
+            commands.try_recv().is_err(),
+            "missing folder never auto-retries"
+        );
+        // Explicit navigation can still request a fresh snapshot; no readiness
+        // or mutation grant is restored from the failed result.
+        tab.refresh_pane(PaneFocus::Remote);
+        let WorkerCommand::LoadRemote {
+            path,
+            request_id: refresh_id,
+        } = commands.try_recv().unwrap()
+        else {
+            panic!("explicit refresh must use the ordinary navigation queue");
+        };
+        assert_eq!(path, remote_virtual_path(&first).unwrap());
+        assert!(tab.remote_pane.loading);
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.apply_event(WorkerEvent::FilesDirectoryLoaded {
+            request_id: refresh_id,
+            connection_scope: tab.file_operations.connection.capture(),
+            snapshot: original_snapshot.clone(),
+            metadata: original_metadata.clone(),
+            skipped: 0,
+        });
+        assert!(!tab.remote_pane.stale);
+        assert!(tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.submit_worker_command(WorkerCommand::Enqueue(vec![retry_request.clone()]))
+            .unwrap();
+        let WorkerCommand::Enqueue(retried) = commands.try_recv().unwrap() else {
+            panic!("explicit Retry requires the successful fresh listing");
+        };
+        assert_eq!(retried, vec![retry_request]);
+        tab.remote_pane.pending_request_id = request_id;
         tab.remote_pane.path_text = "/relative".into();
         tab.remote_pane.editing_path = true;
         tab.apply_event(WorkerEvent::FilesDirectoryFailed {
@@ -11107,6 +11220,10 @@ pub(crate) mod tests {
             details: format!("Could not load /{TARGET_SELECTOR}/large"),
         });
         assert!(tab.remote_pane.stale);
+        assert!(matches!(
+            tab.connection_state,
+            SftpConnectionState::Disconnected { .. }
+        ));
         assert_eq!(tab.remote_pane.current_path, first);
         assert!(!tab.remote_pane.editing_path);
         assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);

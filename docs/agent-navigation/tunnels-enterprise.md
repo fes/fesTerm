@@ -1,115 +1,43 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "16eb80c229355fefce364cfcd9cdaf433d3122ee3983cd9a8f62fca4504edc2e"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "dee1e2d317322710d89a8615377c1482d29b60a6008d2f78bec196b454b42ad6"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns HOST selection, consent, native services and enterprise/PowerShell metadata.
+This domain owns authenticated host runtime admission, route selection, and rooted file-transfer semantics that preserve ownership and cancellation invariants.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host Discovery
+## Host runtime
 
-Use for: HOST resolution and signed-in inventory.
+Use for: Which authenticated stream path is chosen and how are proofs revalidated?
 
-- [`resolve_host`](../../crates/festerm-tunnel-client/src/service.rs)
-- [`EnterpriseTab`](../../app/festerm/src/enterprise.rs) — Bounds signed-in project inventory.
-
-Evidence:
-- [`selected_host_service_selector_is_host_only_without_legacy_fallback`](../../crates/festerm-tunnel-client/src/service.rs)
-- [`queued_inventory_after_signout_is_discarded_and_returns_to_setup`](../../app/festerm/src/enterprise.rs) — Discards stale signed-out results.
-
-Caveats:
-- Inventory rows are metadata, not live daemon proof
-- Foreign generations are ignored
-
-## Owner consent and runtime preparation
-
-Use for: Owner approval and initial HOST runtime preparation.
-
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs)
-- [`ReleaseMetadata`](../../crates/festerm-host-setup/src/services/replacement.rs)
-- [Foreground and bound setup discard](../../crates/festerm-host-setup/src/cloud.rs)
+- [`HostRuntime`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Shared aggregate budget and per-role dispatch for authenticated host sessions
+- [`serve_reserved`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Authenticates then selects control, terminal, or files by proven stream role
+- [`authenticate_ordinary`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Verifies route binding, denied keys, and ordinary proof before acceptance
 
 Evidence:
-- [`owner_readiness_diagnostic`](../../crates/festerm-host-setup/src/controller.rs)
-- [`host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers`](../../crates/festerm-host-setup/src/services/replacement/tests.rs)
+- [`authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Confirms control role follows the authenticated stream and revocation is rechecked
+- [`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Shows the runtime keeps issuer and exact end authority through creation
 
 Caveats:
-- Helper gate checks reject unsupported or foreign capabilities
-- Consent is local review, not network trust
+- Route selection is explicit and relies on proven encrypted channel state.
+- Protected policy is reloaded and revalidated; cached state is not authority.
+- A cancelled or stale proof can reject before control or terminal dispatch.
 
-## Native Services
+## Rooted files
 
-Use for: Stopped receipt completion for creation/Files policy.
+Use for: How does the client handle uploads, aborts, and connection-local file handles?
 
-- [`complete_setup_with`](../../crates/festerm-host-setup/src/services/reconfiguration.rs)
-- [`current_user`](../../crates/festerm-host-setup/src/services.rs)
+- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared Files adapter that tracks transfer state, generation, and review markers
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Rooted sequential file protocol with strict replacement and path validation
+- [`Handle`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Connection-local transfer handle; close is explicit and does not prove remote completion
 
 Evidence:
-- [`native_service_stopped_files_projection_preserves_registration_and_durable_state`](../../crates/festerm-host-setup/src/services/tests.rs)
-- [`native_service_macos_failed_bootout_finishes_only_after_fresh_exact_absence`](../../crates/festerm-host-setup/src/services/tests.rs)
+- [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Abort closes the local handle but leaves the transfer stream usable
+- [`files_endpoint_returned_cancel_and_source_error_do_not_leave_unknown_markers`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shows cancel and source errors do not leave stale unknown state behind
 
 Caveats:
-- Changed authority, scope or unknown native state refuses completion; no native Start or catalog action occurs.
-- Running is not readiness; portable fixtures do not qualify native Files.
-
-## Portable Metadata
-
-Use for: Portable recipes and PowerShell lifecycle.
-
-- [`PublicRecipe`](../../crates/festerm-client-recipes/src/model.rs)
-- [`PowerShellState`](../../app/festerm/src/powershell.rs)
-
-Evidence:
-- [`public_recipe_serialization_preserves_launch_and_four_behaviors`](../../crates/festerm-client-recipes/tests/recipes.rs) — Checks recipe import round-trip.
-- [`close_failure_is_reported_not_shaped_as_success`](../../app/festerm/src/powershell.rs)
-
-Caveats:
-- Portable metadata is intentionally public-only
-- Close and cancel remain distinct lifecycle commands
-
-## Dedicated Mac start
-
-Use for: Exact Desktop start through the registered helper.
-
-- [`start`](../../crates/festerm-host-setup/src/desktop_start.rs) — Binds scope/parent lifetime; Busy retains the child deadline.
-- [`StartStage`](../../crates/festerm-host-setup/src/services/start_diagnostics.rs)
-
-Evidence:
-- [`native_service_dedicated_guard_drains_late_manager_before_process_completion`](../../crates/festerm-host-setup/src/services/native.rs)
-
-Caveats:
-- Submitted uncertainty retains the GUI permit; Running is not Ready.
-
-## Account readiness and client renewal
-
-Use for: HOST readiness and Desktop account renewal.
-
-- [`maintain`](../../crates/festerm-host-setup/src/ordinary.rs)
-- [`refresh`](../../crates/festerm-host-setup/src/ordinary.rs)
-- [`renew`](../../app/festerm/src/tunnel_account.rs)
-
-Evidence:
-- [`ordinary_successful_maintenance_keeps_same_serving_future_live`](../../crates/festerm-host-setup/src/controller.rs)
-- [`uncertain_exchange_or_publication_cannot_replay_after_reopen`](../../app/festerm/src/tunnel_account.rs) — Refuses refresh replay on reopening.
-
-Caveats:
-- Uncertain persistence ends renewal without replay; native same-run qualification remains open.
-
-
-## Files transfer cancellation
-
-Use for: Files locations, transfer cancellation and retained channels.
-
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Negotiated reads and strict replacement proofs.
-- [`ReadProof`](../../crates/festerm-tunnel-bridge/src/filesystem/locations/links.rs) — Read-only union traversal and snapshot fences.
-- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared transfers and opened-directory/row access facts.
-
-Evidence:
-- [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Aborts a partial upload; retains the stream.
-- [`rooted_client_failed_abort_preserves_both_errors_and_original_deadline`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Preserves both errors and the original deadline.
-
-Caveats:
-- Close consumes the handle and attempts staging cleanup; it does not universally prove unlink success.
-- Dropped futures, cancelled authority and unknown wire outcomes still close the stream. No transfer or Finish is replayed.
+- Handle IDs are connection-local and cannot authorize a matching remote object elsewhere.
+- A close or abort does not imply unlink success or publication completion.
+- Failure markers and state are retained only under explicit review and strict cancellation rules.

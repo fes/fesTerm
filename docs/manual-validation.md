@@ -2956,6 +2956,16 @@ source fixtures do not change existing native evidence or complete #778.
 
 ### Desktop Dev Tunnels Files client
 
+DTFILES-01 missing-folder recovery (native evidence pending): after a successful
+allowlist listing, enter a missing location-relative folder. The folder error
+must keep allowed-location navigation available, preserve the account/host
+scope, and block upload/new-directory/Delete from the stale snapshot. An explicit
+location selection or refresh must obtain a fresh successful listing before
+mutations become eligible. Separately verify true transport loss and account or
+HOST retirement still withdraw readiness and physical labels. No automatic
+retry, grant change, physical-label authority parsing or transfer replay.
+
+
 `DTFILES-01`–`04` / DT-07 cover the Desktop composition separately from the
 portable connector. Desktop 0.17.27 includes the host's reviewed folder
 grant and the client’s Dev Tunnels Files profile. The [graphical components](../validation/dev-tunnels/files-native-0.17.24.json)

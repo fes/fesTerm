@@ -803,6 +803,80 @@ async fn client_create_worker(
 }
 
 #[cfg(unix)]
+async fn client_attach_snapshot_worker(
+    fixture: &mut NativeRuntimeFixture,
+    scope: crate::host_client::Scope,
+    selection: (
+        festerm_host_protocol::Target,
+        festerm_host_protocol::AttachmentId,
+    ),
+    intent: Option<Arc<crate::host_client::CreationIntent>>,
+    mut on_busy: impl FnMut(crate::host_client::AttachStage),
+) -> crate::host_client::HostSession {
+    use crate::host_client::{AttachStage, Failure, HostSession, Worker};
+    use festerm_host_protocol::Refusal;
+    use festerm_session::{Session, SessionEventNotifier};
+    struct Wake;
+    impl SessionEventNotifier for Wake {
+        fn notify(&self) {}
+    }
+    // The caller owns one deadline. Only a typed pre-snapshot Busy can
+    // retry this exact scope/target/attachment; no adoption or input is sent.
+    loop {
+        let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+        let selection = selection.clone();
+        let (report_failure, mut attempt_failure) = tokio::sync::oneshot::channel();
+        let worker = Worker::spawn(
+            scope.clone(),
+            Arc::new(|| {}),
+            move |scope, cancel, events, wake| async move {
+                let result = crate::host_client::attach_reserved_authenticated(
+                    stream, permit, &scope, selection, &cancel, &events, &wake,
+                )
+                .await;
+                if let Err(failure) = &result {
+                    let _ = report_failure.send(*failure);
+                }
+                result
+            },
+        )
+        .unwrap();
+        let mut session = HostSession::from_worker(worker, Arc::new(Wake));
+        session.set_creation_intent(intent.clone());
+        let busy_stage = loop {
+            match native_snapshot_ready(&session) {
+                Ok(true) => return session,
+                Ok(false) => tokio::time::sleep(Duration::from_millis(5)).await,
+                Err(reason) => match attempt_failure.try_recv() {
+                    Ok(Failure::Attachment {
+                        stage: stage @ (AttachStage::Capabilities | AttachStage::Snapshot),
+                        error: Error::Refused(Refusal::Busy),
+                    }) => break stage,
+                    other => panic!("{reason}: {other:?}"),
+                },
+            }
+        };
+        if let Some(intent) = &intent {
+            assert!(!intent.is_presented());
+        }
+        assert!(session.try_send_input(b"must-not-be-queued").is_err());
+        assert!(!session.has_pending_snapshot());
+        drop(session);
+        assert!(matches!(
+            fixture.servers.last_mut().unwrap().await.unwrap(),
+            Err(Error::Refused(Refusal::Busy))
+        ));
+        fixture.servers.pop();
+        let ssh = fixture.connections.last_mut().unwrap();
+        ssh.abort();
+        let _ = ssh.await;
+        fixture.connections.pop();
+        on_busy(busy_stage);
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[cfg(unix)]
 async fn client_end_worker(
     fixture: &mut NativeRuntimeFixture,
     intent: Arc<crate::host_client::EndIntent>,
@@ -830,15 +904,9 @@ async fn client_end_worker(
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_temporary() {
-    use crate::host_client::{CreationIntent, CreationMode, HostSession, Scope, Worker};
+    use crate::host_client::{CreationIntent, CreationMode, Scope};
     use festerm_host_protocol::Lifetime;
-    use festerm_session::{
-        Session, SessionEvent, SessionEventNotifier, SessionLifecycle, ShutdownResult,
-    };
-    struct Wake;
-    impl SessionEventNotifier for Wake {
-        fn notify(&self) {}
-    }
+    use festerm_session::{Session, SessionEvent, SessionLifecycle, ShutdownResult};
     let mut fixture = NativeRuntimeFixture::new();
     let context = fixture.client_context();
     let mut persistent_target = None;
@@ -859,34 +927,20 @@ async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_tem
             Arc::new(CreationIntent::new(&context, CreationMode::Create, creation).unwrap());
         let created = client_create_worker(&mut fixture, intent.clone()).await;
         let target = created.session().target.clone();
-        let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
         let scope = Scope {
             request: OperationId::new(),
             generation: 1,
             binding: fixture.binding(),
         };
         let selection = (target.clone(), intent.creation().attachment.clone());
-        let worker = Worker::spawn(
-            scope,
-            Arc::new(|| {}),
-            move |scope, cancel, events, wake| async move {
-                crate::host_client::attach_reserved_authenticated(
-                    stream, permit, &scope, selection, &cancel, &events, &wake,
-                )
-                .await
-            },
-        )
-        .unwrap();
-        let session = Arc::new(HostSession::from_worker(worker, Arc::new(Wake)));
-        tokio::time::timeout(Duration::from_secs(8), async {
-            while !native_snapshot_ready(&session).expect(
-                "native attachment failed before snapshot; inspect content-free server boundary",
-            ) {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
+        let session = Arc::new(
+            tokio::time::timeout(
+                Duration::from_secs(8),
+                client_attach_snapshot_worker(&mut fixture, scope, selection, None, |_| {}),
+            )
+            .await
+            .expect("same-target native retirement attachment did not publish a snapshot"),
+        );
         let mut frontend =
             festerm_core::Terminal::new(festerm_core::Dimensions::new(40, 12).unwrap()).unwrap();
         assert!(session.adopt_into(&mut frontend).unwrap());
@@ -1184,15 +1238,8 @@ async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_orig
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation() {
-    use crate::host_client::{
-        AttachStage, CreationIntent, CreationMode, Failure, HostSession, Scope, Worker,
-    };
-    use festerm_host_protocol::Refusal;
-    use festerm_session::{Session, SessionEvent, SessionEventNotifier, SessionLifecycle};
-    struct Wake;
-    impl SessionEventNotifier for Wake {
-        fn notify(&self) {}
-    }
+    use crate::host_client::{AttachStage, CreationIntent, CreationMode, Scope};
+    use festerm_session::{Session, SessionEvent, SessionLifecycle};
     async fn lock_generation(lease_lock: &std::fs::File) {
         loop {
             match fs2::FileExt::try_lock_exclusive(lease_lock) {
@@ -1274,62 +1321,21 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
         // held. A capability refusal does not exercise that attachment gate.
         lock_generation(&lease_lock).await;
         let mut contended = true;
-        loop {
-            let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
-            let selection = selection.clone();
-            let (report_failure, mut attempt_failure) = tokio::sync::oneshot::channel();
-            let worker = Worker::spawn(
-                scope.clone(),
-                Arc::new(|| {}),
-                move |scope, cancel, events, wake| async move {
-                    let result = crate::host_client::attach_reserved_authenticated(
-                        stream, permit, &scope, selection, &cancel, &events, &wake,
-                    )
-                    .await;
-                    if let Err(failure) = &result {
-                        let _ = report_failure.send(*failure);
-                    }
-                    result
-                },
-            )
-            .unwrap();
-            let mut session = HostSession::from_worker(worker, Arc::new(Wake));
-            session.set_creation_intent(Some(intent.clone()));
-            let busy_stage = loop {
-                match native_snapshot_ready(&session) {
-                    Ok(true) => {
-                        assert!(!contended, "held generation published a snapshot");
-                        return session;
-                    }
-                    Ok(false) => tokio::time::sleep(Duration::from_millis(5)).await,
-                    Err(reason) => match attempt_failure.try_recv() {
-                        Ok(Failure::Attachment {
-                            stage: stage @ (AttachStage::Capabilities | AttachStage::Snapshot),
-                            error: Error::Refused(Refusal::Busy),
-                        }) => break stage,
-                        other => panic!("{reason}: {other:?}"),
-                    },
+        let session = client_attach_snapshot_worker(
+            &mut fixture,
+            scope,
+            selection,
+            Some(intent.clone()),
+            |busy_stage| {
+                if contended && busy_stage == AttachStage::Snapshot {
+                    fs2::FileExt::unlock(&lease_lock).unwrap();
+                    contended = false;
                 }
-            };
-            assert!(!intent.is_presented());
-            assert!(session.try_send_input(b"must-not-be-queued").is_err());
-            assert!(!session.has_pending_snapshot());
-            drop(session);
-            assert!(matches!(
-                fixture.servers.last_mut().unwrap().await.unwrap(),
-                Err(Error::Refused(Refusal::Busy))
-            ));
-            fixture.servers.pop();
-            let ssh = fixture.connections.last_mut().unwrap();
-            ssh.abort();
-            let _ = ssh.await;
-            fixture.connections.pop();
-            if contended && busy_stage == AttachStage::Snapshot {
-                fs2::FileExt::unlock(&lease_lock).unwrap();
-                contended = false;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+            },
+        )
+        .await;
+        assert!(!contended, "held generation published a snapshot");
+        session
     })
     .await
     .expect("same-target native mobile attachment did not publish a snapshot");

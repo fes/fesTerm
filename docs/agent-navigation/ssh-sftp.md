@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "b83525619eb540c1f6fb16b027df7ed136701a4d60df856a211ce69902545121"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "mai-code-1.1-flash", "sources": "1fa56c6942b3ebfc95984febbaf5210c4fb936f01483f5da1bd64b79f6da9d24"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,17 +12,18 @@ Canonical docs: [docs/sftp-ui-design.md](../../docs/sftp-ui-design.md)
 
 Use for: When an SSH host fingerprint must be accepted or rejected before shell or SFTP work continues.
 
-- [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns the worker thread, trust gates, and session lifetime for SSH transport.
+- [`HostIdentity`](../../crates/festerm-ssh/src/lib.rs) — Canonical host and port identity used for trust decisions.
 - [`HostTrustDecision`](../../crates/festerm-ssh/src/lib.rs) — User response enum for reject, accept once, and persist.
+- [`SshSession`](../../crates/festerm-ssh/src/lib.rs) — Owns the worker thread, trust gates, and session lifetime for SSH transport.
 
 Evidence:
 - [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Host-key prompt arrives before password, matching ssh ordering.
-- [`controlled_openssh_automatic_recovery_stops_when_host_key_change_is_rejected`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Rejected key change stops recovery instead of continuing.
+- [`controlled_openssh_automatic_recovery_stops_when_host_key_change_is_rejected`](../../crates/festerm-ssh/tests/openssh_interop.rs) — Rejected key changes stop recovery instead of continuing.
 
 Caveats:
-- Trust is keyed by canonical host and port, so mismatches are easy to miss.
+- Host trust is keyed by canonical host and port, so mismatches are easy to miss.
 - Pending prompts pause the worker without dropping the TCP session.
-- GUI SFTP rejects interactive auth and requires explicit credentials.
+- A host-key rejection blocks the current connection path instead of auto-recovering.
 
 ## gui sftp connect
 
@@ -32,13 +33,13 @@ Use for: When the app opens a GUI-backed SFTP session and must pause for trust w
 - [`SftpSession`](../../crates/festerm-ssh/src/sftp.rs) — Wraps the authenticated russh SFTP client and working-directory state.
 
 Evidence:
-- [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Connected remote reads succeed with verified, bounded results.
 - [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The connect flow shows host-key trust before password prompts.
+- [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Connected remote reads succeed with verified, bounded results.
 
 Caveats:
-- The connect task uses a dedicated runtime so russh dispatch is not killed by a throw-away runtime.
+- The connect path keeps a dedicated runtime so russh dispatch survives the handshake.
 - Dropping the completion cancels the connect attempt and tears down the owned thread.
-- Interactive auth is intentionally unsupported; GUI SFTP must supply explicit credentials.
+- GUI SFTP rejects interactive auth and requires explicit credentials.
 
 ## sftp transfer queue
 
@@ -48,18 +49,15 @@ Use for: When a bounded copy queue needs collision decisions, retries, or public
 - [`SftpTransferRequest`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Validates local or remote path pairs before scheduling work.
 - [`RemoteTransferEndpoint`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Remote endpoint contract for review, metadata, and bounded publication.
 
-- [`from_remote_endpoint_with_upload_sources`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Uses admitted held upload sources; ordinary SFTP keeps its path semantics.
-
 Evidence:
-- [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs) — Lost open reply preserves uncertainty instead of claiming success.
+- [`single_upload_lost_open_reply_reports_uncertainty_with_primary_error`](../../crates/festerm-ssh/src/sftp.rs) — Lost open replies preserve uncertainty instead of claiming success.
 - [`collision_decisions_replace_skip_keep_both_and_apply_to_all_are_batch_scoped`](../../crates/festerm-ssh/src/sftp_transfer.rs) — Batch-scoped decisions stay scoped to one batch.
 - [`rooted_queue_parks_second_replacement_until_first_review_releases`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — The queue parks work behind the sole retained replacement review.
-- [`interrupted_copy_preserves_failed_handle_cleanup`](../../crates/festerm-ssh/src/sftp_transfer/endpoint.rs) — Cleanup happens before cancellation is classified as a normal fail.
 
 Caveats:
 - Uncertain output is preserved and reported without claiming ownership or authorizing deletion.
 - Remote names and listings are untrusted; validation occurs before any write.
-- GUI reports survive restart without granting remote cleanup or resume; text SFTP keeps live-only reporting.
+- The queue reserves a single replacement review admission at a time.
 
 ## app remote sftp
 
@@ -70,19 +68,9 @@ Use for: When GUI SFTP tabs read remote files or start a remote pane after trust
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads surface exact bytes plus honest max-length boundaries.
+- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The app path resolves host-key trust before password prompt handling.
 
 Caveats:
 - Remote reads are bound to a verified fingerprint and transport generation to avoid stale reads.
 - The app keeps terminal and GUI SFTP lifecycles separate even when they share a profile.
 - A host-key prompt is resume-oriented; dropping the completion cancels the connect attempt.
-
-## HOST Files presentation
-
-Use for: Displaying allowed locations without exposing request selectors.
-
-- [`FilesSource`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Physical labels, opened access and immutable virtual paths.
-- [`SftpCleanupReporter`](../../app/festerm/src/sftp_file_manager.rs) — Bounded masked notices retain private typed diagnostics.
-
-Caveats:
-- Recovery retains authenticated account and host identities; new uploads wait for a matching successful folder snapshot.
-- Legacy SFTP paths remain unchanged; allowlist native qualification is separate.

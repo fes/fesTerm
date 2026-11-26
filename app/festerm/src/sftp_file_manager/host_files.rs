@@ -2,7 +2,8 @@
 //! command queue. There is no terminal, daemon session or SFTP fallback.
 use super::*;
 use crate::app::host_files::{
-    ConnectFiles, DeleteObservation, FilesChannel, FilesEndpoint, FilesRecoveryPin, FirstFailure,
+    ConnectFiles, DeleteObservation, DirectorySnapshotError, FilesChannel, FilesEndpoint,
+    FilesRecoveryPin, FirstFailure,
 };
 use festerm_ssh::RemoteTransferEndpoint;
 use festerm_tunnel_bridge::{host_client::ordinary::ExpectedHost, ordinary_auth::OrdinaryHostInfo};
@@ -395,7 +396,13 @@ async fn files_operations(
                                 browsing.check_current().map_err(|error| error.to_string())?;
                                 let _ = events.send(WorkerEvent::FilesDirectoryLoaded { request_id, connection_scope: scope.capture(), snapshot, metadata, skipped }).await;
                             }
-                            Err(error) => { let _ = events.send(WorkerEvent::FilesDirectoryFailed { request_id, details: error.to_string() }).await; }
+                            Err(DirectorySnapshotError::Missing(error)) => {
+                                browsing.check_current().map_err(|error| error.to_string())?;
+                                let _ = events.send(WorkerEvent::FilesDirectoryMissing {
+                                    request_id, connection_scope: scope.capture(), details: error.to_string()
+                                }).await;
+                            }
+                            Err(DirectorySnapshotError::Other(error)) => { let _ = events.send(WorkerEvent::FilesDirectoryFailed { request_id, details: error.to_string() }).await; }
                         }
                     }
                     WorkerCommand::ReadMarkdownSnapshot { request_id, path, max_bytes } => {
@@ -974,7 +981,7 @@ mod tests {
                     .unwrap();
                 continue;
             }
-            let error = snapshot.unwrap_err();
+            let error = snapshot.unwrap_err().into_inner();
             assert!(
                 matches!(&error, festerm_ssh::SftpSessionError::RemoteOperationFailed { path, .. } if path == &raw)
             );
