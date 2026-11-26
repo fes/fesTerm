@@ -3394,8 +3394,10 @@ contention. The observation loop performs only the exact protected read.
 Validation impact: GUI:HOST-04 and GUI:DIAG-01. Owned lifecycle-lease fixtures
 cover release, changed consent at the same epoch, cancellation, fatal error,
 and expiry before a read or before its result can be accepted. The existing
-child cancel/drain regression still applies. A clean first Enable with the
-corrected signed Mac cohort remains a native gate.
+child cancel/drain regression still applies. The later signed26 Mac RO33 and
+WRITE37 [provider components](../../validation/dev-tunnels/files-provider-native-components.json)
+qualify clean first results separately; they do not identify the historical
+contention holder or qualify forced-contention native execution.
 
 
 ### Windows quiescent Task policy projection

@@ -1,0 +1,379 @@
+{
+  "record_version": 1,
+  "status": "three pinned Android ordinary Files workflows accepted; iOS and broader interruption checks pending",
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "date_utc": "2026-11-25",
+  "not_a_new_terminal_matrix_case": true,
+  "combined_release_qualified": false,
+  "mobile_files_item25_complete": false,
+  "accepted_ordinary_Android_server_pairs": 3,
+  "pending_ordinary_iOS_server_pairs": 3,
+  "client_builds": {
+    "ee14929e": {
+      "commit": "ee14929e970821246523f5306d997970e4146f84",
+      "tree": "06fb832dcf2e5c0486f6d50701b34856b1d8a845",
+      "apk_bytes": 43893590,
+      "apk_sha256": "244998a814fc4cca99fd9201daed7f990913e81a5bc98538bca016d719b7a9c3",
+      "abi": "arm64-v8a",
+      "signing": "development-only",
+      "features": [
+        "host-clients"
+      ],
+      "default_features": false,
+      "artifact_receipt": {
+        "original_filename": "ANDROID-ARTIFACT.json",
+        "bytes": 1123,
+        "sha256": "cf6f9c9325eb2e89bb799348ce5863d589ab70ae474cee659e528e1d377c033f"
+      },
+      "installed_qualification": {
+        "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+        "bytes": 377,
+        "sha256": "8d19735d3fd719c267ed4ea268b2b7c6fd2a25d89e376adba625dee47ce189aa"
+      }
+    },
+    "20c7142": {
+      "commit": "20c7142000524da9e983fcc3c44168de96b2a9fb",
+      "tree": "eef0455cb3c96d3d7345b974dffaf2d18589d935",
+      "apk_bytes": 43905878,
+      "apk_sha256": "cd6aa60c00587aeee4df5c51016b9136e7eb320b9f87cad645026ce36f9ec887",
+      "abi": "arm64-v8a",
+      "signing": "development-only",
+      "features": [
+        "host-clients"
+      ],
+      "default_features": false,
+      "artifact_receipt": {
+        "original_filename": "ANDROID-ARTIFACT.json",
+        "bytes": 1015,
+        "sha256": "591adcaefb389176e6df775cc73368d5ef9395817fc03a125d442cc7c93ca31a"
+      },
+      "installed_qualification": {
+        "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+        "bytes": 429,
+        "sha256": "493730ffb22c689528829e2066dda11ad4a27683cd2f9186dc9da37c26d14740"
+      }
+    },
+    "d136872e": {
+      "commit": "d136872eb02f3d55422fde653fe9b041a20799d4",
+      "tree": "51d5ebe5d79baaa0cc4c5c890933ffa83e046423",
+      "apk_bytes": 43905878,
+      "apk_sha256": "007e0e03a50b6e2ac449db0e38f98e1fa2104396e899d09424c1ace5087adb03",
+      "abi": "arm64-v8a",
+      "signing": "development-only",
+      "features": [
+        "host-clients"
+      ],
+      "default_features": false,
+      "artifact_receipt": {
+        "original_filename": "ANDROID-ARTIFACT.json",
+        "bytes": 1017,
+        "sha256": "88cfafb0cb6a7bb481c0b42e38bbb93283438dc97a95828a4e77d53386b5a385"
+      },
+      "installed_qualification": {
+        "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+        "bytes": 359,
+        "sha256": "d74272d29e2dac9887a3c2dd1cd50cb10a3975906ea8ecd56e09e4a1293ec28a"
+      }
+    }
+  },
+  "components": [
+    {
+      "client": "Android emulator",
+      "server_OS": "Linux",
+      "result": "accepted ordinary Files workflow",
+      "client_builds": [
+        "ee14929e",
+        "20c7142"
+      ],
+      "server_lifecycle_epoch": 95,
+      "private_acceptance": {
+        "original_filename": "ANDROID-LINUX-ORDINARY-ACCEPTANCE.json",
+        "bytes": 2818,
+        "sha256": "24c7872e2637c525809493a0c5be61a8b190ca62d8ea85edb13119cd464a9376"
+      },
+      "private_originals": [
+        {
+          "original_filename": "F16-ORIGINALS-PRESERVED.json",
+          "bytes": 511,
+          "sha256": "1fc4ee2752bf9439932eaf6037b4808a2d894a9130c45d4d72a24e5f5517cbad"
+        },
+        {
+          "original_filename": "F16-PUBLIC-FILES-RETAINED.json",
+          "bytes": 132,
+          "sha256": "92e705cafed08c987483ef2cdee4d3360d836e02367eb04cb46c972714a7bc91"
+        },
+        {
+          "original_filename": "LINUX-POST.json",
+          "bytes": 581,
+          "sha256": "4430b046690e2b75430efb7174f9405d8993c8dee88f1f2aa6cf430be70fa816"
+        }
+      ],
+      "attribution": "Initial profile/folder creation and upload: ee14929e. Later rendered layout, preview, transfer cancellation, queue continuation, reviewed deletion and cleanup: 20c7142. These are composed pinned components.",
+      "upload": {
+        "bytes": 524288,
+        "sha256": "fb2038e92bfb33d924d886ac153e7009c9f8927ede228e4020029d727538577a"
+      },
+      "download": {
+        "bytes": 33,
+        "sha256": "23027bc3524b05cdfd9da1545e39a22240397efd8b66a31db339143749f74acb"
+      },
+      "server_build": "signed24",
+      "installed_qualification_originals": [
+        {
+          "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+          "bytes": 377,
+          "sha256": "8d19735d3fd719c267ed4ea268b2b7c6fd2a25d89e376adba625dee47ce189aa"
+        },
+        {
+          "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+          "bytes": 429,
+          "sha256": "493730ffb22c689528829e2066dda11ad4a27683cd2f9186dc9da37c26d14740"
+        },
+        {
+          "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+          "bytes": 349,
+          "sha256": "f73abe3b96cd8cda68935c07ee4f2996608291a618dc76a6dbcbe5662416a5b5"
+        }
+      ]
+    },
+    {
+      "client": "Android emulator",
+      "server_OS": "Windows",
+      "result": "accepted ordinary Files workflow",
+      "client_builds": [
+        "20c7142"
+      ],
+      "server_lifecycle_epoch": 82,
+      "private_acceptance": {
+        "original_filename": "ANDROID-WINDOWS-ORDINARY-ACCEPTANCE.json",
+        "bytes": 3355,
+        "sha256": "05eb40819e819d7ccccf8c46a15483e7c8efdb3d03fccdc20539adee01d4b853"
+      },
+      "private_originals": [
+        {
+          "original_filename": "W22-UPLOAD-PROOF.json",
+          "bytes": 310,
+          "sha256": "6fce2f6ff6548d9803e377ebe234355a82e871644a209107831843002c688d58"
+        },
+        {
+          "original_filename": "W24-PREVIEW-SETTLED.png",
+          "bytes": 110839,
+          "sha256": "aec80edb11fd8c47433aeda5706697361ae4fa4edb1a100100afd46c00f36e26"
+        },
+        {
+          "original_filename": "W36-DOWNLOAD-VERIFIED.json",
+          "bytes": 124,
+          "sha256": "18fdfe27ab384eff0b5d8797a4bbaf281eae0dfb23108deec41195a5cfee54ce"
+        },
+        {
+          "original_filename": "W40-ORIGINALS-PRESERVED.json",
+          "bytes": 161,
+          "sha256": "77e02c2a6f692b95a40fd7fbc08550859358f4e0b0ad430a2f69e65c476b2776"
+        },
+        {
+          "original_filename": "WINDOWS-POST.json",
+          "bytes": 720,
+          "sha256": "4a48b127505be4823a484b025403b1c1cd0bf21f3b6edf5fedf63bb19d82a7e3"
+        }
+      ],
+      "upload": {
+        "bytes": 524288,
+        "sha256": "bf22940b401eefbaf826c0c730ffa24ed91785b3cd95a0497642a8d5db4db077"
+      },
+      "download": {
+        "bytes": 97,
+        "sha256": "d8156c8fb65a2d49d258ea575eedab60527b2933dda053da06e23aab27e8d980"
+      },
+      "preserved_actor_births": 33,
+      "preserved_catalog_operations": 29,
+      "server_build": "signed26",
+      "installed_qualification_originals": [
+        {
+          "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+          "bytes": 349,
+          "sha256": "74be52499651ce170513b524abf4527ce4298dc2f1cc47a451a22a41f52257e1"
+        }
+      ]
+    },
+    {
+      "client": "Android emulator",
+      "server_OS": "macOS",
+      "result": "accepted ordinary Files workflow",
+      "client_builds": [
+        "d136872e"
+      ],
+      "server_lifecycle_epoch": 51,
+      "private_acceptance": {
+        "original_filename": "ANDROID-MAC-ORDINARY-ACCEPTANCE.json",
+        "bytes": 3195,
+        "sha256": "b757ba42b71b618ea781a8e5f583be3dc42c7914ffa6de154506f79dcf685853"
+      },
+      "private_originals": [
+        {
+          "original_filename": "M23-PREVIEW-SETTLED.png",
+          "bytes": 101676,
+          "sha256": "be6b0cb63686a359e78726d66b36e805fdcb6a2b6691150a3c358c590c468a0c"
+        },
+        {
+          "original_filename": "MAC-PRE.json",
+          "bytes": 3270,
+          "sha256": "c2b7b16d4b49db7011d794449c87762e336b38c5c7a24d37a2894b5660b8f3cb"
+        },
+        {
+          "original_filename": "MAC-POST-REMOTE-CLEANUP.json",
+          "bytes": 3152,
+          "sha256": "f8e294151215a7561bd94d11d53fbbddf76a2fe78c29a5a171131f9019b89c03"
+        },
+        {
+          "original_filename": "M44-DOWNLOAD-PROOF.json",
+          "bytes": 285,
+          "sha256": "76f9023c2f4650daf872530ee5036fe7766734b785db31e1c2c81037f55d7a59"
+        },
+        {
+          "original_filename": "M50-ORIGINALS-PRESERVED.json",
+          "bytes": 572,
+          "sha256": "32a3c93bbb9e1ad36f16bf2872cf00365e1e085e135b04414397e5ca1bd199a3"
+        }
+      ],
+      "upload": {
+        "bytes": 524288,
+        "sha256": "014d2d50480e9c78255dccc4119950a4c31e42cba3c62b39d3d36ab58539e276"
+      },
+      "download": {
+        "bytes": 97,
+        "sha256": "d8156c8fb65a2d49d258ea575eedab60527b2933dda053da06e23aab27e8d980"
+      },
+      "preserved_actor_births": 18,
+      "preserved_catalog_operations": 27,
+      "server_build": "signed26",
+      "installed_qualification_originals": [
+        {
+          "original_filename": "INSTALLED-APK-QUALIFICATION.json",
+          "bytes": 359,
+          "sha256": "d74272d29e2dac9887a3c2dd1cd50cb10a3975906ea8ecd56e09e4a1293ec28a"
+        }
+      ]
+    }
+  ],
+  "separate_components": [
+    {
+      "client_build": "20c7142",
+      "server_OS": "Linux",
+      "scope": "Active 16777216-byte upload Cancel; no retained partial; subsequent 33-byte exact-hash download completes in the same app queue",
+      "qualification": "separate from background/return/reconnect",
+      "private_originals": [
+        {
+          "original_filename": "R16-TRANSFER-ACTIVE.png",
+          "bytes": 293784,
+          "sha256": "9c9f3b659ca3a6ae73e4ec6885b9c5414e16b4573fe28a8c1d8f42cdbac84520"
+        },
+        {
+          "original_filename": "R17-CANCEL-SETTLED.png",
+          "bytes": 284416,
+          "sha256": "7f18f133182e7a89665a9d7b758d3d3c343d3a8bd9e2df4b8411b9ae2eb053ea"
+        },
+        {
+          "original_filename": "R17-REMOTE-AFTER-CANCEL.json",
+          "bytes": 186,
+          "sha256": "9467783b5e0b57f7b2067c9f3ddab20ba5970747bc29b5a94e6315449d0b6bd2"
+        },
+        {
+          "original_filename": "R25-DOWNLOAD-VERIFIED.json",
+          "bytes": 185,
+          "sha256": "7b591b67bdc8974939b7681c5907b0a8e20b36ec5062d2f0986601df3081397d"
+        },
+        {
+          "original_filename": "R25-DOWNLOAD-DONE.png",
+          "bytes": 280663,
+          "sha256": "1f798ae32c435d99037e35b78664aca0d88085a62e4ac6ddd63dd89959999723"
+        }
+      ]
+    },
+    {
+      "client_build": "d136872e",
+      "API": 37,
+      "server_OS": "macOS",
+      "scope": "System KEYCODE_BACK hides visible Gboard and preserves named Files form; idle root Back reaches launcher, icon return retains same PID/birth/boot and fresh Sessions tap renders a responsive page",
+      "qualification": "No gesture animation, terminal exactly-once Escape, legacy API runtime or active-transfer interruption credit",
+      "private_originals": [
+        {
+          "original_filename": "M04-NATIVE-IME-BACK-PASS.json",
+          "bytes": 403,
+          "sha256": "cffa814b286d6975ad06198ad2c9608b6c7a3e1454605ef9081ec2a5c876478f"
+        },
+        {
+          "original_filename": "M03-NAMED.png",
+          "bytes": 148631,
+          "sha256": "18837b4e744df716f2ccb755477f55b90f2ba300b8e8f83531f7ed6c2f198d7c"
+        },
+        {
+          "original_filename": "M04-BACK-IME.png",
+          "bytes": 81427,
+          "sha256": "ccfe98ce212f235b0d20f594754684279aec2b0001884798f4812fbee9a4d363"
+        },
+        {
+          "original_filename": "B02-LAUNCHER.png",
+          "bytes": 1390072,
+          "sha256": "c87f7ea02e8670a88bbc68fede84b5fec44f30b86b4e1a6d3a168da22e009b8c"
+        },
+        {
+          "original_filename": "B04-RETURN-SETTLED.png",
+          "bytes": 192268,
+          "sha256": "7c1cf956ee626c72c56988d5f5d7da6ab1f440d57e8cf8e102c5483dd08ae997"
+        },
+        {
+          "original_filename": "B05-RESPONSIVE.png",
+          "bytes": 94987,
+          "sha256": "fa8846b4c1dd7ef4a58087c1b0b80324ae7293d8678300a9d14fc0f70c1aedd1"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Three iOS ordinary Files pairs remain unqualified. No full item25 closure or current uniform release acceptance.",
+    "Active-transfer background feedback, return and explicit reconnect remain unqualified after earlier emulator-wide unresponsiveness; no product crash/OOM cause established.",
+    "The earlier Windows-return splash observation retains unknown cause; later idle Back success does not establish its cause or permanent cure.",
+    "No live account/sign-out/lock/grant-revocation, lost-Finish, destination conflict/replacement, multi-file or wider usability acceptance beyond the stated components.",
+    "All original screenshots, raw logs and protected records remain private and unchanged. Only original artifact names, byte sizes and SHA256 digests are published; no PNG, crop or generated replacement image is included.",
+    "Owned emulator shutdown and QEMU absence were verified. Recorded launcher exit statuses alone do not establish a product crash.",
+    "Artifact producer metadata predates install; actual installed qualification records separately bind source/APK/app identity. The latest main or release does not inherit these native passes.",
+    "Saved Files profiles were reopened with fresh authority in the foreground; Files-profile reopening after a process restart and offline edit/sign-out were not qualified by these components."
+  ],
+  "retained_background_refusal": [
+    {
+      "original_filename": "R32-FIRST-REFUSAL.json",
+      "bytes": 859,
+      "sha256": "13b39f81df0366514934060848b6a14e9675f9ffa6fdc9ad75edb73fd30a2428"
+    }
+  ],
+  "server_builds": {
+    "signed24": {
+      "version": "0.17.24",
+      "source": "697daa9a43eaa2d5c9c6f6ec6092dc17766fe7c9",
+      "tree": "10c77e80f5512c669e1529147ec6354a6760274e",
+      "producer_run": 45200242229
+    },
+    "signed26": {
+      "version": "0.17.26",
+      "source": "edaceef48d4962cf6e3edc610f0f92b083df7832",
+      "tree": "f6fdb02c6bb5b8fc51e6edc0bc90c50bd50c9589",
+      "producer_run": 45299124779
+    }
+  },
+  "server_attribution": "Previously qualified signed HOST24/HOST26 producers are attributed from files-provider-native-components.json and Root reconciliation. Ordinary case receipts pin lifecycle/catalog/preservation; they do not repeat binary hash or signature verification. Linux95=HOST24; Windows82/Mac51=HOST26.",
+  "common_ordinary_outcomes": [
+    "Ordinary account-scoped discovery and Files connection without a new shell",
+    "Named metadata-only pinned Files profile save and fresh reopening",
+    "Remote folder creation and 524288-byte upload with exact server hash",
+    "Markdown preview",
+    "Regular-file and empty-directory Delete Cancel preserves identity; fresh Confirm removes only the owned target",
+    "Exact-hash download into an absent or new empty owned local destination",
+    "Owned saved profile removed with explicit confirmation; original account, five shell recipes, pending-deletion metadata, keyboard preference and five source fixtures preserved",
+    "Original server root, grants, catalog and durable actors preserved"
+  ],
+  "shared_mobile_source_identity": {
+    "app/festerm-mobile_tree_20c7142_and_d136872e": "588f944b2b1824204283466d9da61734db882a01",
+    "crates/festerm-mobile-profiles_tree_20c7142_and_d136872e": "bbc89c414e9a90964f7e0bdccdcf9a41a6ad3261",
+    "limit": "Equal mobile source trees do not qualify the whole rebased app or extend the API37 Back result to older runtimes."
+  }
+}
