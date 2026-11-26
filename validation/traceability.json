@@ -7710,7 +7710,8 @@
       ],
       "requirements": [
         "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision",
-        "docs/gui-design.md#account-host-and-session-browser"
+        "docs/gui-design.md#account-host-and-session-browser",
+        "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#read-only-link-preparation-retained-metadata-only"
       ],
       "decisions": [
         "ADR-0067",
@@ -7787,7 +7788,17 @@
         "file_manager_location_labels_hide_namespace_and_retired_metadata",
         "trusted_data_leaf_rejects_noncomponent_before_parent_or_external_lookup",
         "trusted_data_actual_os_home_chain_has_qualified_ownership_boundary",
-        "desktop_files_allowed_locations_render_physical_roots_and_keep_virtual_callbacks"
+        "desktop_files_allowed_locations_render_physical_roots_and_keep_virtual_callbacks",
+        "retained_link_snapshot_survives_alias_replacement_but_revalidation_refuses",
+        "retained_link_preserves_non_utf8_and_never_follows_fifo_target",
+        "retained_link_invalid_raw_names_refuse_before_parent_lookup",
+        "retained_link_payload_limit_refuses_truncation_without_utf8_conversion",
+        "parses_only_the_recognized_substitute_path",
+        "rejects_malformed_payloads_and_ambiguous_names",
+        "retained_ntfs_junction_extracts_and_revalidates_with_live_writers",
+        "retained_link_raced_fifo_refuses_after_metadata_without_following_or_blocking",
+        "retained_link_non_nodev_parent_refuses_before_metadata_open",
+        "retained_link_late_symbol_missing_and_ssize_error_fail_closed"
       ],
       "manual_scenarios": [
         "DT-07"
@@ -7796,7 +7807,8 @@
       "prerequisites": [
         "Current-source native/provider Desktop Files discovery, browse/upload/download/mkdir/preview, exact replacement review, cancellation and account retirement remain unqualified; portable protocol and rendered fixtures do not replace these checks.",
         "Windows/macOS/Linux native reviewed deletion/capture/restore and packaged default-off delete consent/UI remain unqualified; Windows GNU metadata checks are not native execution. Mobile Files and remote rename/chmod/link parity remain separate required work; old rooted v1 write consent never authorizes deletion.",
-        "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending."
+        "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending.",
+        "Native metadata preparation only: no Files operation follows links and no target or mutation authority is added. macOS 27.2.1 and Linux isolated retained-extraction prerequisites passed. Windows standalone attempt timed out without output; protected state was preserved but execution stage/extraction is unknown. Actual qualified Windows NTFS Rust tests are required for that primitive. Older macOS unsupported-platform tests are not positive extraction evidence. Full allowlist union resolver, disclosure/root/account fences, original alias paths, strict expected-handle rejection and Desktop/mobile read-only presentation remain pending."
       ]
     },
     {

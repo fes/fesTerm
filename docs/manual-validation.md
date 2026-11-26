@@ -7821,3 +7821,19 @@ root. With a missing or changed identity, require normal host selection. Legacy
 hosts, malformed metadata and account/guard failures refuse clearly. Preserve the
 original directory and all unrelated data. Portable framed and rendered fixtures
 do not qualify this native recovery case.
+
+
+Read-only link preparation for DTFILES-02 / DT-07 and MOB-11 adds native metadata component
+tests only; ordinary Files links remain unavailable. Positive macOS 27.2.1 and
+Linux retained-link extraction prerequisites do not qualify a resolver or user
+workflow. The standalone Windows probe timed out with no output; protected state
+was preserved, but its extraction result is unknown. Run the repository's actual
+Windows NTFS primitive tests, including reparse edit controls, before accepting
+that junction component; native Windows symbolic links remain unqualified.
+The Mac metadata helper requires NODEV and nonblocking/no-controlling-terminal
+acquisition; non-NODEV private-chain link support remains pending. Later link-read qualification must use two allowed roots and an
+outside canary, exercise directory and regular-file aliases across the union,
+refuse outside intermediate hops before traversal, and verify alias/descendant
+writes and replacement proofs remain refused even after path cutover to the same
+object. Retain same-handle page/chunk checks, account/root retirement and existing
+limits. No grant broadening or OS permission changes are part of these checks.

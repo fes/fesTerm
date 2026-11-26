@@ -793,3 +793,48 @@ Malformed metadata and authority failures remain fatal, and historical peers
 without locations refuse the choice without root fallback. The transient
 preference stays in client navigation. Native recovery qualification remains
 pending under DTFILES-05 and MOB-11.
+
+
+## Read-only link preparation: retained metadata only
+
+The next bounded enabler is native link metadata acquisition, not permission to
+follow links. Existing Files operations continue to refuse them on every host;
+there is no new advertised operation, opening version or settings field. A native
+helper retains the link and its parent, captures one bounded target payload
+without opening the target, and can compare that payload and the original
+no-follow entry identity again. The snapshot grants neither target access nor
+mutation/replacement authority. Unsupported filesystems, reparse forms, malformed
+or oversized payloads refuse; there is no ambient-path fallback or permission
+repair. Unix payload bytes must not be lossily converted into another pathname.
+The macOS metadata helper currently requires local APFS with NODEV and opens
+nonblocking without acquiring a controlling terminal. Its macOS 13 symbol is
+resolved only after platform qualification with the native return signature,
+so adding this helper does not impose that symbol on the older binary target.
+A non-NODEV private-chain link route remains unimplemented; a predicate on one
+parent handle alone does not establish the complete private-chain contract.
+
+For the later resolver, retained payloads define the destinations to be checked
+against the explicit allowed union before traversal. Windows sharing is not
+assumed to freeze an in-place reparse edit: compare the same retained handle's
+exact tag, flags and substitute payload at disclosure checkpoints as well as
+checking its original parent/name identity. The resolver must additionally
+revalidate the current grant and source/target ancestry; helper-local checks
+only establish the entry relative to its retained parent. Refuse observed
+changes or failed queries. These sequential checks do not promise an atomic whole-path snapshot;
+the eventual data read must remain bound to its retained, independently admitted
+target. Alias-derived reads and descendants will be read-only, and their handles
+must never serve as expected replacement proof, even after the original virtual
+path changes to a direct name for the same target. Those resolver, disclosure,
+protocol and client changes require their own tested increment.
+
+Validation impact: native component tests cover retained extraction, unchanged
+controls, replacement refusal or changed-name detection, bounded parsing and
+observed payload changes. The isolated macOS 27.2.1 and Linux A/B probes qualify
+extraction only. The standalone Windows attempt timed out without output; its
+protected-state postcheck passed, but extraction and execution stage remain
+unknown. Require actual Windows NTFS tests of the Rust helper, including a
+successful edit control, before qualifying that primitive. That live junction
+fixture does not qualify native symbolic-link extraction. Full union resolution,
+outside/intermediate refusal, shared budgets and Desktop/mobile read-only
+presentation remain pending under DTFILES-02 / DT-07 and MOB-11. No existing native record
+is relabelled as current-product link support.
