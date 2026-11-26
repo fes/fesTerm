@@ -4762,6 +4762,15 @@ behavior, and does not close CP-19.
 
 ## Staged MCP and JavaScript automation (AUTO-01 through AUTO-08)
 
+Portable preference fixtures keep pre-save reserved input in all five MCP-disable
+or save-failure revocation cases. The successful JavaScript-disable case checks
+that the same MCP grant/lease, direct-input binding and metadata remain live,
+then reserves fresh ordered input after saving. It does not promise that a
+250ms backend reservation survives a configuration save. The six-session aging
+notification/drain fixture uses the existing frozen ingest-clock seam with the
+unchanged frame budget; a separate tick-clock regression checks budget exhaustion
+and progress on the next update. These fixtures add no native acceptance.
+
 Native acceptance remains **deferred**, except for the partial probes explicitly
 recorded below. The planning contract is
 [ADR 0065](adr/0065-mcp-and-javascript-automation.md) and the

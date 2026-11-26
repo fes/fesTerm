@@ -1302,12 +1302,7 @@ fn direct_action_reserves_frozen_bytes_in_backend_order() {
 #[test]
 fn preference_disables_fence_presented_reservation_and_composed_metadata() {
     use crate::automation::preferences::Feature;
-    use crate::configuration_startup::{
-        ConfigurationReloader, SessionNameConfigurationFixture, TestSaveFailure,
-    };
-    use festerm_automation::Error;
-    use festerm_config::{Configuration, InterfaceSettings};
-    use festerm_session::CommitAutomationInputError;
+    use crate::configuration_startup::TestSaveFailure;
 
     let _serial = presentation_admission_test_guard();
     for feature in [Feature::Mcp, Feature::Javascript] {
@@ -1316,101 +1311,166 @@ fn preference_disables_fence_presented_reservation_and_composed_metadata() {
             Some(TestSaveFailure::BeforeWrite),
             Some(TestSaveFailure::AfterWrite),
         ] {
-            retry_busy_case(|| {
-                let mut fixture = presented_input_fixture_with_options(&[], true, true);
-                let target = fixture.barrier.target;
-                let principal = fixture.coordinator.peers[&1].principal;
-                let metadata = prepare_metadata_review(&mut fixture.coordinator, 1, &[target]);
-                approve_metadata_review(&mut fixture.coordinator, 1, &metadata).unwrap();
-                let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[target]);
-                assert!(delivery.is_live(principal, Instant::now()));
-
-                let file = SessionNameConfigurationFixture::new();
-                let configuration = Configuration::empty()
-                    .with_interface_settings(
-                        InterfaceSettings::DEFAULT
-                            .with_mcp_enabled(true)
-                            .with_javascript_enabled(true),
-                    )
-                    .unwrap();
-                configuration.save_to_path(&file.path).unwrap();
-                fixture.app.adopt_broadcast_configuration(configuration);
-                fixture
-                    .app
-                    .set_reloader_for_test(ConfigurationReloader::from_path_for_test(
-                        file.path.clone(),
-                    ));
-                fixture.app.initialize_automation_preferences();
-                let settings = fixture.coordinator.settings(&[&fixture.app]);
-                fixture.app.set_automation_settings(settings);
-
-                let tab = fixture.app.automation_session(fixture.tab).unwrap();
-                let Some(crate::tabs::ApplicationSession::TestSsh(backend)) =
-                    tab.controller.session()
-                else {
-                    panic!("expected controlled backend");
-                };
-                let backend = backend.clone();
-                backend.enable_ordered_test_input();
-                backend.enqueue_ordered_test_input(b"before");
-                let reservation = reserve_direct_input_with_retry(
-                    &mut fixture.coordinator,
-                    1,
-                    fixture.request,
-                    tab,
-                )
-                .unwrap();
-                backend.enqueue_ordered_test_input(b"after");
-                assert_eq!(backend.drain_ordered_test_input(), vec![b"before".to_vec()]);
-
-                if let Some(failure) = failure {
-                    fixture
-                        .app
-                        .shared_application_services()
-                        .2
-                        .fail_next_save_for_test(failure);
-                }
-                fixture
-                    .app
-                    .toggle_automation_preference_for_test(feature, &egui::Context::default());
-                let should_stop = feature == Feature::Mcp || failure.is_some();
-                assert_eq!(
-                    fixture.coordinator.stop.load(Ordering::Acquire),
-                    should_stop
-                );
-                let result = fixture.coordinator.commit_direct_input(
-                    1,
-                    fixture.request,
-                    reservation,
-                    fixture.app.automation_session(fixture.tab).unwrap(),
-                    Some(&mut fixture.barrier),
-                );
-                if matches!(
-                    result,
-                    Err(CommitAutomationInputError::Refused(Error::Busy))
-                ) {
-                    assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
-                    return false;
-                }
-                if should_stop {
-                    assert_eq!(
-                        result,
-                        Err(CommitAutomationInputError::Refused(Error::Revoked))
-                    );
-                    assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
-                    assert!(!delivery.is_live(principal, Instant::now()));
-                } else {
-                    assert_eq!(result, Ok(()));
-                    assert_eq!(
-                        backend.drain_ordered_test_input(),
-                        vec![b"test".to_vec(), b"after".to_vec()]
-                    );
-                    assert!(delivery.is_live(principal, Instant::now()));
-                }
-                true
-            });
+            if feature == Feature::Javascript && failure.is_none() {
+                continue;
+            }
+            check_preference_input_fences(feature, failure);
         }
     }
+}
+
+#[test]
+fn javascript_disable_preserves_mcp_authority_and_fresh_ordered_input_after_save() {
+    let _serial = presentation_admission_test_guard();
+    check_preference_input_fences(crate::automation::preferences::Feature::Javascript, None);
+}
+
+fn check_preference_input_fences(
+    feature: crate::automation::preferences::Feature,
+    failure: Option<crate::configuration_startup::TestSaveFailure>,
+) {
+    use crate::automation::preferences::Feature;
+    use crate::configuration_startup::{ConfigurationReloader, SessionNameConfigurationFixture};
+    use festerm_automation::Error;
+    use festerm_config::{Configuration, InterfaceSettings};
+    use festerm_session::CommitAutomationInputError;
+
+    retry_busy_case(|| {
+        let mut fixture = presented_input_fixture_with_options(&[], true, true);
+        let target = fixture.barrier.target;
+        let principal = fixture.coordinator.peers[&1].principal;
+        let metadata = prepare_metadata_review(&mut fixture.coordinator, 1, &[target]);
+        approve_metadata_review(&mut fixture.coordinator, 1, &metadata).unwrap();
+        let (_, _, delivery) = metadata_disclosure(&mut fixture.coordinator, 1, &[target]);
+        assert!(delivery.is_live(principal, Instant::now()));
+
+        let file = SessionNameConfigurationFixture::new();
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT
+                    .with_mcp_enabled(true)
+                    .with_javascript_enabled(true),
+            )
+            .unwrap();
+        configuration.save_to_path(&file.path).unwrap();
+        fixture.app.adopt_broadcast_configuration(configuration);
+        fixture
+            .app
+            .set_reloader_for_test(ConfigurationReloader::from_path_for_test(file.path.clone()));
+        fixture.app.initialize_automation_preferences();
+        let settings = fixture.coordinator.settings(&[&fixture.app]);
+        fixture.app.set_automation_settings(settings);
+
+        let tab = fixture.app.automation_session(fixture.tab).unwrap();
+        let Some(crate::tabs::ApplicationSession::TestSsh(backend)) = tab.controller.session()
+        else {
+            panic!("expected controlled backend");
+        };
+        let backend = backend.clone();
+        backend.enable_ordered_test_input();
+        let should_stop = feature == Feature::Mcp || failure.is_some();
+        let old_control_binding = fixture
+            .coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .prepared_control_binding(principal, fixture.request, Instant::now())
+            .unwrap();
+        let old_direct_binding = fixture
+            .coordinator
+            .broker
+            .as_ref()
+            .unwrap()
+            .prepared_direct_input_binding(principal, fixture.request, Instant::now())
+            .unwrap();
+        let reservation = if should_stop {
+            backend.enqueue_ordered_test_input(b"before");
+            let reservation =
+                reserve_direct_input_with_retry(&mut fixture.coordinator, 1, fixture.request, tab)
+                    .unwrap();
+            backend.enqueue_ordered_test_input(b"after");
+            assert_eq!(backend.drain_ordered_test_input(), vec![b"before".to_vec()]);
+            Some(reservation)
+        } else {
+            None
+        };
+
+        if let Some(failure) = failure {
+            fixture
+                .app
+                .shared_application_services()
+                .2
+                .fail_next_save_for_test(failure);
+        }
+        fixture
+            .app
+            .toggle_automation_preference_for_test(feature, &egui::Context::default());
+        assert_eq!(
+            fixture.coordinator.stop.load(Ordering::Acquire),
+            should_stop
+        );
+        let reservation = reservation.unwrap_or_else(|| {
+            // Saving preferences may outlast a backend slot's 250ms lifetime.
+            // Check the old MCP authority survived unrelated JavaScript disable,
+            // then reserve fresh input after saving; no expired slot is revived.
+            assert!(!should_stop);
+            assert!(delivery.is_live(principal, Instant::now()));
+            let broker = fixture.coordinator.broker.as_ref().unwrap();
+            assert_eq!(
+                broker
+                    .prepared_control_binding(principal, fixture.request, Instant::now())
+                    .unwrap(),
+                old_control_binding
+            );
+            assert_eq!(
+                broker
+                    .prepared_direct_input_binding(principal, fixture.request, Instant::now())
+                    .unwrap(),
+                old_direct_binding
+            );
+            backend.enqueue_ordered_test_input(b"before");
+            let reservation = reserve_direct_input_with_retry(
+                &mut fixture.coordinator,
+                1,
+                fixture.request,
+                fixture.app.automation_session(fixture.tab).unwrap(),
+            )
+            .unwrap();
+            backend.enqueue_ordered_test_input(b"after");
+            assert_eq!(backend.drain_ordered_test_input(), vec![b"before".to_vec()]);
+            reservation
+        });
+        let result = fixture.coordinator.commit_direct_input(
+            1,
+            fixture.request,
+            reservation,
+            fixture.app.automation_session(fixture.tab).unwrap(),
+            Some(&mut fixture.barrier),
+        );
+        if matches!(
+            result,
+            Err(CommitAutomationInputError::Refused(Error::Busy))
+        ) {
+            assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
+            return false;
+        }
+        if should_stop {
+            assert_eq!(
+                result,
+                Err(CommitAutomationInputError::Refused(Error::Revoked))
+            );
+            assert_eq!(backend.drain_ordered_test_input(), vec![b"after".to_vec()]);
+            assert!(!delivery.is_live(principal, Instant::now()));
+        } else {
+            assert_eq!(result, Ok(()));
+            assert_eq!(
+                backend.drain_ordered_test_input(),
+                vec![b"test".to_vec(), b"after".to_vec()]
+            );
+            assert!(delivery.is_live(principal, Instant::now()));
+        }
+        true
+    });
 }
 
 #[test]

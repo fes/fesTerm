@@ -517,8 +517,15 @@ fn aging_fixture_notifies_and_pumps_all_six_owned_sessions() {
         .sessions
         .iter()
         .all(|(_, transport)| transport.pending_events_for_test() == 1));
+    let now = Instant::now();
     let mut output = fixture.context.run_ui(Default::default(), |ui| {
-        fixture.app.pump_all_sessions(ui.ctx());
+        // This fixture checks six-session notification/draining, not elapsed
+        // frame time. The separate tick-clock test covers budget exhaustion.
+        fixture.app.pump_all_sessions_with_clock(
+            ui.ctx(),
+            crate::session_controller::GLOBAL_INGEST_TIME_BUDGET,
+            || now,
+        );
     });
     output.textures_delta.clear();
     for (tab, transport) in &fixture.sessions {
