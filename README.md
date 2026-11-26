@@ -41,8 +41,10 @@ never authorize it. Rename/chmod/link parity remains separate work. Mobile
 with a current write grant, regular-file upload and folder creation through the
 shared transfer queue. Saved Files destinations reopen with fresh account-bound
 Files authority; separately granted remote Delete reviews up to eight files or
-empty folders before confirmation. Mobile device-native Files qualification
-remains pending. The grant is off by default and can be changed/revoked on
+empty folders before confirmation. Pinned [Android ordinary Files components](validation/dev-tunnels/mobile-files-android-native-components.json)
+are accepted against Linux, Windows and Mac, with separately attributed builds.
+The three iOS Files pairs, active-transfer background/return/reconnect and
+combined-release qualification remain pending. The grant is off by default and can be changed/revoked on
 an existing host. A [pinned Mac-to-Linux native check](validation/dev-tunnels/linux-files-native-readwrite.json)
 qualifies a reviewed read/write grant, small upload/download, preview and mkdir
 with Delete off. The [signed 0.17.24 component record](validation/dev-tunnels/files-native-0.17.24.json)
