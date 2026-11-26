@@ -4367,3 +4367,14 @@ Stopped profiles have no termination action. Close continues to detach only.
 Confirmed completion updates the matching session row; uncertainty remains an
 error without claiming termination or replaying the request. Profiles does not
 show technical attachment-retirement notices after a tab is closed.
+
+For ordinary host Files configuration, show one **Allowed location** separately
+from optional **Start in**. Blank Start in preserves the old allowed-root start;
+absolute paths or `~` must resolve within that location for this computer's OS
+account. Resolution and directory checks run in the existing owned worker,
+never during painting. Review discloses both choices and keeps separate existing
+read/write/Delete permission controls. Start in is initial navigation only: Up
+still reaches the configured root. Desktop's existing remote Home action still
+means virtual `/`; SFTP behavior is unchanged. This increment adds no multi-root
+selector or link-following behavior; native start-directory qualification remains
+pending under DT-05/DT-07 and MOB-11.

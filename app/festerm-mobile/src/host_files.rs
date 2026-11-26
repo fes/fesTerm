@@ -151,6 +151,17 @@ impl PaneFs for Remote {
         }
     }
 }
+/// Validate optional server metadata before the worker can publish Ready.
+async fn initial_directory<S: AsyncRead + AsyncWrite + Unpin>(
+    client: &mut file_client::Client<S>,
+) -> Result<String, &'static str> {
+    let start = client
+        .start_directory()
+        .await
+        .map_err(|_| "Files starting folder unavailable")?;
+    rooted(&start).map_err(|_| "Files starting folder unavailable")
+}
+
 fn rooted(p: &str) -> Result<String, SftpError> {
     if p != "/"
         && (!p.starts_with('/')
@@ -675,6 +686,7 @@ impl HostConnector {
                     let local = root
                         .local_fs()
                         .map_err(|_| "App Documents unavailable or changed")?;
+                    let start_dir = rt.block_on(initial_directory(client))?;
                     let display_root = rt
                         .block_on(client.display_root())
                         .map_err(|_| "Files folder information unavailable")?;
@@ -714,7 +726,7 @@ impl HostConnector {
                         }),
                         local_root,
                         transfers: Arc::new(HostTransfers(lease)),
-                        start_dir: Some("/".into()),
+                        start_dir: Some(start_dir),
                         remote_write: write,
                     };
                     if cancel.is_cancelled() {
@@ -1031,6 +1043,7 @@ mod tests {
         std::fs::write(remote.path().join("public.md"), b"# public canary\n").unwrap();
         std::fs::create_dir(remote.path().join("folder")).unwrap();
         let filesystem = festerm_tunnel_bridge::filesystem::Filesystem::open(&rpc::Policy {
+            start_in: None,
             root: remote.path().canonicalize().unwrap(),
             write,
             delete: false,
@@ -1667,6 +1680,43 @@ mod tests {
         session.cleanup();
         assert_eq!(std::fs::read(marker).unwrap(), b"replacement public marker");
     }
+    #[test]
+    fn host_files_start_directory_metadata_refuses_unsupported_paths_before_ready() {
+        use festerm_tunnel_bridge::wire::{read_frame, write_frame};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            for (path, accepted) in [("/عربي", true), ("/\u{202e}hidden", false), ("/bad//child", false)] {
+                let scope = rpc::HostScope { host: Default::default(), installation: Default::default(), epoch: "1".into() };
+                let expected = scope.clone();
+                let (stream, mut peer) = tokio::io::duplex(8192);
+                let server = tokio::spawn(async move {
+                    let limits = rpc::Capabilities { version: rpc::VERSION, write: false, chunk_limit: rpc::CHUNK_LIMIT, page_limit: rpc::PAGE_LIMIT, handle_limit: rpc::HANDLE_LIMIT };
+                    write_frame(&mut peer, rpc::HOST_DESCRIPTION, &serde_json::to_vec(&rpc::HostDescription { version: rpc::HOST_VERSION, scope: expected, filesystem: Some(limits) }).unwrap()).await.unwrap();
+                    assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::OPEN);
+                    let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":false,"operations":["start_directory"],"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
+                    write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&ready).unwrap()).await.unwrap();
+                    let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+                    assert_eq!(kind, rpc::REQUEST);
+                    let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                    assert!(matches!(request.operation, rpc::Operation::StartDirectory {}));
+                    let reply = serde_json::json!({"id":request.id,"result":{"type":"start_directory","path":path}});
+                    write_frame(&mut peer, rpc::RESPONSE, &serde_json::to_vec(&reply).unwrap()).await.unwrap();
+                });
+                let (mut client, _) = file_client::Client::open_host_reviewed(stream, &scope.host, &scope.installation, CancellationToken::new()).await.unwrap().unwrap();
+                // This is the worker's prerequisite for constructing/publishing Ready;
+                // it also covers a manually configured server, independent of owner GUI validation.
+                let start = initial_directory(&mut client).await;
+                assert_eq!(start.is_ok(), accepted);
+                if accepted { assert_eq!(start.unwrap(), path); }
+                client.cancel();
+                tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+            }
+        });
+    }
+
     #[test]
     fn host_files_root_presentation_sanitizes_formatters_and_masks_retired_inactive_view() {
         use super::super::{

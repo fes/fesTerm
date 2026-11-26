@@ -667,3 +667,30 @@ path construction. All actual filesystem requests still use the virtual `/`
 namespace with the configured parent fence and no-follow behavior. Old servers
 fall back to Shared folder, without inventing a physical Home path. This adds
 no mounted-volume, multi-root or symlink-following authority.
+
+### Optional initial directory
+
+Reviewed HOST openings may advertise `start_directory` in the existing optional
+operation-name list. Only an observing client sends `{"op":"start_directory"}`;
+the normal response result is `{"type":"start_directory","path":"/child"}`
+using the existing enum tag conventions. The value is a virtual rooted path,
+at most 4096 UTF-8 bytes, with existing <=255-byte valid components; it conveys
+no authority and never changes the root/Up fence. The owner worker preflights the configured start with the existing retained-root
+no-follow resolver before acquisition. Runtime preparation retains the allowed
+root without requiring the start to exist, so loss of that child cannot block
+HOST or unrelated shells. The metadata operation validates the start freshly
+under current request/disclosure admission and refuses an unavailable start
+without automatic fallback; malformed protected policy remains refused. Clients validate the returned shape and
+start there without a second navigation or transfer replay. Mobile additionally
+uses its existing rooted/name validator before publishing Ready, so a server
+path unsupported by that client refuses initialization; normal Arabic names
+remain valid. Desktop sanitizes rendered child breadcrumbs without changing
+raw virtual targets. Start metadata Debug output redacts its path. Unadvertised/older
+servers retain `/`; no historical greeting gains an unsolicited field.
+
+Protected `Policy.start_in` is optional and omitted for the old default `/`.
+It is independent of physical `root` display metadata. Owner absolute/`~` input
+is converted locally before protected Settings publication; raw shorthand does
+not travel on the wire. A new helper feature probe uses a separate
+`capabilities files-start` command, leaving the strict old reply unchanged.
+Native qualification of this increment is pending.

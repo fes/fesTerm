@@ -622,3 +622,45 @@ access, and following links only to allowed final targets require a separate
 architecture review and deterministic native containment tests using retained
 objects; canonicalize-then-open is insufficient. Configured root grants and complete symlink refusal remain unchanged. This precedes optional mobile
 background work.
+
+### One allowed location and an independent initial directory
+
+The first Start in increment retains one protected `Policy.root` and its
+existing directory capability. The owner reviews **Allowed location** separately
+from **Start in**. Empty Start in preserves the historical start at the allowed
+root. An absolute owner input or `~` (the registered HOST OS account's home,
+resolved through the existing OS-account helper in the setup worker) must map
+inside that root. No environment HOME, client home, directory creation, implicit
+root broadening or canonicalize-then-open is used. Missing/inaccessible folders,
+links and ambiguous/outside paths are refused under existing no-follow checks.
+
+Protected `start_in: Option<String>` stores only a bounded virtual rooted path;
+omitted means `/` and retains legacy serialization. Full Policy/Settings equality,
+protected native anchors, update/migration comparisons and existing Disabled
+configuration plus separate reviewed Enable retain the initial directory.
+The separate read-only `capabilities files-start` helper probe is required for
+any serialized start field before setup effects; the historical capability reply
+is unchanged. Default omitted policies remain compatible with older helpers.
+
+The optional `start_directory` Files operation returns the current validated
+virtual initial path after reviewed opening. Historical greetings stay unchanged;
+clients query only advertised operations and otherwise start at `/`. Desktop
+loads its initial snapshot there; Mobile installs `Ready.start_dir`. Up and
+breadcrumbs still reach virtual `/`, the physical root label remains display
+only, and Desktop's existing Home action still navigates to `/`. Owner preflight
+explicitly validates the configured start before acquisition.
+Runtime preparation opens only the allowed root: a missing/renamed start must
+not block HOST or unrelated shell startup. Fresh start-metadata validation
+refuses only that Files opening when unavailable; explicit root browsing remains
+within the same grant. Malformed protected policy still refuses normally. There
+is no automatic fallback, new grant or replay.
+
+An explicit Unix `/` subtree grant includes supported subordinate local mounts,
+including mounts attached later, under existing OS permission and native security
+checks. No per-mount inventory or approval is introduced. Retained-root/parent
+identity fences remain; unsupported mounts/reparse objects are still refused.
+Multiple allowed roots, link/junction resolution and relaxed ancestor security
+require their separately reviewed follow-up; this increment does not qualify
+all mounted volumes. Existing HOME consent is unchanged until owner reconfiguration.
+Source regressions do not qualify native Desktop/mobile start-directory behavior;
+DT-05/DT-07 and MOB-11 native checks remain pending.

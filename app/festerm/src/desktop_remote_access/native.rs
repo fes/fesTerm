@@ -414,6 +414,7 @@ fn enable_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Fai
     request
         .draft
         .settings()
+        .map_err(|_| Failure::InvalidDraft)?
         .validate()
         .map_err(|_| Failure::InvalidDraft)?;
     let current = observed(&request.root)?;
@@ -423,7 +424,13 @@ fn enable_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Fai
         if !matches!(snapshot.phase, Phase::Disabled | Phase::Provisioned) {
             return Err(Failure::Reconciliation);
         }
-        if snapshot.phase == Phase::Provisioned && snapshot.settings != request.draft.settings() {
+        if snapshot.phase == Phase::Provisioned
+            && snapshot.settings
+                != request
+                    .draft
+                    .settings()
+                    .map_err(|_| Failure::InvalidDraft)?
+        {
             return Err(Failure::FileAccessReview);
         }
         if snapshot
@@ -878,6 +885,27 @@ impl Native {
         } else {
             verify(existing.as_ref(), &request.expected)?;
         }
+        if request.operation == Operation::Enable {
+            request
+                .draft
+                .files
+                .resolve_start_in(|| {
+                    #[cfg(unix)]
+                    {
+                        festerm_unix_security::current_user_home()
+                    }
+                    #[cfg(windows)]
+                    {
+                        festerm_windows_security::current_user_profile_and_path()
+                            .map(|(home, _)| home)
+                    }
+                })
+                .map_err(|_| Failure::FileAccessReview)?;
+            if cancel.is_cancelled() {
+                return Err(Failure::Cancelled);
+            }
+            verify(observed(&request.root)?.as_ref(), &request.expected)?;
+        }
         let artifact = if matches!(request.operation, Operation::Enable | Operation::Update) {
             Some(prepare_bundle(&request, cancel, &progress, acquire)?)
         } else {
@@ -887,10 +915,15 @@ impl Native {
         verify(existing.as_ref(), &request.expected)?;
         let store = match existing {
             Some(store) => store,
-            None if request.operation == Operation::Enable => {
-                Store::create(&request.root, Origin::Desktop, request.draft.settings())
-                    .map_err(failure)?
-            }
+            None if request.operation == Operation::Enable => Store::create(
+                &request.root,
+                Origin::Desktop,
+                request
+                    .draft
+                    .settings()
+                    .map_err(|_| Failure::InvalidDraft)?,
+            )
+            .map_err(failure)?,
             None => return Err(Failure::ScopeChanged),
         };
         if !request.cancel_fence {
@@ -1050,7 +1083,10 @@ impl Native {
                 };
                 let consent = controller::SetupConsent {
                     expected: expected.as_ref().clone(),
-                    settings: request.draft.settings(),
+                    settings: request
+                        .draft
+                        .settings()
+                        .map_err(|_| Failure::InvalidDraft)?,
                     account,
                 };
                 let runtime = runtime()?;

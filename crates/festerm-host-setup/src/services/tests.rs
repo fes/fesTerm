@@ -597,6 +597,7 @@ fn native_service_windows_ready_historical_failure_projects_only_reviewed_stoppe
         let expected = reconfigure_files_lifecycle(
             &store,
             Some(Policy {
+                start_in: None,
                 root: root.path().join("reviewed-root"),
                 write: true,
                 delete: true,
@@ -751,6 +752,7 @@ fn native_service_stopped_files_projection_preserves_registration_and_durable_st
         let expected = reconfigure_files_lifecycle(
             &store,
             policy.map(|(folder, write, delete)| Policy {
+                start_in: None,
                 root: root.path().join(folder),
                 write,
                 delete,
@@ -833,6 +835,7 @@ fn native_service_stopped_creation_projection_rejects_scope_policy_and_native_ra
             reconfigure_files_lifecycle(
                 &store,
                 Some(festerm_tunnel_bridge::file_protocol::Policy {
+                    start_in: None,
                     root: root.path().join("reviewed-root"),
                     write: false,
                     delete: false,
@@ -975,6 +978,7 @@ fn native_service_stopped_creation_projection_rechecks_after_qualification() {
             reconfigure_files_lifecycle(
                 &store,
                 Some(festerm_tunnel_bridge::file_protocol::Policy {
+                    start_in: None,
                     root: root.path().join("reviewed-root"),
                     write: false,
                     delete: false,

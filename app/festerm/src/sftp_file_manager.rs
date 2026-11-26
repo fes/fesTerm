@@ -3286,7 +3286,7 @@ impl SftpFileManagerTab {
                                                                 previous_label_was_root_slash =
                                                                     segment.label == "/";
                                                                 let text =
-                                                                    RichText::new(segment.label.clone())
+                                                                    RichText::new(festerm_sftp::path::display_name(&segment.label))
                                                                         .font(font_for_text_role(
                                                                             SftpTextRole::Breadcrumb,
                                                                         ))
@@ -10215,6 +10215,55 @@ pub(crate) mod tests {
         harness.state_mut().local_pane.loading = true;
         harness.run();
         harness.get_by_label("Loading\u{2026}");
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_start_directory_initial_snapshot_keeps_virtual_root_navigation() {
+        for child in ["/child", "/عربي", "/\u{202e}child"] {
+            let ctx = egui::Context::default();
+            let mut tab = paint_fixture(&ctx, 0);
+            let mut snapshot = tab.remote_pane.snapshot.clone().unwrap();
+            snapshot.path = SftpPath::remote(child);
+            tab.apply_event(WorkerEvent::FilesConnected {
+                connection_scope: tab.file_operations.connection.capture(),
+                snapshot,
+                metadata: SftpPathMetadata {
+                    path: SftpPath::remote(child),
+                    file_type: SftpEntryType::Directory,
+                    size: None,
+                    modified_at: None,
+                    permissions: None,
+                },
+                source: host_files::FilesSource::reviewed_delete_fixture(false),
+                skipped: 0,
+            });
+            assert_eq!(tab.remote_pane.current_path, SftpPath::remote(child));
+            assert_eq!(tab.remote_pane.path_text, child);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(460.0, 500.0))
+                .build_ui_state(
+                    |ui, tab: &mut SftpFileManagerTab| tab.show_pane(ui, PaneFocus::Remote),
+                    tab,
+                );
+            use egui_kittest::kittest::Queryable;
+            harness.run();
+            harness.get_by_label(&festerm_sftp::path::display_name(&child[1..]));
+            let tab = harness.state_mut();
+            let (sender, mut commands) = tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+            tab.command_sender = sender;
+            tab.navigate_up(PaneFocus::Remote);
+            assert!(
+                matches!(commands.try_recv().unwrap(), WorkerCommand::LoadRemote {path} if path == "/")
+            );
+            assert_eq!(tab.remote_pane.current_path, SftpPath::remote("/"));
+            assert_eq!(
+                display_breadcrumb_segments(&tab.remote_pane.current_path, Some("/home/example"))
+                    [0]
+                .path,
+                SftpPath::remote("/")
+            );
+        }
     }
 
     #[test]

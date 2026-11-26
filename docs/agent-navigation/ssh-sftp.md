@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "e21e2cafb878b3369c036ba4b82150c2f6fb9f79caa4eef24cf1cd34848cdcca"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "4c2ca1911c91fc246eba5750e19995d31793d60c60e9a926c93aeba1654f35d5"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to

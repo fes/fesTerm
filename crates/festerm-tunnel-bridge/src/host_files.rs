@@ -152,3 +152,92 @@ async fn serve_inner(
         filesystem::serve_authorized(stream, filesystem, admission, cancel).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn prepared_root_survives_missing_start_directory_and_serves_root() {
+        let path = crate::test_support::private_directory("festerm-start-prepared");
+        std::fs::write(path.join("visible.txt"), b"public").unwrap();
+        let scope = rpc::HostScope {
+            host: Default::default(),
+            installation: Default::default(),
+            epoch: "1".into(),
+        };
+        // The same preparation path used by HOST runtime must retain only root
+        // admission: losing a navigation preference cannot disable shells/HOST.
+        let prepared = Prepared::open(HostPolicy {
+            scope: scope.clone(),
+            filesystem: Some(rpc::Policy {
+                root: path.clone(),
+                start_in: Some("/missing".into()),
+                write: false,
+                delete: false,
+            }),
+        })
+        .unwrap();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        let mut server = tokio::spawn(async move {
+            write_frame(
+                &mut peer,
+                rpc::HOST_DESCRIPTION,
+                &serde_json::to_vec(&rpc::HostDescription {
+                    version: rpc::HOST_VERSION,
+                    scope: prepared.policy.scope.clone(),
+                    filesystem: Some(prepared.filesystem.capabilities()),
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+            let (kind, bytes) = crate::wire::read_frame(&mut peer).await.unwrap();
+            assert_eq!(kind, rpc::OPEN);
+            let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(open.scope, prepared.policy.scope);
+            let _ = filesystem::serve_authorized_reviewed(
+                peer,
+                prepared.filesystem.clone(),
+                Arc::new(|_| Ok(())),
+                stop,
+            )
+            .await;
+        });
+        let (mut client, _) = crate::file_client::Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            client.start_directory().await,
+            Err(crate::file_client::Error::Remote {
+                code: rpc::ErrorCode::NotFound,
+                ..
+            })
+        ));
+        let directory = client.open_directory("/").await.unwrap();
+        let page = client
+            .read_directory(&directory, rpc::PAGE_LIMIT)
+            .await
+            .unwrap();
+        assert!(page.entries.iter().any(|entry| entry.name == "visible.txt"));
+        client.close(&directory).await.unwrap();
+        client.cancel();
+        cancel.cancel();
+        match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server).await {
+            Ok(result) => result.unwrap(),
+            Err(error) => {
+                server.abort();
+                let _ = server.await;
+                panic!("{error}");
+            }
+        }
+        std::fs::remove_dir_all(path).unwrap();
+    }
+}

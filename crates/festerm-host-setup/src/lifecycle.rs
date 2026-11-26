@@ -846,6 +846,7 @@ mod tests {
         let mut approved = original.settings.clone();
         approved.ordinary_access = OrdinaryAccess::ProviderOwner;
         approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            start_in: None,
             delete: false,
             root: root.path().into(),
             write: true,
@@ -893,6 +894,7 @@ mod tests {
             let mut approved = original.settings.clone();
             approved.ordinary_access = OrdinaryAccess::ProviderOwner;
             approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+                start_in: None,
                 delete: false,
                 root: root.path().into(),
                 write: false,
@@ -979,12 +981,44 @@ mod tests {
     }
 
     #[test]
+    fn host_files_start_directory_is_bound_to_full_settings_and_stop_preservation() {
+        let (_root, store) = fixture();
+        let mut requested = store.snapshot().unwrap().settings;
+        requested.ordinary_access = OrdinaryAccess::ProviderOwner;
+        requested.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            start_in: Some("/child".into()),
+            root: std::env::temp_dir().join("owned-files-review"),
+            write: false,
+            delete: false,
+        });
+        store.configure(requested.clone()).unwrap();
+        let before = store.snapshot().unwrap();
+        let mut old = requested.clone();
+        old.filesystem.as_mut().unwrap().start_in = None;
+        assert!(store.request_enable_if_current(&before, &old).is_err());
+        assert_eq!(store.snapshot().unwrap(), before);
+        let ticket = store
+            .request_enable_if_current(&before, &requested)
+            .unwrap();
+        assert_eq!(ticket.approved_settings(), &requested);
+        store.record_provisioned(&ticket, binding()).unwrap();
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        assert_eq!(stopped.settings, requested);
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(store.snapshot().unwrap().settings, requested);
+    }
+
+    #[test]
     fn host_files_policy_is_default_off_strict_and_bound_to_reviewed_settings() {
         let (_root, store) = fixture();
         let original = store.snapshot().unwrap();
         let mut requested = original.settings.clone();
         requested.ordinary_access = OrdinaryAccess::ProviderOwner;
         requested.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
+            start_in: None,
             delete: false,
             root: std::env::temp_dir().join("owned-files-review"),
             write: false,

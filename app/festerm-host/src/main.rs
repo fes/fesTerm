@@ -140,6 +140,10 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 "{{\"schema\":1,\"host_files_v2\":{}}}\n",
                 cfg!(feature = "owner-routing")
             )),
+            Some(feature) if feature == "files-start" => Ok(format!(
+                "{{\"schema\":1,\"host_files_start_v1\":{}}}\n",
+                cfg!(feature = "owner-routing")
+            )),
             Some(feature) if feature == "files-delete" => Ok(format!(
                 "{{\"schema\":1,\"host_files_delete_v3\":{}}}\n",
                 cfg!(feature = "owner-routing")

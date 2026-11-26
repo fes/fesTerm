@@ -7495,7 +7495,14 @@
         "native_service_macos_completed_bootout_waits_for_same_epoch_read_lease",
         "native_service_macos_completed_bootout_refuses_changed_post_stop_proof",
         "native_service_macos_bootout_waits_for_unqualified_read_then_absence_without_replay",
-        "native_service_macos_unqualified_stop_preserves_deadline_fatal_and_scope_refusals"
+        "native_service_macos_unqualified_stop_preserves_deadline_fatal_and_scope_refusals",
+        "host_files_start_directory_is_bound_to_full_settings_and_stop_preservation",
+        "host_file_helper_admission_never_reserves_or_changes_consent_and_fences_late_results",
+        "desktop_files_start_directory_owner_input_is_relative_to_allowed_location",
+        "desktop_files_start_directory_worker_refuses_before_acquisition_or_state_effects",
+        "desktop_files_start_directory_drive_suffix_refuses_before_home_callback",
+        "desktop_files_start_directory_windows_home_join_never_receives_drive_prefix",
+        "host_runtime_public_entry_futures_fit_stack_budget"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
@@ -7651,7 +7658,9 @@
         "desktop_remote_access_update_view_shows_versions_blocked_state_and_confirmation",
         "desktop_remote_access_update_refuses_active_unbound_foreign_and_cancelled_before_acquisition",
         "desktop_remote_access_update_metadata_change_and_invalid_version_refuse_original_retarget",
-        "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback"
+        "desktop_remote_access_update_failure_keeps_disabled_state_and_never_claims_rollback",
+        "host_start_directory_probe_is_separate_strict_bounded_and_revalidates_stage",
+        "host_start_directory_capability_is_separate_and_has_no_state_effects"
       ],
       "manual_scenarios": [
         "DT-05",
@@ -7750,7 +7759,13 @@
         "failed_transfer_cleanup_retains_a_content_free_uncertainty_notice",
         "display_root_breadcrumbs_keep_virtual_paths_and_legacy_sftp_labels",
         "desktop_files_physical_breadcrumb_uses_virtual_callback_and_disables_root_up",
-        "desktop_files_cached_root_is_masked_before_poll_when_authority_retires"
+        "desktop_files_cached_root_is_masked_before_poll_when_authority_retires",
+        "desktop_files_start_directory_initial_snapshot_keeps_virtual_root_navigation",
+        "start_directory_policy_defaults_preserve_legacy_and_validate_virtual_paths",
+        "start_directory_is_nofollow_navigation_not_an_allowed_root",
+        "reviewed_client_start_directory_is_optional_bounded_and_current",
+        "prepared_root_survives_missing_start_directory_and_serves_root",
+        "desktop_files_start_directory_snapshot_errors_sanitize_details"
       ],
       "manual_scenarios": [
         "DT-07"
@@ -7854,7 +7869,9 @@
         "reviewed_client_queries_display_root_only_after_advertised_open",
         "display_root_is_reviewed_authenticated_metadata_not_a_path_grant",
         "display_root_disclosure_is_fenced_by_current_files_authority",
-        "host_files_root_presentation_sanitizes_formatters_and_masks_retired_inactive_view"
+        "host_files_root_presentation_sanitizes_formatters_and_masks_retired_inactive_view",
+        "files_start_directory_initializes_child_but_keeps_allowed_root_up_fence",
+        "host_files_start_directory_metadata_refuses_unsupported_paths_before_ready"
       ],
       "manual_scenarios": [
         "MOB-11"

@@ -7712,3 +7712,28 @@ forms, other cohorts/scales and mobile pixel identity remain outside this check.
 The earlier Mac self-host Busy refusal remains unexplained under #922. A temporary
 375×378 ordinary-wheel UI fixture passed once and was removed; it is diagnostic
 evidence, not a retained automated regression.
+
+### Allowed location and Start in (source increment; native pending)
+
+DT-05 / HOST-04: while Disabled, review one Allowed location and optional Start
+in separately. Blank must retain the historical allowed-root start. Review an
+absolute child and `~` for the registered computer OS account; outside, missing,
+inaccessible, ambiguous and link paths must refuse without widening consent or
+creating folders. A helper lacking `capabilities files-start` must refuse an
+explicit start field before cloud setup or native service changes; an omitted
+field must preserve older-helper compatibility. Disable/update/migration must
+retain the exact root/start/write/delete policy. Existing signed native root
+consent does not qualify this new initial-directory choice.
+
+DT-07 / MOB-11: connect Desktop and iOS/Android to an advertised start directory,
+verify first listing is that child, Up reaches virtual `/` and stops there, and
+physical root/child labels never become request paths. An older server starts
+at `/`. Revoke the account/policy during opening and require no stale metadata
+or initialized view. Start becoming unavailable must refuse that Files opening without creating it
+or falling back; unrelated HOST/shell startup must still work with a valid
+allowed root, and an explicit authorized root browse must remain possible.
+Malformed protected policy remains refused normally. Explicit `/` includes
+supported subordinate local mounts under existing permissions/security gates;
+Windows unsupported mounted-folder/reparse cases remain refused. No all-volume,
+link-following or complete mobile-pair acceptance is implied. These new native
+cases remain unrun; existing attributed Files components retain their own limits.

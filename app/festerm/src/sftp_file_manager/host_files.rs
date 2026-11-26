@@ -177,6 +177,19 @@ async fn run_files_worker(
     }
 }
 
+// Presentation conversion only; FilesEndpoint retains the typed first failure.
+async fn initial_snapshot<
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+>(
+    browsing: &mut festerm_tunnel_bridge::files_endpoint::FilesEndpoint<S>,
+    start: &str,
+) -> Result<(SftpDirectorySnapshot, SftpPathMetadata, usize), String> {
+    browsing
+        .directory_snapshot(start)
+        .await
+        .map_err(|error| festerm_sftp::path::display_name(&error.to_string()))
+}
+
 async fn files_operations(
     target: HostFilesLaunchTarget,
     connection: crate::app::host_files::FilesConnection,
@@ -215,10 +228,13 @@ async fn files_operations(
         .display_root()
         .await
         .map_err(|error| error.to_string())?;
-    let (snapshot, metadata, skipped) = browsing
-        .directory_snapshot("/")
+    let start_dir = browsing
+        .client_without_reviews()
+        .map_err(|error| error.to_string())?
+        .start_directory()
         .await
         .map_err(|error| error.to_string())?;
+    let (snapshot, metadata, skipped) = initial_snapshot(&mut browsing, &start_dir).await?;
     browsing
         .check_current()
         .map_err(|error| error.to_string())?;
@@ -315,6 +331,114 @@ async fn files_operations(
             event = manager.recv_event() => {
                 let Some(event) = event else { return Err("The Files transfer worker closed.".into()); };
                 let _ = events.send(WorkerEvent::Transfer(event)).await; repaint.request_repaint();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn desktop_files_start_directory_snapshot_errors_sanitize_details() {
+        use festerm_tunnel_bridge::{
+            file_client::Client,
+            file_protocol as rpc,
+            wire::{read_frame, write_frame},
+        };
+        for not_directory in [false, true] {
+            let raw = "/عربي/\u{202e}hidden\u{2066}";
+            let scope = rpc::HostScope {
+                host: Default::default(),
+                installation: Default::default(),
+                epoch: "1".into(),
+            };
+            let expected = scope.clone();
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let mut server = tokio::spawn(async move {
+                let description = serde_json::json!({"version":rpc::HOST_VERSION,"scope":expected,"filesystem":{"version":rpc::VERSION,"write":false,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}});
+                write_frame(
+                    &mut peer,
+                    rpc::HOST_DESCRIPTION,
+                    &serde_json::to_vec(&description).unwrap(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::OPEN);
+                let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":false,"operations":["start_directory"],"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
+                write_frame(
+                    &mut peer,
+                    rpc::RESPONSE,
+                    &serde_json::to_vec(&ready).unwrap(),
+                )
+                .await
+                .unwrap();
+                let (_, bytes) = read_frame(&mut peer).await.unwrap();
+                let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                assert!(matches!(
+                    request.operation,
+                    rpc::Operation::StartDirectory {}
+                ));
+                let start = serde_json::json!({"id":request.id,"result":{"type":"start_directory","path":raw}});
+                write_frame(
+                    &mut peer,
+                    rpc::RESPONSE,
+                    &serde_json::to_vec(&start).unwrap(),
+                )
+                .await
+                .unwrap();
+                let (_, bytes) = read_frame(&mut peer).await.unwrap();
+                let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                assert!(matches!(request.operation, rpc::Operation::Stat { path } if path == raw));
+                let response = if not_directory {
+                    serde_json::json!({"id":request.id,"result":{"type":"stat","metadata":{"kind":"file","size":"0","modified_ms":null}}})
+                } else {
+                    serde_json::json!({"id":request.id,"error":"not_found"})
+                };
+                write_frame(
+                    &mut peer,
+                    rpc::RESPONSE,
+                    &serde_json::to_vec(&response).unwrap(),
+                )
+                .await
+                .unwrap();
+            });
+            let (mut client, _) = Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let start = client.start_directory().await.unwrap();
+            assert_eq!(start, raw, "valid wire path must not be normalized");
+            let first = FirstFailure::default();
+            let lifetime = CancellationToken::new();
+            let mut browsing = festerm_tunnel_bridge::files_endpoint::FilesEndpoint::from_client(
+                client,
+                lifetime.clone(),
+                first.clone(),
+                FilesChannel::Browsing,
+            );
+            let details = initial_snapshot(&mut browsing, &start).await.unwrap_err();
+            assert!(!details.contains(['\u{202e}', '\u{2066}']));
+            assert!(details.contains("عربي"));
+            assert_eq!(first.details_or(details.clone()), details);
+            lifetime.cancel();
+            assert!(browsing.check_current().is_err());
+            assert!(
+                first.details_or(details).contains("browsing"),
+                "existing typed first-failure retention remains in control"
+            );
+            match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server).await {
+                Ok(result) => result.unwrap(),
+                Err(error) => {
+                    server.abort();
+                    let _ = server.await;
+                    panic!("{error}");
+                }
             }
         }
     }
