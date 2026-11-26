@@ -471,7 +471,7 @@ pub(crate) fn file_uri_for_test(path: &Path) -> String {
 pub(crate) fn bind_live_remote_request(
     requestor: impl Into<RemoteFileCapability>,
     request: RemoteTerminalPathOpenRequest,
-) -> Result<LiveRemoteTerminalPathOpenRequest, OpenRefusalNotice> {
+) -> Result<LiveRemoteTerminalPathOpenRequest, Box<OpenRefusalNotice>> {
     let requestor = requestor.into();
     if requestor.binding_key() != request.session_binding
         || requestor.provider() != request.provider
@@ -479,20 +479,20 @@ pub(crate) fn bind_live_remote_request(
         || requestor.verified_endpoint_identity().as_deref()
             != Some(&request.verified_endpoint_identity)
     {
-        return Err(remote_open_refusal(
+        return Err(Box::new(remote_open_refusal(
             &request.remote_path,
             &request.display_path,
             "This remote path cannot be opened",
             "The source transport has changed since the menu opened.",
-        ));
+        )));
     }
     let Some(verified_host_key_fingerprint) = requestor.verified_endpoint_identity() else {
-        return Err(remote_open_refusal(
+        return Err(Box::new(remote_open_refusal(
             &request.remote_path,
             &request.display_path,
             "This remote path cannot be opened",
             "The live session no longer has a verified host identity. Reconnect it before opening remote files.",
-        ));
+        )));
     };
     Ok(LiveRemoteTerminalPathOpenRequest {
         requestor,
@@ -1503,6 +1503,7 @@ fn remote_open_refusal(
     detail: impl Into<String>,
 ) -> OpenRefusalNotice {
     OpenRefusalNotice {
+        _cleanup_diagnostic: None,
         title: None,
         acknowledgement_path: None,
         name: Path::new(remote_path)

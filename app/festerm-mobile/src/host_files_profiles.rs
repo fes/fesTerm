@@ -457,6 +457,7 @@ mod tests {
                     local_root: "/nonexistent-festerm-test".into(),
                     transfers: Arc::new(FixtureTransfers::new(vec![])),
                     start_dir: None,
+                    initial_remote_listing: None,
                 },
                 &egui::Context::default(),
             )));

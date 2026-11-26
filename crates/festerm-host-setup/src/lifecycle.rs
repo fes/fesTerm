@@ -180,6 +180,19 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    fn encoded(&self) -> io::Result<Vec<u8>> {
+        let bytes = serde_json::to_vec(self).map_err(|_| refused("host.invalid_journal"))?;
+        if self
+            .settings
+            .filesystem
+            .as_ref()
+            .is_some_and(|policy| policy.locations.is_some())
+            && bytes.len() > LIMIT
+        {
+            return Err(refused("host.file_settings_too_large"));
+        }
+        Ok(bytes)
+    }
     /// Recover the exact protected in-flight operation after interruption.
     /// Absence is not permission to reconstruct consent from configuration.
     pub fn pending_ticket(&self) -> Option<&Ticket> {
@@ -284,11 +297,7 @@ impl Store {
             binding: None,
             pending: None,
         };
-        protected_state::publish_new(
-            &store.directory,
-            Path::new(RECORD),
-            &serde_json::to_vec(&record).map_err(|_| refused("host.invalid_journal"))?,
-        )?;
+        protected_state::publish_new(&store.directory, Path::new(RECORD), &record.encoded()?)?;
         Ok(store)
     }
 
@@ -345,11 +354,7 @@ impl Store {
         let mut record = self.read()?;
         let result = update(&mut record)?;
         record.validate(self.origin)?;
-        storage::replace_private(
-            &self.directory,
-            Path::new(RECORD),
-            &serde_json::to_vec(&record).map_err(|_| refused("host.invalid_journal"))?,
-        )?;
+        storage::replace_private(&self.directory, Path::new(RECORD), &record.encoded()?)?;
         Ok(result)
     }
 
@@ -847,6 +852,7 @@ mod tests {
         approved.ordinary_access = OrdinaryAccess::ProviderOwner;
         approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: root.path().into(),
             write: true,
@@ -895,6 +901,7 @@ mod tests {
             approved.ordinary_access = OrdinaryAccess::ProviderOwner;
             approved.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
                 start_in: None,
+                locations: None,
                 delete: false,
                 root: root.path().into(),
                 write: false,
@@ -981,12 +988,120 @@ mod tests {
     }
 
     #[test]
+    fn host_allowed_locations_pending_settings_fit_journal_and_oversize_refuses_before_storage() {
+        use festerm_tunnel_bridge::file_protocol::{
+            AllowedLocations, LocationStart, Policy, POLICY_BYTES_LIMIT,
+        };
+        let root = if cfg!(windows) {
+            std::path::PathBuf::from("C:\\")
+        } else {
+            std::path::PathBuf::from("/")
+        };
+        let roots = (0..8)
+            .map(|index| {
+                root.join(format!("owned{index}"))
+                    .join("a".repeat(250))
+                    .join("b".repeat(250))
+            })
+            .collect::<Vec<_>>();
+        let policy = Policy {
+            root: roots[0].clone(),
+            start_in: None,
+            locations: Some(AllowedLocations {
+                roots,
+                start: Some(LocationStart {
+                    root: 0,
+                    path: format!("/{}", vec!["c".repeat(250); 12].join("/"))
+                        .try_into()
+                        .unwrap(),
+                }),
+            }),
+            write: true,
+            delete: true,
+        };
+        assert!(serde_json::to_vec(&policy).unwrap().len() < POLICY_BYTES_LIMIT);
+        policy.validate().unwrap();
+        let directory = storage::private_test_directory();
+        let path = directory.path().join("state");
+        let mut desired = settings();
+        desired.ordinary_access = OrdinaryAccess::ProviderOwner;
+        desired.friendly_name = "\"".repeat(80);
+        desired.allow_creation = true;
+        desired.allow_session_termination = true;
+        desired.startup = Startup::UserSignIn;
+        desired.filesystem = Some(policy.clone());
+        let store = Store::create(&path, Origin::Desktop, desired.clone()).unwrap();
+        let before = store.snapshot().unwrap();
+        let mut changed = desired.clone();
+        changed
+            .filesystem
+            .as_mut()
+            .unwrap()
+            .locations
+            .as_mut()
+            .unwrap()
+            .start
+            .as_mut()
+            .unwrap()
+            .root = 1;
+        assert!(
+            store.request_enable_if_current(&before, &changed).is_err(),
+            "root selection is part of full reviewed Settings equality"
+        );
+        assert_eq!(store.snapshot().unwrap(), before);
+        let ticket = store.request_enable(&desired).unwrap();
+        let mut retained = binding();
+        for field in [
+            &mut retained.account,
+            &mut retained.qualified_tunnel,
+            &mut retained.cloud_incarnation,
+            &mut retained.host_key_fingerprint,
+        ] {
+            *field = "\"".repeat(1024);
+        }
+        store.record_provisioned(&ticket, retained).unwrap();
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        let before = store.snapshot().unwrap();
+        store.request_enable_if_current(&before, &desired).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.settings, desired);
+        assert_eq!(
+            snapshot.pending_ticket().unwrap().approved_settings(),
+            &desired
+        );
+        let bytes = snapshot.encoded().unwrap();
+        assert!(bytes.len() <= LIMIT);
+        assert_eq!(
+            serde_json::from_slice::<Snapshot>(&bytes).unwrap(),
+            snapshot
+        );
+        let mut huge = policy;
+        huge.locations.as_mut().unwrap().roots = (0..8)
+            .map(|index| {
+                root.join(format!("owned{index}"))
+                    .join(vec!["z".repeat(250); 10].join(std::path::MAIN_SEPARATOR_STR))
+            })
+            .collect();
+        huge.root = huge.locations.as_ref().unwrap().roots[0].clone();
+        assert!(serde_json::to_vec(&huge).unwrap().len() > POLICY_BYTES_LIMIT);
+        desired.filesystem = Some(huge);
+        let refused = directory.path().join("must-not-exist");
+        assert!(Store::create(&refused, Origin::Desktop, desired).is_err());
+        assert!(!refused.exists());
+    }
+
+    #[test]
     fn host_files_start_directory_is_bound_to_full_settings_and_stop_preservation() {
         let (_root, store) = fixture();
         let mut requested = store.snapshot().unwrap().settings;
         requested.ordinary_access = OrdinaryAccess::ProviderOwner;
         requested.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
             start_in: Some("/child".into()),
+            locations: None,
             root: std::env::temp_dir().join("owned-files-review"),
             write: false,
             delete: false,
@@ -1019,6 +1134,7 @@ mod tests {
         requested.ordinary_access = OrdinaryAccess::ProviderOwner;
         requested.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: std::env::temp_dir().join("owned-files-review"),
             write: false,

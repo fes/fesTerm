@@ -32,6 +32,8 @@ use tokio_util::sync::CancellationToken;
 pub struct FileAccessDraft {
     pub enabled: bool,
     pub root: PathBuf,
+    pub locations: Option<Vec<PathBuf>>,
+    pub start_root: Option<usize>,
     pub start_in: String,
     pub write: bool,
     pub delete: bool,
@@ -41,6 +43,8 @@ impl std::fmt::Debug for FileAccessDraft {
         f.debug_struct("FileAccessDraft")
             .field("enabled", &self.enabled)
             .field("root", &"[private folder]")
+            .field("locations", &"[private folders]")
+            .field("start_root", &self.start_root)
             .field("start_in", &"[private folder]")
             .field("write", &self.write)
             .field("delete", &self.delete)
@@ -50,27 +54,97 @@ impl std::fmt::Debug for FileAccessDraft {
 impl FileAccessDraft {
     fn from_policy(policy: Option<&festerm_tunnel_bridge::file_protocol::Policy>) -> Self {
         match policy {
-            Some(policy) => Self {
-                enabled: true,
-                root: policy.root.clone(),
-                start_in: policy.start_in.as_ref().map_or_else(String::new, |start| {
-                    policy
-                        .root
-                        .join(start.strip_prefix('/').unwrap_or(start))
-                        .to_string_lossy()
-                        .into_owned()
-                }),
-                write: policy.write,
-                delete: policy.delete,
-            },
+            Some(policy) => {
+                let (start_root, start_in) = if let Some(locations) = &policy.locations {
+                    (
+                        locations.start.as_ref().map(|start| start.root),
+                        locations
+                            .start
+                            .as_ref()
+                            .filter(|start| start.path.as_str() != "/")
+                            .map_or_else(String::new, |start| {
+                                locations.roots[start.root]
+                                    .join(start.path.as_str().trim_start_matches('/'))
+                                    .to_string_lossy()
+                                    .into_owned()
+                            }),
+                    )
+                } else {
+                    (
+                        None,
+                        policy.start_in.as_ref().map_or_else(String::new, |start| {
+                            policy
+                                .root
+                                .join(start.trim_start_matches('/'))
+                                .to_string_lossy()
+                                .into_owned()
+                        }),
+                    )
+                };
+                Self {
+                    enabled: true,
+                    root: policy.root.clone(),
+                    locations: policy
+                        .locations
+                        .as_ref()
+                        .map(|locations| locations.roots.clone()),
+                    start_root,
+                    start_in,
+                    write: policy.write,
+                    delete: policy.delete,
+                }
+            }
             None => Self::default(),
         }
     }
+    fn uses_account_home(&self) -> bool {
+        self.start_in == "~" || self.start_in.starts_with("~/")
+    }
+
+    fn allowed_locations(&self) -> &[PathBuf] {
+        self.locations
+            .as_deref()
+            .unwrap_or_else(|| std::slice::from_ref(&self.root))
+    }
+
+    /// The initial location and Up boundary. No location means open the chooser.
+    fn start_location_index(&self) -> std::io::Result<Option<usize>> {
+        let roots = self.allowed_locations();
+        if roots.is_empty() {
+            return Err(std::io::ErrorKind::InvalidInput.into());
+        }
+        if self.locations.is_none() {
+            return Ok(Some(0));
+        }
+        if let Some(index) = self.start_root {
+            return (index < roots.len())
+                .then_some(Some(index))
+                .ok_or_else(|| std::io::ErrorKind::InvalidInput.into());
+        }
+        if roots.len() == 1 {
+            return Ok(Some(0));
+        }
+        if self.start_in.is_empty() {
+            return Ok(None);
+        }
+        let mut matches = roots.iter().enumerate().filter(|(_, root)| {
+            std::path::Path::new(&self.start_in)
+                .strip_prefix(root)
+                .is_ok()
+        });
+        match (matches.next(), matches.next()) {
+            (Some((index, _)), None) => Ok(Some(index)),
+            _ => Err(std::io::ErrorKind::InvalidInput.into()),
+        }
+    }
+
     /// Pure owner input conversion. Home shorthand is resolved only by the worker.
     fn policy(&self) -> std::io::Result<Option<festerm_tunnel_bridge::file_protocol::Policy>> {
         if !self.enabled {
             return Ok(None);
         }
+        let index = self.start_location_index()?.unwrap_or(0);
+        let root = &self.allowed_locations()[index];
         let start_in = if self.start_in.is_empty() {
             None
         } else {
@@ -78,7 +152,7 @@ impl FileAccessDraft {
             if self.start_in.len() > 4096
                 || self.start_in.contains("//")
                 || self.start_in.contains("\\\\")
-                || (self.start_in.ends_with(['/', '\\']) && path != self.root)
+                || (self.start_in.ends_with(['/', '\\']) && path != root)
                 || !path.is_absolute()
                 || self
                     .start_in
@@ -88,7 +162,7 @@ impl FileAccessDraft {
                 return Err(std::io::ErrorKind::InvalidInput.into());
             }
             let relative = path
-                .strip_prefix(&self.root)
+                .strip_prefix(root)
                 .map_err(|_| std::io::ErrorKind::InvalidInput)?;
             let mut virtual_path = String::from("/");
             for part in relative.components() {
@@ -109,10 +183,35 @@ impl FileAccessDraft {
                 Some(virtual_path)
             }
         };
+        let locations = self
+            .locations
+            .as_ref()
+            .map(|roots| -> std::io::Result<_> {
+                Ok(festerm_tunnel_bridge::file_protocol::AllowedLocations {
+                    roots: roots.clone(),
+                    start: if self.start_in.is_empty() && self.start_root.is_none() {
+                        None
+                    } else {
+                        Some(festerm_tunnel_bridge::file_protocol::LocationStart {
+                            root: index,
+                            path: start_in
+                                .clone()
+                                .unwrap_or_else(|| "/".into())
+                                .try_into()
+                                .map_err(|_| std::io::ErrorKind::InvalidInput)?,
+                        })
+                    },
+                })
+            })
+            .transpose()?;
         let policy = festerm_tunnel_bridge::file_protocol::Policy {
-            start_in,
+            start_in: if locations.is_some() { None } else { start_in },
+            root: self
+                .locations
+                .as_ref()
+                .map_or_else(|| self.root.clone(), |roots| roots[0].clone()),
+            locations,
             delete: self.delete,
-            root: self.root.clone(),
             write: self.write,
         };
         policy.validate()?;
@@ -123,10 +222,10 @@ impl FileAccessDraft {
         &mut self,
         home: impl FnOnce() -> std::io::Result<PathBuf>,
     ) -> std::io::Result<()> {
-        if !self.enabled || self.start_in.is_empty() {
+        if !self.enabled || self.start_in.is_empty() && self.locations.is_none() {
             return Ok(());
         }
-        if self.start_in == "~" || self.start_in.starts_with("~/") {
+        if self.uses_account_home() {
             let suffix = self.start_in.strip_prefix("~/").unwrap_or("");
             if !suffix.is_empty() {
                 festerm_tunnel_bridge::file_protocol::StartDirectory::try_from(format!(
@@ -153,7 +252,7 @@ impl FileAccessDraft {
         // Native no-follow admission, never canonicalize then ambient-open.
         if let Some(policy) = self.policy()? {
             festerm_tunnel_bridge::filesystem::Filesystem::open(&policy)?
-                .validate_start_directory()?;
+                .validate_owner_locations()?;
         }
         Ok(())
     }
@@ -211,7 +310,7 @@ fn host_name_label(host_name: &std::ffi::OsStr) -> String {
 impl Draft {
     fn valid_files(&self) -> bool {
         !self.files.enabled
-            || (self.files.start_in == "~" || self.files.start_in.starts_with("~/"))
+            || self.files.uses_account_home()
                 && self.ordinary_access == OrdinaryAccess::ProviderOwner
                 && !self
                     .files

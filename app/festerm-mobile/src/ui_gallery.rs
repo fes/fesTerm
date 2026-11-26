@@ -278,6 +278,7 @@ fn fixture_files(rows: Vec<files::TransferRow>, ctx: &egui::Context) -> files::F
             local_root: PathBuf::from("/nonexistent-festerm-gallery"),
             transfers: Arc::new(FixtureTransfers::new(rows)),
             start_dir: None,
+            initial_remote_listing: None,
         },
         ctx,
     );

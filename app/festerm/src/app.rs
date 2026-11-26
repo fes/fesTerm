@@ -7650,6 +7650,7 @@ impl FesTermApp {
             return;
         }
         self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
+            _cleanup_diagnostic: None,
             title: None,
             acknowledgement_path: None,
             name: "Document request".to_owned(),
@@ -8602,6 +8603,12 @@ impl FesTermApp {
                             Some("Files connections require a Dev Tunnels-enabled build.");
                     }
                 }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ReopenDevTunnelFiles {
+                    target,
+                    pin,
+                    navigation,
+                } => self.reopen_host_files(target, pin, navigation, ui.ctx()),
                 AppCommand::StartConfiguredDevTunnelFilesProfile { profile_id } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.start_configured_files(&profile_id, ui.ctx());
@@ -9201,6 +9208,7 @@ impl FesTermApp {
                 .state
                 .take_open_refusal()
                 .map(|(path, failure)| crate::overlay_state::OpenRefusalNotice {
+                    _cleanup_diagnostic: None,
                     title: None,
                     acknowledgement_path: None,
                     name: path

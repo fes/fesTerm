@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "52a16ead21955d3ea4e2e648c2f5a8a5eae660dede342f605c75c0cd48eaa780"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "codex-source-verified", "sources": "d516b6e799d5d953ceec6a3c2e0be48699e5701b3615efe618b7360492d0d286"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,7 +12,7 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 
 Use for: A widget or launcher needs to turn a gesture into a state-changing app intent
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — Typed app intents for launcher, settings, tabs, and sessions
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — Typed app intents, including Files location recovery pinned to the authenticated account and host
 - [`dispatch`](../../app/festerm/src/tabs.rs) — Single mutation path from commands to AppState
 
 Evidence:

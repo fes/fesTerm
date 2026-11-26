@@ -1,0 +1,40 @@
+{
+  "record_version": 1,
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "date_utc": "2026-11-26",
+  "status": "Scoped iOS Simulator Local Delete component accepted; full mobile Files and release qualification remain open.",
+  "client_build": {
+    "platform": "arm64 iOS Simulator",
+    "features": ["host-clients"],
+    "kind": "Private development SDK artifact",
+    "commit": "e5b582ed3b40a0d41cbb7d2096614c12860f16ca",
+    "tree": "011446cbe655d3cc3b0e27a8028b1960f3ccfe8c",
+    "executable_sha256": "af8043d7cd56edf4b1d027f35259345ce5924624b33dde626f518b78776e34c8"
+  },
+  "server": {
+    "os": "Linux",
+    "version": "0.17.24",
+    "runtime_epoch": 95,
+    "files_write_enabled": true,
+    "files_delete_enabled": true
+  },
+  "accepted_components": [
+    "Local Delete reviewed exactly one newly owned 31-byte regular file and one newly owned empty folder, displaying their names, kinds and file size.",
+    "Cancel preserved both identities, the file size and SHA-256, and folder emptiness.",
+    "A fresh review followed by Confirm reported two entries deleted. An independent check found exactly both owned entries absent; no external cleanup removed them.",
+    "The five original Documents files, seven metadata entries and three retained private preview copies preserved their recorded identities and contents."
+  ],
+  "remote_permission_independence": "Automated shared-widget and real-worker composition evidence covers remote Write/Delete OFF. This native integration run used an ON grant and is not native OFF qualification.",
+  "optional_folder_attempt": "The correct remote form opened inside the existing empty directory. Its context lookup returned zero matches, while one empty, enabled, hittable name field was found. The runner refused before tapping or typing; no folder creation or keyboard-focus behavior is qualified.",
+  "closure": "The app, runner and owned supervisors exited, all 13 Simulators were shut down, and both suspended VMs resumed with no outstanding resume obligations. The final macOS and Linux observations matched their retained baselines. The final Windows observation timed out during SSH banner exchange, so final Windows process preservation remains unverified.",
+  "private_evidence": {
+    "candidate_sha256": "3f5381f1fdb34ce8d9cca36e60c8fb1ad10f8c76edaea61eee6d93c2f97eab67",
+    "independent_acceptance_sha256": "d2953bc01e456b4140e72159226b7d1f0569306493deead18887f797083adb0e",
+    "captures": "Original images and device paths remain private."
+  },
+  "pending": [
+    "Android native Local Delete.",
+    "Native stale-review, Save-overlap, unsafe-restoration and authority-retirement cases.",
+    "iOS remote folder creation, active-transfer interruption, complete pairs and combined-release qualification."
+  ]
+}

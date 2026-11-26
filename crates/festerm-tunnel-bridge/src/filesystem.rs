@@ -5,7 +5,7 @@ use crate::{
     wire::{read_client_frame, write_frame, DEADLINE},
 };
 use cap_fs_ext::DirExt;
-use cap_std::fs::{Dir, ReadDir};
+use cap_std::fs::Dir;
 use std::{
     collections::HashMap,
     fs::File,
@@ -20,13 +20,15 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+mod locations;
 mod reviewed_delete;
 use reviewed_delete::ReviewedEntry;
 
 const RESERVED: &str = ".festerm-transfer-";
 
 pub struct Filesystem {
-    root: Dir,
+    root: Option<Dir>,
+    locations: Option<Vec<locations::Location>>,
     start_in: String,
     display_root: Option<rpc::DisplayRoot>,
     write: bool,
@@ -42,50 +44,56 @@ fn trusted(directory: &Dir) -> io::Result<()> {
     return festerm_windows_security::trusted_private_storage_ancestor(&file);
 }
 
+fn mutation_trusted(directory: &Dir) -> io::Result<()> {
+    let file = directory.try_clone()?.into_std_file();
+    #[cfg(unix)]
+    return festerm_unix_security::qualify_data_mutation_ancestor(&file);
+    #[cfg(windows)]
+    return festerm_windows_security::qualify_data_mutation_ancestor(&file);
+}
+
 impl Filesystem {
     pub fn open(policy: &rpc::Policy) -> io::Result<Arc<Self>> {
         policy.validate()?;
-        let mut components = policy.root.components();
-        #[cfg(unix)]
-        let mut directory = {
-            if components.next() != Some(Component::RootDir) {
-                return Err(invalid());
-            }
-            Dir::open_ambient_dir("/", cap_std::ambient_authority())?
+        let locations = policy
+            .locations
+            .as_ref()
+            .map(locations::prepare)
+            .transpose()?;
+        let directory = if locations.is_none() {
+            Some(open_strict_root(&policy.root)?)
+        } else {
+            None
         };
-        #[cfg(windows)]
-        let mut directory = {
-            let Some(Component::Prefix(prefix)) = components.next() else {
-                return Err(invalid());
-            };
-            if !matches!(prefix.kind(), std::path::Prefix::Disk(_))
-                || components.next() != Some(Component::RootDir)
-            {
-                return Err(invalid());
+        let start_in = if let Some(roots) = &locations {
+            match &policy.locations.as_ref().expect("prepared locations").start {
+                Some(start) => format!(
+                    "{}{}",
+                    roots[start.root].virtual_root(),
+                    if start.path.as_str() == "/" {
+                        ""
+                    } else {
+                        start.path.as_str()
+                    }
+                ),
+                None if roots.len() == 1 => roots[0].virtual_root(),
+                None => "/".to_owned(),
             }
-            let mut path = prefix.as_os_str().to_os_string();
-            path.push("\\");
-            let path = std::path::PathBuf::from(path);
-            festerm_windows_security::require_local_disk_root(&path)?;
-            Dir::from_std_file(
-                festerm_windows_security::lock_directory_path_without_delete_sharing(&path)?,
-            )
+        } else {
+            policy.initial_directory().to_owned()
         };
-        for component in components {
-            trusted(&directory)?;
-            let Component::Normal(name) = component else {
-                return Err(invalid());
-            };
-            directory = directory.open_dir_nofollow(name)?;
-        }
-        trusted(&directory)?;
         let filesystem = Arc::new(Self {
             root: directory,
-            start_in: policy.initial_directory().to_owned(),
-            display_root: policy
-                .root
-                .to_str()
-                .and_then(|path| path.to_owned().try_into().ok()),
+            locations,
+            start_in,
+            display_root: if policy.locations.is_some() {
+                None
+            } else {
+                policy
+                    .root
+                    .to_str()
+                    .and_then(|path| path.to_owned().try_into().ok())
+            },
             write: policy.write,
             delete: policy.delete,
             slots: Arc::new(Semaphore::new(2)),
@@ -96,9 +104,50 @@ impl Filesystem {
     /// Owner preflight and fresh Files opening only; an unavailable initial
     /// directory must never prevent preparation of the allowed root for HOST.
     pub fn validate_start_directory(&self) -> io::Result<()> {
-        self.directory(&self.start_in).map(|_| ())
+        if self.locations.is_some() && self.start_in == "/" {
+            return Ok(());
+        }
+        let (directory, _parents) = self.read_directory(&self.start_in)?;
+        if self.has_locations() {
+            locations::check_directory(self, &self.start_in, &directory.into_std_file())?;
+        }
+        Ok(())
     }
 
+    pub fn validate_owner_locations(&self) -> io::Result<()> {
+        if let Some(roots) = &self.locations {
+            for root in roots {
+                root.current()?;
+            }
+        }
+        self.validate_start_directory()
+    }
+    pub(crate) fn has_locations(&self) -> bool {
+        self.locations.is_some()
+    }
+    fn location_metadata(&self) -> io::Result<Vec<rpc::FileLocation>> {
+        self.locations
+            .as_ref()
+            .map(|roots| roots.iter().map(locations::Location::metadata).collect())
+            .ok_or_else(invalid)
+    }
+    fn read_directory(&self, path: &str) -> io::Result<(Dir, Vec<File>)> {
+        if let Some(roots) = &self.locations {
+            let (root, relative) = locations::selected(roots, path)?;
+            root.directory(Path::new(&relative))
+        } else {
+            Ok((self.directory(path)?, Vec::new()))
+        }
+    }
+    fn read_file(&self, path: &str) -> io::Result<(File, Vec<File>)> {
+        if let Some(roots) = &self.locations {
+            let (root, relative) = locations::selected(roots, path)?;
+            root.file(Path::new(&relative))
+        } else {
+            let (parent, name) = self.parent(path)?;
+            Ok((open_file(&parent, &name)?, Vec::new()))
+        }
+    }
     pub fn capabilities(&self) -> rpc::Capabilities {
         rpc::Capabilities {
             version: rpc::VERSION,
@@ -116,6 +165,9 @@ impl Filesystem {
             write: base.write,
             operations: {
                 let mut operations = vec!["start_directory".into()];
+                if self.locations.is_some() {
+                    operations.push("locations".into());
+                }
                 if self.write && self.delete {
                     operations.push("delete".into());
                 }
@@ -131,13 +183,40 @@ impl Filesystem {
     }
 
     pub(crate) fn directory(&self, path: &str) -> io::Result<Dir> {
-        let names = names(path)?;
-        let mut directory = self.root.try_clone()?;
-        for name in names {
-            directory = directory.open_dir_nofollow(name)?;
+        let (mut directory, relative) = if let Some(roots) = &self.locations {
+            let (root, relative) = locations::selected(roots, path)?;
+            (root.strict_root()?, relative)
+        } else {
+            (
+                self.root.as_ref().ok_or_else(invalid)?.try_clone()?,
+                names(path)?.join("/"),
+            )
+        };
+        if self.has_locations() {
+            mutation_trusted(&directory)?;
+        } else {
             trusted(&directory)?;
         }
+        for name in relative.split('/').filter(|name| !name.is_empty()) {
+            directory = directory.open_dir_nofollow(name)?;
+            if self.has_locations() {
+                mutation_trusted(&directory)?;
+            } else {
+                trusted(&directory)?;
+            }
+        }
         Ok(directory)
+    }
+
+    fn check_mutation_parent(&self, path: &str, held: &Dir) -> io::Result<()> {
+        if !self.has_locations() {
+            return Ok(());
+        }
+        let (fresh, _name) = self.parent(path)?;
+        if !locations::same_object(&fresh.into_std_file(), &held.try_clone()?.into_std_file())? {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        Ok(())
     }
 
     pub(crate) fn parent(&self, path: &str) -> io::Result<(Dir, String)> {
@@ -146,6 +225,55 @@ impl Filesystem {
         let parent = format!("/{}", names.join("/"));
         Ok((self.directory(&parent)?, name))
     }
+}
+
+fn open_strict_root(path: &Path) -> io::Result<Dir> {
+    open_strict_root_mode(path, false)
+}
+fn open_strict_root_mode(path: &Path, new_shape: bool) -> io::Result<Dir> {
+    let mut components = path.components();
+    #[cfg(unix)]
+    let mut directory = {
+        if components.next() != Some(Component::RootDir) {
+            return Err(invalid());
+        }
+        Dir::open_ambient_dir("/", cap_std::ambient_authority())?
+    };
+    #[cfg(windows)]
+    let mut directory = {
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return Err(invalid());
+        };
+        if !matches!(prefix.kind(), std::path::Prefix::Disk(_))
+            || components.next() != Some(Component::RootDir)
+        {
+            return Err(invalid());
+        }
+        let mut path = prefix.as_os_str().to_os_string();
+        path.push("\\");
+        let path = std::path::PathBuf::from(path);
+        festerm_windows_security::require_local_disk_root(&path)?;
+        Dir::from_std_file(
+            festerm_windows_security::lock_directory_path_without_delete_sharing(&path)?,
+        )
+    };
+    for component in components {
+        if new_shape {
+            mutation_trusted(&directory)?;
+        } else {
+            trusted(&directory)?;
+        }
+        let Component::Normal(name) = component else {
+            return Err(invalid());
+        };
+        directory = directory.open_dir_nofollow(name)?;
+    }
+    if new_shape {
+        mutation_trusted(&directory)?;
+    } else {
+        trusted(&directory)?;
+    }
+    Ok(directory)
 }
 
 fn names(path: &str) -> io::Result<Vec<&str>> {
@@ -172,6 +300,21 @@ pub(crate) fn open_file(parent: &Dir, name: &str) -> io::Result<File> {
     return festerm_unix_security::open_file_nofollow(&parent, Path::new(name));
     #[cfg(windows)]
     return festerm_windows_security::open_file_no_reparse(&parent, Path::new(name));
+}
+
+/// New Linux mutation leaves must qualify the pinned regular object before
+/// data-open. Historical readers and other platforms retain their old path.
+fn open_mutation_file(parent: &Dir, name: &str, new_shape: bool) -> io::Result<File> {
+    #[cfg(target_os = "linux")]
+    if new_shape {
+        return festerm_unix_security::open_mutation_file_nofollow(
+            &parent.try_clone()?.into_std_file(),
+            Path::new(name),
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = new_shape;
+    open_file(parent, name)
 }
 
 pub(crate) fn open_observation_file(parent: &Dir, name: &str) -> io::Result<File> {
@@ -300,11 +443,12 @@ struct Upload {
     written: u64,
     expected: Option<Expected>,
     published: bool,
+    strict_mounts: bool,
 }
 
 impl Drop for Upload {
     fn drop(&mut self) {
-        if !self.published {
+        if !self.published && (!self.strict_mounts || mutation_trusted(&self.parent).is_ok()) {
             let _ = remove(&self.parent, &self.temporary, &self.file);
         }
     }
@@ -316,8 +460,14 @@ enum Handle {
         path: String,
         file: File,
         stamp: Stamp,
+        _parents: Vec<File>,
     },
-    Directory(Box<ReadDir>),
+    Directory {
+        entries: Box<dyn Iterator<Item = io::Result<cap_std::fs::DirEntry>> + Send>,
+        path: String,
+        held: File,
+        _parents: Vec<File>,
+    },
     Upload(Upload),
 }
 
@@ -461,6 +611,14 @@ impl Session {
                         .map_err(|_| ErrorCode::Invalid)?,
                 }
             }
+            Operation::Locations {} => {
+                if !self.reviewed_operations || !self.filesystem.has_locations() {
+                    return Err(ErrorCode::Denied.into());
+                }
+                Reply::Locations {
+                    locations: self.filesystem.location_metadata()?,
+                }
+            }
             Operation::DisplayRoot {} => {
                 if !self.reviewed_operations {
                     return Err(ErrorCode::Denied.into());
@@ -504,7 +662,7 @@ impl Session {
                 let Some(Handle::EntryReview(entry)) = self.handles.remove(&review) else {
                     unreachable!()
                 };
-                reviewed_delete::remove(entry, admission, cancel)?;
+                reviewed_delete::remove(entry, admission, cancel, &self.filesystem)?;
                 Reply::Deleted
             }
             Operation::Ping {} => Reply::Pong,
@@ -513,30 +671,51 @@ impl Session {
                 Reply::Closed
             }
             Operation::Stat { path } => {
-                let file = match self.filesystem.directory(&path) {
-                    Ok(directory) => directory.into_std_file(),
-                    Err(_) => {
-                        let (parent, name) = self.filesystem.parent(&path)?;
-                        open_file(&parent, &name)?
-                    }
+                let (file, _parents) = match self.filesystem.read_directory(&path) {
+                    Ok((directory, parents)) => (directory.into_std_file(), parents),
+                    Err(_) => self.filesystem.read_file(&path)?,
                 };
-                Reply::Stat {
-                    metadata: metadata(&file)?,
+                let value = metadata(&file)?;
+                if self.filesystem.has_locations() {
+                    if file.metadata()?.is_dir() {
+                        locations::check_directory(&self.filesystem, &path, &file)?;
+                    } else {
+                        locations::check_file(&self.filesystem, &path, &file)?;
+                    }
                 }
+                Reply::Stat { metadata: value }
             }
             Operation::OpenDirectory { path } => {
-                let directory = self.filesystem.directory(&path)?;
+                let (directory, parents) = self.filesystem.read_directory(&path)?;
+                let held = directory.try_clone()?.into_std_file();
+                if self.filesystem.has_locations() {
+                    locations::check_directory(&self.filesystem, &path, &held)?;
+                }
                 Reply::Directory {
-                    handle: self.insert(Handle::Directory(Box::new(directory.entries()?)))?,
+                    handle: self.insert(Handle::Directory {
+                        entries: Box::new(directory.entries()?),
+                        path,
+                        held,
+                        _parents: parents,
+                    })?,
                 }
             }
             Operation::ReadDirectory { handle, limit } => {
                 if limit == 0 || limit > rpc::PAGE_LIMIT {
                     return Err(ErrorCode::Invalid.into());
                 }
-                let Some(Handle::Directory(iterator)) = self.handles.get_mut(&handle) else {
+                let Some(Handle::Directory {
+                    entries: iterator,
+                    path,
+                    held,
+                    ..
+                }) = self.handles.get_mut(&handle)
+                else {
                     return Err(ErrorCode::Invalid.into());
                 };
+                if self.filesystem.has_locations() {
+                    locations::check_directory(&self.filesystem, path, held)?;
+                }
                 let mut entries = Vec::new();
                 let (mut done, mut skipped) = (false, 0);
                 for _ in 0..rpc::PAGE_LIMIT * 4 {
@@ -567,6 +746,9 @@ impl Session {
                         },
                     });
                 }
+                if self.filesystem.has_locations() {
+                    locations::check_directory(&self.filesystem, path, held)?;
+                }
                 Reply::Entries {
                     entries,
                     done,
@@ -574,14 +756,17 @@ impl Session {
                 }
             }
             Operation::OpenRead { path } => {
-                let (parent, name) = self.filesystem.parent(&path)?;
-                let file = open_file(&parent, &name)?;
+                let (file, parents) = self.filesystem.read_file(&path)?;
                 let value = metadata(&file)?;
                 let captured = stamp(&file)?;
+                if self.filesystem.has_locations() {
+                    locations::check_file(&self.filesystem, &path, &file)?;
+                }
                 let handle = self.insert(Handle::Read {
                     path,
                     file,
                     stamp: captured,
+                    _parents: parents,
                 })?;
                 Reply::File {
                     handle,
@@ -599,12 +784,16 @@ impl Session {
                 }
                 let Some(Handle::Read {
                     file,
+                    path,
                     stamp: expected,
                     ..
                 }) = self.handles.get_mut(&handle)
                 else {
                     return Err(ErrorCode::Invalid.into());
                 };
+                if self.filesystem.has_locations() {
+                    locations::check_file(&self.filesystem, path, file)?;
+                }
                 if stamp(file)? != *expected || offset > expected.length {
                     return Err(ErrorCode::Conflict.into());
                 }
@@ -613,6 +802,9 @@ impl Session {
                 file.read_exact(&mut bytes)?;
                 if stamp(file)? != *expected {
                     return Err(ErrorCode::Conflict.into());
+                }
+                if self.filesystem.has_locations() {
+                    locations::check_file(&self.filesystem, path, file)?;
                 }
                 let next = offset + bytes.len() as u64;
                 return Ok((
@@ -629,6 +821,7 @@ impl Session {
                     return Err(ErrorCode::Denied.into());
                 }
                 let (parent, name) = self.filesystem.parent(&path)?;
+                self.filesystem.check_mutation_parent(&path, &parent)?;
                 let parent = parent.into_std_file();
                 #[cfg(unix)]
                 festerm_unix_security::create_private_directory(&parent, Path::new(&name))?;
@@ -662,6 +855,7 @@ impl Session {
                             path: original,
                             file,
                             stamp: captured,
+                            ..
                         }) = self.handles.get(&handle)
                         else {
                             return Err(ErrorCode::Invalid.into());
@@ -669,7 +863,8 @@ impl Session {
                         if original != &path {
                             return Err(ErrorCode::Invalid.into());
                         }
-                        let current = open_file(&parent, &target)?;
+                        let current =
+                            open_mutation_file(&parent, &target, self.filesystem.has_locations())?;
                         if !same(file, &current)?
                             || stamp(file)? != *captured
                             || stamp(&current)? != *captured
@@ -691,6 +886,7 @@ impl Session {
                     }
                 };
                 let temporary = format!("{RESERVED}{}", uuid::Uuid::new_v4().simple());
+                self.filesystem.check_mutation_parent(&path, &parent)?;
                 let file = private_file(&parent, &temporary)?;
                 let handle = self.insert(Handle::Upload(Upload {
                     parent,
@@ -702,6 +898,7 @@ impl Session {
                     written: 0,
                     expected,
                     published: false,
+                    strict_mounts: self.filesystem.has_locations(),
                 }))?;
                 Reply::Upload { handle }
             }
@@ -722,6 +919,8 @@ impl Session {
                 {
                     return Err(ErrorCode::Invalid.into());
                 }
+                self.filesystem
+                    .check_mutation_parent(&upload.path, &upload.parent)?;
                 // A failed/partial write invalidates this upload; do not retry an uncertain offset.
                 if let Err(error) = upload.file.write_all(&data) {
                     self.handles.remove(&handle);
@@ -742,11 +941,16 @@ impl Session {
                 if upload.written != upload.size {
                     return Err(ErrorCode::Invalid.into());
                 }
+                self.filesystem
+                    .check_mutation_parent(&upload.path, &upload.parent)?;
                 upload.file.sync_all()?;
                 // Final publication admission is distinct from the request job.
                 // The callback releases protected policy before native commit.
                 admission(AdmissionStage::Publication)?;
-                finish(&mut upload, cancel)?;
+                finish(&mut upload, cancel, |upload| {
+                    self.filesystem
+                        .check_mutation_parent(&upload.path, &upload.parent)
+                })?;
                 Reply::Finished {
                     size: upload.size.to_string(),
                 }
@@ -756,11 +960,16 @@ impl Session {
     }
 }
 
-fn finish(upload: &mut Upload, cancel: &CancellationToken) -> Outcome<()> {
+fn finish(
+    upload: &mut Upload,
+    cancel: &CancellationToken,
+    check: impl Fn(&Upload) -> io::Result<()>,
+) -> Outcome<()> {
     if cancel.is_cancelled() {
         return Err(ErrorCode::Denied.into());
     }
     let Some(expected) = upload.expected.take() else {
+        check(upload)?;
         publish(
             &upload.parent,
             &upload.temporary,
@@ -770,7 +979,7 @@ fn finish(upload: &mut Upload, cancel: &CancellationToken) -> Outcome<()> {
         upload.published = true;
         return Ok(());
     };
-    let current = open_file(&upload.parent, &upload.target)?;
+    let current = open_mutation_file(&upload.parent, &upload.target, upload.strict_mounts)?;
     if !same(&current, &expected.file)? || stamp(&current)? != expected.stamp {
         return Err(ErrorCode::Conflict.into());
     }
@@ -780,9 +989,10 @@ fn finish(upload: &mut Upload, cancel: &CancellationToken) -> Outcome<()> {
         Path::new(&upload.target),
     )?;
     let backup = format!("{RESERVED}backup-{}", uuid::Uuid::new_v4().simple());
+    check(upload)?;
     publish(&upload.parent, &upload.target, &current, &backup)?;
     let result = (|| -> Outcome<()> {
-        let captured = open_file(&upload.parent, &backup)?;
+        let captured = open_mutation_file(&upload.parent, &backup, upload.strict_mounts)?;
         // Rename itself changes ctime/change-time; retain identity, size and
         // mtime checks, then establish a post-rename change stamp.
         let captured_stamp = stamp(&captured)?;
@@ -795,6 +1005,7 @@ fn finish(upload: &mut Upload, cancel: &CancellationToken) -> Outcome<()> {
         if cancel.is_cancelled() {
             return Err(ErrorCode::Denied.into());
         }
+        check(upload)?;
         publish(
             &upload.parent,
             &upload.temporary,
@@ -802,6 +1013,7 @@ fn finish(upload: &mut Upload, cancel: &CancellationToken) -> Outcome<()> {
             &upload.target,
         )?;
         upload.published = true;
+        check(upload).map_err(|_| recovery(upload, &backup))?;
         if stamp(&captured).as_ref().ok() != Some(&captured_stamp)
             || remove(&upload.parent, &backup, &current).is_err()
         {
@@ -813,7 +1025,11 @@ fn finish(upload: &mut Upload, cancel: &CancellationToken) -> Outcome<()> {
         if upload.published {
             return Err(error);
         }
-        if publish(&upload.parent, &backup, &current, &upload.target).is_err() {
+        // Restoration is against the exact held capture; do not publish new
+        // data after containment loss. Keep existing no-replace recovery.
+        if upload.strict_mounts && mutation_trusted(&upload.parent).is_err()
+            || publish(&upload.parent, &backup, &current, &upload.target).is_err()
+        {
             return Err(recovery(upload, &backup));
         }
         return Err(error);
@@ -846,7 +1062,7 @@ pub async fn serve(
     bytes: &[u8],
 ) -> io::Result<()> {
     let open: rpc::Open = serde_json::from_slice(bytes).map_err(|_| invalid())?;
-    if open.version != rpc::VERSION || open.target != expected {
+    if filesystem.has_locations() || open.version != rpc::VERSION || open.target != expected {
         return Err(invalid());
     }
     serve_authorized(
@@ -864,6 +1080,9 @@ pub(crate) async fn serve_authorized(
     admission: Admission,
     cancel: CancellationToken,
 ) -> io::Result<()> {
+    if filesystem.has_locations() {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
     serve_authorized_mode(stream, filesystem, admission, cancel, false).await
 }
 #[cfg(any(feature = "host-routing", test))]
@@ -1025,6 +1244,7 @@ mod tests {
         let path = crate::test_support::private_directory("festerm-rooted-files");
         let filesystem = Filesystem::open(&rpc::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: path.clone(),
             write,
@@ -1060,6 +1280,752 @@ mod tests {
             .0
     }
 
+    fn locations_session(policy: rpc::Policy) -> Session {
+        let filesystem = Filesystem::open(&policy).unwrap();
+        let permit = filesystem.slots.clone().try_acquire_owned().unwrap();
+        Session {
+            reviewed_operations: true,
+            admission: Arc::new(|_| Ok(())),
+            filesystem,
+            handles: HashMap::new(),
+            next: 0,
+            _permit: Arc::new(permit),
+        }
+    }
+    #[cfg(unix)]
+    fn mutation_fixture() -> (tempfile::TempDir, Session, String) {
+        let base = tempfile::Builder::new()
+            .prefix(".festerm-mutation-fence-")
+            .tempdir_in(festerm_unix_security::current_user_home().unwrap())
+            .unwrap();
+        let allowed = base.path().join("allowed");
+        std::fs::create_dir(&allowed).unwrap();
+        std::fs::create_dir(allowed.join("inside")).unwrap();
+        let session = locations_session(rpc::Policy {
+            root: allowed.clone(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec![allowed],
+                start: None,
+            }),
+            write: true,
+            delete: true,
+        });
+        let selector = session.filesystem.location_metadata().unwrap()[0].virtual_root();
+        (base, session, selector)
+    }
+    #[test]
+    #[cfg(unix)]
+    fn allowed_locations_mutation_leaves_share_qualified_review_and_replacement_route() {
+        use std::os::unix::fs::symlink;
+        let (base, mut session, selector) = mutation_fixture();
+        let directory = base.path().join("allowed/inside");
+        let target = directory.join("target");
+        std::fs::write(&target, b"old").unwrap();
+        let path = format!("{selector}/inside/target");
+        if !session.filesystem.location_metadata().unwrap()[0].mutations_available {
+            assert!(session
+                .execute(
+                    Operation::ReviewEntry {
+                        path,
+                        purpose: rpc::ReviewPurpose::Delete
+                    },
+                    vec![],
+                    &CancellationToken::new()
+                )
+                .is_err());
+            assert_eq!(std::fs::read(&target).unwrap(), b"old");
+            return;
+        }
+        let review = match run(
+            &mut session,
+            Operation::ReviewEntry {
+                path: path.clone(),
+                purpose: rpc::ReviewPurpose::Delete,
+            },
+        ) {
+            Reply::EntryReview { handle, metadata } => {
+                assert_eq!(metadata.size, "3");
+                handle
+            }
+            _ => panic!("exact review"),
+        };
+        run(&mut session, Operation::Close { handle: review });
+        let expected = handle(run(
+            &mut session,
+            Operation::OpenRead { path: path.clone() },
+        ));
+        let upload = handle(run(
+            &mut session,
+            Operation::BeginUpload {
+                path: path.clone(),
+                size: "3".into(),
+                expected: Some(expected),
+            },
+        ));
+        session
+            .execute(
+                Operation::Write {
+                    handle: upload,
+                    offset: "0".into(),
+                    length: 3,
+                },
+                b"new".to_vec(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        run(&mut session, Operation::FinishUpload { handle: upload });
+        run(&mut session, Operation::Close { handle: expected });
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        let expected = handle(run(
+            &mut session,
+            Operation::OpenRead { path: path.clone() },
+        ));
+        std::fs::rename(&target, directory.join("preserved")).unwrap();
+        symlink(directory.join("preserved"), &target).unwrap();
+        let before = session.handles.len();
+        assert!(session
+            .execute(
+                Operation::ReviewEntry {
+                    path: path.clone(),
+                    purpose: rpc::ReviewPurpose::Delete
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert_eq!(session.handles.len(), before);
+        assert!(session
+            .execute(
+                Operation::BeginUpload {
+                    path: path.clone(),
+                    size: "3".into(),
+                    expected: Some(expected)
+                },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(std::fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(directory.join("preserved")).unwrap(), b"new");
+        run(&mut session, Operation::Close { handle: expected });
+        std::fs::remove_file(&target).unwrap();
+        std::fs::rename(directory.join("preserved"), &target).unwrap();
+        let expected = handle(run(
+            &mut session,
+            Operation::OpenRead { path: path.clone() },
+        ));
+        let upload = handle(run(
+            &mut session,
+            Operation::BeginUpload {
+                path,
+                size: "3".into(),
+                expected: Some(expected),
+            },
+        ));
+        session
+            .execute(
+                Operation::Write {
+                    handle: upload,
+                    offset: "0".into(),
+                    length: 3,
+                },
+                b"bad".to_vec(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        std::fs::rename(&target, directory.join("preserved")).unwrap();
+        symlink(directory.join("preserved"), &target).unwrap();
+        assert!(session
+            .execute(
+                Operation::FinishUpload { handle: upload },
+                vec![],
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(std::fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(directory.join("preserved")).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read_dir(&directory).unwrap().count(),
+            2,
+            "no capture or staging name after refusal"
+        );
+        run(&mut session, Operation::Close { handle: expected });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn allowed_locations_retained_upload_refuses_parent_and_root_moves_between_rpcs() {
+        for move_root in [false, true] {
+            for finish in [false, true] {
+                let (base, mut session, selector) = mutation_fixture();
+                let path = format!("{selector}/inside/new");
+                if !session.filesystem.location_metadata().unwrap()[0].mutations_available {
+                    assert!(session
+                        .execute(
+                            Operation::BeginUpload {
+                                path,
+                                size: "3".into(),
+                                expected: None
+                            },
+                            vec![],
+                            &CancellationToken::new()
+                        )
+                        .is_err());
+                    assert_eq!(
+                        std::fs::read_dir(base.path().join("allowed/inside"))
+                            .unwrap()
+                            .count(),
+                        0
+                    );
+                    eprintln!(
+                        "new strict mutation deployment unavailable; refused without staging"
+                    );
+                    continue;
+                }
+                let upload = handle(run(
+                    &mut session,
+                    Operation::BeginUpload {
+                        path,
+                        size: "3".into(),
+                        expected: None,
+                    },
+                ));
+                if finish {
+                    session
+                        .execute(
+                            Operation::Write {
+                                handle: upload,
+                                offset: "0".into(),
+                                length: 3,
+                            },
+                            b"new".to_vec(),
+                            &CancellationToken::new(),
+                        )
+                        .unwrap();
+                }
+                let from = base.path().join(if move_root {
+                    "allowed"
+                } else {
+                    "allowed/inside"
+                });
+                let moved = base.path().join("moved");
+                std::fs::rename(from, &moved).unwrap();
+                let parent = if move_root {
+                    moved.join("inside")
+                } else {
+                    moved
+                };
+                let result = if finish {
+                    session.execute(
+                        Operation::FinishUpload { handle: upload },
+                        vec![],
+                        &CancellationToken::new(),
+                    )
+                } else {
+                    session.execute(
+                        Operation::Write {
+                            handle: upload,
+                            offset: "0".into(),
+                            length: 3,
+                        },
+                        b"new".to_vec(),
+                        &CancellationToken::new(),
+                    )
+                };
+                assert!(result.is_err());
+                assert!(!parent.join("new").exists());
+                if !finish {
+                    let stage = std::fs::read_dir(&parent)
+                        .unwrap()
+                        .next()
+                        .unwrap()
+                        .unwrap()
+                        .path();
+                    assert!(std::fs::read(stage).unwrap().is_empty());
+                    run(&mut session, Operation::Close { handle: upload });
+                }
+                assert_eq!(
+                    std::fs::read_dir(parent).unwrap().count(),
+                    0,
+                    "exact owned staging cleanup survives containment refusal"
+                );
+            }
+        }
+    }
+    #[test]
+    #[cfg(unix)]
+    fn allowed_locations_reviewed_delete_refuses_moves_and_restores_after_capture() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for phase in [0, 1, 2] {
+            let (base, mut session, selector) = mutation_fixture();
+            let original = base.path().join("allowed/inside/original");
+            std::fs::write(&original, b"original").unwrap();
+            let path = format!("{selector}/inside/original");
+            if !session.filesystem.location_metadata().unwrap()[0].mutations_available {
+                assert!(session
+                    .execute(
+                        Operation::ReviewEntry {
+                            path,
+                            purpose: rpc::ReviewPurpose::Delete
+                        },
+                        vec![],
+                        &CancellationToken::new()
+                    )
+                    .is_err());
+                assert_eq!(std::fs::read(original).unwrap(), b"original");
+                continue;
+            }
+            let id = match run(
+                &mut session,
+                Operation::ReviewEntry {
+                    path,
+                    purpose: rpc::ReviewPurpose::Delete,
+                },
+            ) {
+                Reply::EntryReview { handle, .. } => handle,
+                _ => panic!("review"),
+            };
+            let moved = base.path().join("moved");
+            if phase < 2 {
+                std::fs::rename(
+                    base.path().join(if phase == 0 {
+                        "allowed/inside"
+                    } else {
+                        "allowed"
+                    }),
+                    &moved,
+                )
+                .unwrap();
+            } else {
+                let calls = Arc::new(AtomicUsize::new(0));
+                let checked = calls.clone();
+                let from = base.path().join("allowed/inside");
+                let destination = moved.clone();
+                session.admission = Arc::new(move |stage| {
+                    if matches!(stage, AdmissionStage::Publication)
+                        && checked.fetch_add(1, Ordering::SeqCst) == 1
+                    {
+                        std::fs::rename(&from, &destination)?;
+                    }
+                    Ok(())
+                });
+            }
+            assert!(session
+                .execute(
+                    Operation::Delete { review: id },
+                    vec![],
+                    &CancellationToken::new()
+                )
+                .is_err());
+            let parent = if phase == 1 {
+                moved.join("inside")
+            } else {
+                moved
+            };
+            assert_eq!(std::fs::read(parent.join("original")).unwrap(), b"original");
+            assert_eq!(
+                std::fs::read_dir(parent).unwrap().count(),
+                1,
+                "no retained capture after bounded restore"
+            );
+        }
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn allowed_locations_ordinary_read_never_grants_unqualified_strict_mutations() {
+        let base = crate::test_support::private_directory("festerm-noowners-read");
+        std::fs::write(base.join("original"), b"original").unwrap();
+        let mut session = locations_session(rpc::Policy {
+            root: base.clone(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec![base.clone()],
+                start: None,
+            }),
+            write: true,
+            delete: true,
+        });
+        let root = session.filesystem.location_metadata().unwrap().remove(0);
+        if root.available && !root.mutations_available {
+            let native =
+                festerm_unix_security::open_absolute_directory_read_nofollow(&base).unwrap();
+            let ownership =
+                festerm_unix_security::ownership_enforcing_data_filesystem(&native).unwrap();
+            eprintln!(
+                "ordinary data fixture ownership_enforced={ownership}; strict mutations refused"
+            );
+            let path = format!("{}/original", root.virtual_root());
+            let read = handle(run(
+                &mut session,
+                Operation::OpenRead { path: path.clone() },
+            ));
+            let (_, bytes) = session
+                .execute(
+                    Operation::Read {
+                        handle: read,
+                        offset: "0".into(),
+                        length: 32,
+                    },
+                    vec![],
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            assert_eq!(bytes.unwrap(), b"original");
+            run(&mut session, Operation::Close { handle: read });
+            for op in [
+                Operation::Mkdir {
+                    path: format!("{}/new", root.virtual_root()),
+                },
+                Operation::BeginUpload {
+                    path: format!("{}/new", root.virtual_root()),
+                    size: "3".into(),
+                    expected: None,
+                },
+                Operation::ReviewEntry {
+                    path,
+                    purpose: rpc::ReviewPurpose::Delete,
+                },
+            ] {
+                assert!(session
+                    .execute(op, vec![], &CancellationToken::new())
+                    .is_err());
+            }
+            assert_eq!(std::fs::read_dir(&base).unwrap().count(), 1);
+            eprintln!("ordinary read remained available while full strict mount/ancestor qualification refused mutations");
+        } else if !root.available {
+            let native =
+                festerm_unix_security::open_absolute_directory_read_nofollow(Path::new("/"))
+                    .unwrap();
+            assert_eq!(
+                festerm_unix_security::open_contained_data_directory(
+                    &native,
+                    base.strip_prefix("/").unwrap()
+                )
+                .unwrap_err()
+                .kind(),
+                io::ErrorKind::Unsupported
+            );
+            assert!(!root.mutations_available);
+        } else {
+            assert!(
+                root.mutations_available,
+                "ownership-enforcing supported control"
+            );
+        }
+        assert_eq!(std::fs::read(base.join("original")).unwrap(), b"original");
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn allowed_locations_actual_os_home_start_and_private_regular_file_read() {
+        let home = festerm_unix_security::current_user_home().unwrap();
+        let start = format!("/{}", home.strip_prefix("/").unwrap().to_str().unwrap());
+        let mut session = locations_session(rpc::Policy {
+            root: "/".into(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec!["/".into()],
+                start: Some(rpc::LocationStart {
+                    root: 0,
+                    path: start.clone().try_into().unwrap(),
+                }),
+            }),
+            write: false,
+            delete: false,
+        });
+        let roots = session.filesystem.location_metadata().unwrap();
+        assert_eq!(roots.len(), 1);
+        if !roots[0].available {
+            let root = festerm_unix_security::open_absolute_directory_read_nofollow(Path::new("/"))
+                .unwrap();
+            assert_eq!(
+                festerm_unix_security::open_contained_data_directory(&root, Path::new(""))
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::Unsupported
+            );
+            assert!(session
+                .execute(
+                    Operation::StartDirectory {},
+                    Vec::new(),
+                    &CancellationToken::new()
+                )
+                .is_err());
+            assert!(session.filesystem.has_locations());
+            eprintln!("HOME allowlist: unsupported native API floor; prepared Files unavailable, no HOME fixture or read");
+            return;
+        }
+        assert!(
+            matches!(run(&mut session,Operation::StartDirectory {}),Reply::StartDirectory {path} if path.as_str()==format!("{}{}",roots[0].virtual_root(),start))
+        );
+        let fixture = tempfile::Builder::new()
+            .prefix(".festerm-allowlist-owned-")
+            .tempdir_in(&home)
+            .unwrap();
+        let file = fixture.path().join("owned.txt");
+        let payload = b"owned HOME namespace regular bytes";
+        std::fs::write(&file, payload).unwrap();
+        let path = format!(
+            "{}/{}",
+            roots[0].virtual_root(),
+            file.strip_prefix("/").unwrap().to_str().unwrap()
+        );
+        assert!(
+            matches!(run(&mut session,Operation::Stat {path:path.clone()}),Reply::Stat {metadata} if matches!(metadata.kind,rpc::Kind::File)&&metadata.size==payload.len().to_string())
+        );
+        let read = handle(run(
+            &mut session,
+            Operation::OpenRead { path: path.clone() },
+        ));
+        let (_, bytes) = session
+            .execute(
+                Operation::Read {
+                    handle: read,
+                    offset: "0".into(),
+                    length: 64,
+                },
+                Vec::new(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        assert_eq!(bytes.unwrap(), payload);
+        run(&mut session, Operation::Close { handle: read });
+        use std::os::unix::fs::PermissionsExt;
+        struct Restore(std::path::PathBuf, std::fs::Permissions);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, self.1.clone());
+            }
+        }
+        let restore = Restore(
+            file.clone(),
+            std::fs::metadata(&file).unwrap().permissions(),
+        );
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o0)).unwrap();
+        assert!(
+            matches!(session.execute(Operation::OpenRead {path},Vec::new(),&CancellationToken::new()),Err(failure) if failure.code==ErrorCode::Denied),
+            "trusted open denial must not retry ordinary NODEV admission"
+        );
+        drop(restore);
+        assert_eq!(std::fs::read(file).unwrap(), payload);
+    }
+    #[test]
+    #[cfg(unix)]
+    fn allowed_locations_directory_page_rechecks_after_owned_parent_move() {
+        let base = crate::test_support::private_directory("festerm-locations-page");
+        let allowed = base.join("allowed");
+        let inside = allowed.join("inside");
+        let outside = base.join("outside");
+        std::fs::create_dir(&allowed).unwrap();
+        std::fs::create_dir(&inside).unwrap();
+        std::fs::write(inside.join("visible"), b"original").unwrap();
+        let mut session = locations_session(rpc::Policy {
+            root: allowed.clone(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec![allowed.clone()],
+                start: None,
+            }),
+            write: false,
+            delete: false,
+        });
+        let roots = session.filesystem.location_metadata().unwrap();
+        if !roots[0].available {
+            #[cfg(target_os = "macos")]
+            {
+                let root =
+                    festerm_unix_security::open_absolute_directory_read_nofollow(Path::new("/"))
+                        .unwrap();
+                assert_eq!(
+                    festerm_unix_security::open_contained_data_directory(
+                        &root,
+                        allowed.strip_prefix("/").unwrap()
+                    )
+                    .unwrap_err()
+                    .kind(),
+                    io::ErrorKind::Unsupported
+                );
+                assert!(session
+                    .execute(
+                        Operation::OpenDirectory {
+                            path: roots[0].virtual_root()
+                        },
+                        Vec::new(),
+                        &CancellationToken::new()
+                    )
+                    .is_err());
+                std::fs::remove_dir_all(base).unwrap();
+                return;
+            }
+            #[cfg(not(target_os = "macos"))]
+            panic!("local fixture unavailable");
+        }
+        let path = format!("{}/inside", roots[0].virtual_root());
+        let id = handle(run(&mut session, Operation::OpenDirectory { path }));
+        let Some(Handle::Directory { entries, .. }) = session.handles.get_mut(&id) else {
+            panic!("directory handle")
+        };
+        let mut original = std::mem::replace(entries, Box::new(std::iter::empty()));
+        let moved = outside.clone();
+        let mut first = true;
+        *entries = Box::new(std::iter::from_fn(move || {
+            if first {
+                first = false;
+                std::fs::rename(&inside, &moved).unwrap();
+            }
+            original.next()
+        }));
+        assert!(
+            session
+                .execute(
+                    Operation::ReadDirectory {
+                        handle: id,
+                        limit: rpc::PAGE_LIMIT
+                    },
+                    Vec::new(),
+                    &CancellationToken::new()
+                )
+                .is_err(),
+            "page collected after movement must be discarded"
+        );
+        assert_eq!(std::fs::read(outside.join("visible")).unwrap(), b"original");
+        run(&mut session, Operation::Close { handle: id });
+        std::fs::remove_dir_all(base).unwrap();
+    }
+    #[test]
+    fn allowed_locations_cross_root_expected_handle_cannot_retarget_replacement() {
+        let base = crate::test_support::private_directory("festerm-locations-review");
+        let first = base.join("first");
+        let second = base.join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        std::fs::write(first.join("same.txt"), b"first").unwrap();
+        std::fs::write(second.join("same.txt"), b"second").unwrap();
+        let mut session = locations_session(rpc::Policy {
+            root: first.clone(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec![first.clone(), second.clone()],
+                start: None,
+            }),
+            write: true,
+            delete: true,
+        });
+        let roots = session.filesystem.location_metadata().unwrap();
+        if roots.iter().all(|root| root.available) {
+            let expected = handle(run(
+                &mut session,
+                Operation::OpenRead {
+                    path: format!("{}/same.txt", roots[0].virtual_root()),
+                },
+            ));
+            assert!(session
+                .execute(
+                    Operation::BeginUpload {
+                        path: format!("{}/same.txt", roots[1].virtual_root()),
+                        size: "3".into(),
+                        expected: Some(expected)
+                    },
+                    Vec::new(),
+                    &CancellationToken::new()
+                )
+                .is_err());
+            run(&mut session, Operation::Close { handle: expected });
+        } else {
+            #[cfg(target_os = "macos")]
+            {
+                let root =
+                    festerm_unix_security::open_absolute_directory_read_nofollow(Path::new("/"))
+                        .unwrap();
+                assert_eq!(
+                    festerm_unix_security::open_contained_data_directory(
+                        &root,
+                        first.strip_prefix("/").unwrap()
+                    )
+                    .unwrap_err()
+                    .kind(),
+                    io::ErrorKind::Unsupported
+                );
+            }
+            #[cfg(not(target_os = "macos"))]
+            panic!("qualified local fixture unavailable");
+        }
+        assert_eq!(std::fs::read(first.join("same.txt")).unwrap(), b"first");
+        assert_eq!(std::fs::read(second.join("same.txt")).unwrap(), b"second");
+        assert_eq!(std::fs::read_dir(&first).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&second).unwrap().count(), 1);
+        drop(session);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+    #[test]
+    #[cfg(unix)]
+    fn allowed_locations_shared_outside_ancestor_never_becomes_mutation_authority() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = crate::test_support::private_directory("festerm-locations-strict");
+        let outside = base.join("outside");
+        let allowed = outside.join("allowed");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::create_dir(&allowed).unwrap();
+        std::fs::write(allowed.join("original"), b"preserve").unwrap();
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o775)).unwrap();
+        let mut session = locations_session(rpc::Policy {
+            root: allowed.clone(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec![allowed.clone()],
+                start: None,
+            }),
+            write: true,
+            delete: true,
+        });
+        let roots = session.filesystem.location_metadata().unwrap();
+        assert!(!roots[0].mutations_available);
+        let virtual_root = roots[0].virtual_root();
+        assert!(session
+            .execute(
+                Operation::Mkdir {
+                    path: format!("{virtual_root}/new")
+                },
+                Vec::new(),
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(session
+            .execute(
+                Operation::BeginUpload {
+                    path: format!("{virtual_root}/new"),
+                    size: "1".into(),
+                    expected: None
+                },
+                Vec::new(),
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(session
+            .execute(
+                Operation::OpenRead {
+                    path: "/unknown-selector/original".into()
+                },
+                Vec::new(),
+                &CancellationToken::new()
+            )
+            .is_err());
+        assert!(!allowed.join("new").exists());
+        assert_eq!(
+            std::fs::read(allowed.join("original")).unwrap(),
+            b"preserve"
+        );
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
     #[test]
     fn start_directory_is_nofollow_navigation_not_an_allowed_root() {
         let (path, mut session) = session(false);
@@ -1067,6 +2033,7 @@ mod tests {
         let mut policy = rpc::Policy {
             root: path.clone(),
             start_in: Some("/child".into()),
+            locations: None,
             write: false,
             delete: false,
         };
@@ -1430,6 +2397,7 @@ mod tests {
         let path = crate::test_support::private_directory("festerm-files-wire");
         let files = FileService::rooted(&rpc::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: path.clone(),
             write: true,

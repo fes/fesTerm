@@ -2223,9 +2223,9 @@ remains blocked on this gate and a hosting go/no-go decision.
 | MOB-04 | iPhone/iPad portrait, landscape and Split View; pinch from rest and from a held arrow gesture; pinch at minimum/maximum text size | Only terminal text scales within 8–32 points; native keyboard/accessory controls remain stable; grid resizes coherently without losing the viewed content. Check precision/jitter with real fingers and immediate reversal at limits. Arrow helper/repeats stop when the second finger takes over; no mouse reports or text are emitted. Either finger lifting, a third contact, blur, rotation/keyboard geometry change and backgrounding cancel; remaining fingers cannot restart input until all lift. An already-started ordinary drag retains ownership; toolbar-origin touches do not pinch. Memory warning preserves text size; Reset fixture restores default. Portable arbitration/layout/bounds tests pass; native feel, visual stability and history anchoring remain manual pending. |
 | MOB-05 | iPhone/iPad portrait, landscape and narrow Split View; switch Terminal/Files/README repeatedly; exercise both transfer directions, README collision choices, progress, Preview/Source/Contents and each heading | Keyboard dismisses outside Terminal and returns without a restart loop; terminal gestures cannot affect Files/README. No category loses in-memory state. Wide Files panes are horizontal; Compact panes are both visible with Remote on top and Local below, so upload moves up and download moves down; Minimal has a reachable pane toggle and transfer queue. Collision actions and progress are bounded and never claim real I/O. Markdown controls never collide, prose wraps, contents is reachable and heading activation changes the selected/visible section. Every screen says synthetic/offline. Record clipping, Dynamic Type and VoiceOver gaps; this does not accept live SSH/SFTP, credentials, file access, full tab lifecycle or restoration. |
 | MOB-06 | Opt-in live-SSH build on iPhone/iPad Simulator and provisioned hardware; connect to an owned SSH fixture, review unknown/changed host keys, authenticate/retry/cancel, type Return/Delete/Esc/Tab/Ctrl-C/arrows, resize, run a remote TUI, disconnect/reconnect and suspend/resume | Native/live-service and Termius interaction comparison remain pending. Verify clear live/offline labeling and no terminal input while editing connection/auth fields. Unknown host needs approval before password; a changed in-memory pin has no low-friction accept. Test exact-once input and terminal replies, coalesced remote resize, bounded output under load, refusal notice without automatic command replay, cleared passwords/prompts after cancel/suspend and no stale-session output after replacement. Verify the terminal header holds horizontally scrolling session chips between Back and More (no title/subtitle or status row), each with a green/amber/red connection dot and a ring around the dot when a background tab has new output that clears on switching to it, the active chip scrolled into view, `All N` and `+` pinned, Files and the status text under More, a distinct header divider and inset terminal; for Dev Tunnels verify the chip shows the friendly profile name, never the raw tunnel ID; confirm the full-width recovery banner appears only when disconnected or taken over. Long-press a background chip: the Close confirmation appears without switching tabs, Cancel keeps it and Close session ends only that tab. In Sessions, swipe a row left, confirm vertical scrolling still works, tap the row to hide Close, then swipe again and tap Close. Headless regressions cover output/replies while Files/README is selected and one event budget across layout retries; a native-handle regression covers immediate cancellation and sensitive-state clearing without a UI frame, including after fixture reset. Verify these on actual suspension callbacks and under native load. Plain SSH Connect after suspension is a fresh shell, not a restoration promise. Dev Tunnels retain active/parked attachments and use an 8-second foreground host check before enabling input; Face ID/privacy must independently conceal content and block input until unlocked. Physical iPhone/iPad lock/unlock, enrolled Face ID, app-switcher snapshots, disabled recovery, unavailable host with live relay, expired authentication, changed identity, shell exit and takeover checks remain unperformed for #496; host tests do not establish native behavior. Paste/native selection handles remain #425 follow-up. Portable regressions and feature compilation/linking do not establish SSH/device usability. |
-| MOB-11 | iOS/Android `host-clients`; controlled ordinary Files-enabled and Files-off hosts | From authenticated host inventory, open Files without creating/attaching a shell, with shell creation both ON and OFF. Confirm rooted browse/stat and bounded Markdown preview. With a new server, show its full physical root label and disable Up there while actual request paths remain virtual; an older server shows Shared folder. Unsupported entries must say Unavailable with a distinct neutral icon and no regular-file action; do not infer a symlink or follow it. A read-only grant disables Upload and remote writes; writable flows are covered under MOB-12. Download one owned public regular file into app Documents and observe byte progress; repeat with an existing destination, mid-transfer cancellation, account removal, lock and suspension. Confirm no corrupt final file, no deletion of replacement parents/partials, explicit truthful cleanup uncertainty, other terminal actors unchanged, and explicit fresh Reconnect without transfer replay. Missing/unsupported Files authority must remain separate from terminal availability. Restore owned preferences/data and close normally. Source tests cover the adapter, actual partial writes, account/lock fences and retained-identity adversarial cases; ordinary Android components are accepted below, while the remaining native/lifecycle checks stay pending; upload/mkdir is tracked under MOB-12. |
+| MOB-11 | iOS/Android `host-clients`; controlled ordinary Files-enabled and Files-off hosts | From authenticated host inventory, open Files without creating/attaching a shell, with shell creation both ON and OFF. Confirm rooted browse/stat and bounded Markdown preview. With a new server, show its full physical root label and disable Up there while actual request paths remain virtual; an older server shows Shared folder. Unsupported entries must say Unavailable with a distinct neutral icon and no regular-file action; do not infer a symlink or follow it. A read-only grant disables Upload and remote writes; writable flows are covered under MOB-12. Download one owned public regular file into app Documents and observe byte progress; repeat with an existing destination, mid-transfer cancellation, account removal, lock and suspension. Confirm no corrupt final file, no deletion of replacement parents/partials, explicit truthful cleanup uncertainty, other terminal actors unchanged, and explicit fresh Reconnect without transfer replay. Missing/unsupported Files authority must remain separate from terminal availability. Restore owned preferences/data and close normally. Source tests cover the adapter, actual partial writes, account/lock fences and retained-identity adversarial cases; ordinary Android components are accepted below. Native iOS/Android allowlist navigation, independent Start and same-host recovery remain pending with the other lifecycle checks. MOB-12 tracks upload/mkdir. |
 | MOB-12 | iOS/Android `host-clients`; controlled writable/read-only Files hosts and owned Documents files | Confirm Upload and New remote folder are disabled for a read-only grant. On a writable host, upload one regular file with live byte progress; exercise Skip, Keep Both and a fresh reviewed Replace while independently checking originals/finals. Change a queued source name/size or retire its account and require refusal without unadmitted bytes. Cancel active work and retain truthful uncertainty/cleanup status. At 360/375-point widths, focus Folder name with the software keyboard visible and verify the full typed name plus Create/Cancel remain above it; Cancel must keep the directory unchanged. Create Unicode/spaced local and remote folders, reject separators/oversize names and handle existing names without replacement. Reconnect must use fresh authority and an empty queue; source files, other sessions and configured grants remain preserved. Ordinary Android components are accepted below; the remaining native scenarios stay pending. Framed queue and source/UI tests remain implementation evidence. Saved Files profiles and mobile reviewed Delete are covered under MOB-13; a durable mobile recovery ledger remains outside this tranche. |
-| MOB-13 | iOS/Android `host-clients`; controlled Files host with separate Delete ON/OFF, original account and owned files/empty folders | Verify the narrow Files selector is fully visible and the header uses the chosen host or typed name. At 360/375-point widths and phone height, Save/Edit is in More, each pane has a 44-point New folder icon, Upload/Download share one row and several complete file rows remain visible within normal insets. Existing profile and keyboard-safe forms must remain reachable on shorter screens. Unknown selected-file sizes must not claim zero bytes. Save a Files destination, restart and open it with fresh authority; edit/remove the shortcut without a shell action. Sign out and require inert original-account guidance; restore the same account and reject changed host/key/installation/principal. Confirm old clients refuse the version-2 store without rewriting it. Remote Delete OFF offers no remote deletion action; Delete ON reviews up to eight owned remote files/empty folders, Cancel then independently verify preservation, and separately Confirm. Independently exercise Local Delete on This iPhone/This device with remote write/Delete OFF: review file and empty folder, Cancel then fresh Confirm; failed refresh, stale side/selection/location/account, child insertion, native Save overlap and unsafe capture restoration must refuse honestly without replay or unrelated loss. Before review, replace a selected file with an empty folder and require its current kind in confirmation; changes after review must refuse. Recovery locations must disappear after later authority retirement while counts remain. Local root says Documents and folder labels mask controls without changing real paths. New Local Delete native qualification remains pending. Change selection/location or retire the account while reviewing and require no stale mutation. Suppress a mutation result and distinguish confirmed, unknown and untouched entries with no replay; preserve the result after connection failure. Keep unrelated actors/grants/data, use normal cleanup. Ordinary Android foreground components are accepted below; the pinned private-SDK iOS browse/default-profile/upload/preview/regular-file remote Delete components are recorded in [the scoped iOS record](../validation/dev-tunnels/mobile-files-ios-native-components.json). Full iOS pairs, process-restart and the other native scenarios remain pending. Metadata, framed endpoint and actual-widget tests remain source evidence. |
+| MOB-13 | iOS/Android `host-clients`; controlled Files host with separate Delete ON/OFF, original account and owned files/empty folders | Verify the narrow Files selector is fully visible and the header uses the chosen host or typed name. At 360/375-point widths and phone height, Save/Edit is in More, each pane has a 44-point New folder icon, Upload/Download share one row and several complete file rows remain visible within normal insets. Existing profile and keyboard-safe forms must remain reachable on shorter screens. Unknown selected-file sizes must not claim zero bytes. Save a Files destination, restart and open it with fresh authority; edit/remove the shortcut without a shell action. Sign out and require inert original-account guidance; restore the same account and reject changed host/key/installation/principal. Confirm old clients refuse the version-2 store without rewriting it. Remote Delete OFF offers no remote deletion action; Delete ON reviews up to eight owned remote files/empty folders, Cancel then independently verify preservation, and separately Confirm. Local Delete independence from remote write/Delete OFF is classified as automated: the actual shared widget, real worker and independent Documents owner cover the OFF flags with no remote mutation RPC. The scoped iOS native integration below uses Write/Delete ON, not native OFF qualification; Android integration remains pending. Native failed refresh, stale side/selection/location/account, child insertion, Save overlap and unsafe capture restoration must still refuse honestly without replay or unrelated loss. Before review, replace a selected file with an empty folder and require its current kind in confirmation; changes after review must refuse. Recovery locations must disappear after later authority retirement while counts remain. Local root says Documents and folder labels mask controls without changing real paths. Scoped iOS Local Delete file/empty-folder Cancel and fresh Confirm are accepted in [the attributed Local Delete record](../validation/dev-tunnels/mobile-files-ios-local-delete-native.json); broader native cases remain pending. Change selection/location or retire the account while reviewing and require no stale mutation. Suppress a mutation result and distinguish confirmed, unknown and untouched entries with no replay; preserve the result after connection failure. Keep unrelated actors/grants/data, use normal cleanup. Ordinary Android foreground components are accepted below; the pinned private-SDK iOS browse/default-profile/upload/preview/regular-file remote Delete components are recorded in [the scoped iOS record](../validation/dev-tunnels/mobile-files-ios-native-components.json). Full iOS pairs, process-restart and the other native scenarios remain pending. Metadata, framed endpoint and actual-widget tests remain source evidence. |
 
 MOB-11/12/13: [Pinned Android ordinary Files
 components](../validation/dev-tunnels/mobile-files-android-native-components.json)
@@ -7713,6 +7713,24 @@ The earlier Mac self-host Busy refusal remains unexplained under #922. A tempora
 375×378 ordinary-wheel UI fixture passed once and was removed; it is diagnostic
 evidence, not a retained automated regression.
 
+### Scoped iOS Local Delete integration
+
+MOB-13: a private arm64 Simulator `host-clients` artifact at `e5b582ed` passed
+Local Delete review, Cancel and fresh Confirm for a newly owned 31-byte file and
+empty folder against Linux HOST24/epoch95 with Write/Delete ON. Independent
+checks proved exact preservation after Cancel and exact absence after Confirm;
+no external cleanup removed either entry. Original Documents files, metadata
+and retained preview copies were preserved. Remote OFF-grant independence is
+separate automated composition evidence. It does not qualify native read-only
+Files opening, which remains MOB-11, or Android Local Delete.
+
+The [component record](../validation/dev-tunnels/mobile-files-ios-local-delete-native.json)
+retains the optional remote-name context refusal before tap/type and the final
+Windows SSH-observer timeout. Both suspended VMs resumed, all Simulators shut
+down, and macOS/Linux preservation checks passed; final Windows process
+preservation remains unverified. No remote mkdir, keyboard-focus fix, complete
+pair, current-release or broader lifecycle qualification is implied.
+
 ### Allowed location and Start in (source increment; native pending)
 
 DT-05 / HOST-04: while Disabled, review one Allowed location and optional Start
@@ -7737,3 +7755,69 @@ supported subordinate local mounts under existing permissions/security gates;
 Windows unsupported mounted-folder/reparse cases remain refused. No all-volume,
 link-following or complete mobile-pair acceptance is implied. These new native
 cases remain unrun; existing attributed Files components retain their own limits.
+
+
+### Explicit Allowed locations and independent Start in (native pending)
+
+DT-05 / HOST-04 / HOST-06: review one to eight absolute allowed locations while
+Disabled, retaining the existing global Read only/Read and write and separate
+Delete choices. Review Start in independently, including `~` for the registered
+host OS account. It must resolve within the reviewed union; reject malformed,
+outside or ambiguous values before effects. An omitted legacy start retains the
+old behavior. With several locations and blank Start, verify the review names
+the selected root or the chooser, depending on the selection. Enter a child
+inside a nested location and verify the review shows both the initial path
+and the Up boundary. A Start-only edit of a legacy grant must retain the
+singleton read rules. The new allowlist review explains ordinary-data reads. Verify
+normal reconfiguration, stopped update and native registration preserve the
+whole policy, including Start in. Old helpers/clients must refuse the explicitly
+new scope before setup effects or metadata disclosure. Source serialization
+bounds, including the unchanged pending-journal limit, do not qualify these
+native registration/update cases.
+
+DT-07 / MOB-11 / DTFILES-01/02/03: use controlled Desktop and mobile clients to
+select each available location, start at the advertised child and display full
+physical paths. Up stops at the selected root; the existing Remote menu returns
+to Allowed locations. No opaque selector appears in breadcrumbs, delete review,
+preview/editor locations or transfer labels. Offline locations remain unavailable.
+At 360/375 points preserve normal insets, 44-point controls and several file rows.
+Switch locations while work is queued: jobs, reviews and handles retain their
+original root and destination; selection never retargets or replays work.
+Revoke the account/grant and require inert controls and hidden retired metadata.
+
+Qualify ordinary contained reads through supported Unix subordinate local mounts
+and shared data directories using owned fixtures, including OS denial, unsafe
+object types, raced replacement and retained-object checks. An explicit root
+substitution must refuse, including a same-inode Linux bind cover with a different
+mount ID. Exercise Linux regular-file reopening with a procfs mount from another
+PID namespace using an owned fixture. Verify macOS local APFS/nodev with ownership
+ignored can serve supported reads and refuses Mkdir, upload staging and Delete
+review. Verify Linux refuses mutations through an unsupported subordinate
+filesystem and supports the permitted control. On Windows, test local NTFS
+identity and root replacement and verify ReFS and reparse/mounted-folder routes
+are refused. Missing locations or Start in must leave unrelated HOST/shell
+service available. Move or replace a parent after staging upload or reviewing
+Delete and verify further writes/publication/deletion refuse with recovery
+and originals preserved. Mutation controls and failures must reflect current
+eligibility. Existing grants and OS
+permissions must not be broadened for a test. The user's `/` plus `~` example is
+not consent to change the production HOME grant. All new allowlist native cases
+remain unrun; isolated macOS API prerequisites are not whole-product acceptance.
+The new macOS scope currently requires the qualified 27.2.1 containment
+boundary. On older macOS versions, verify explicit refusal before setup effects
+and preserve legacy singleton operation; do not substitute a weaker lookup to
+make a native test pass. The dedicated Mac VM reports 27.2.1; the last observed
+main CI Mac runner reports 26.7.2, so its unsupported-platform result is separate
+from positive native qualification.
+
+
+For DTFILES-05 / DT-07 and MOB-11, native Desktop/iOS/Android checks remain pending:
+configure a valid Start in, then remove or rename that owned directory. Default
+Files opening must refuse. Also exercise removal after Start metadata succeeds
+but before the first listing. **Choose location…** must authenticate the original
+account, stable host, key, installation and principal before showing current
+locations. The first folder request follows explicit selection of an available
+root. With a missing or changed identity, require normal host selection. Legacy
+hosts, malformed metadata and account/guard failures refuse clearly. Preserve the
+original directory and all unrelated data. Portable framed and rendered fixtures
+do not qualify this native recovery case.

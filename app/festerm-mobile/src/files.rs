@@ -93,7 +93,60 @@ impl TransferRow {
 #[cfg(feature = "host-clients")]
 pub(crate) mod deletion;
 
+/// Presentation metadata only. The remote worker retains authority and every
+/// queued operation keeps its original complete virtual path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteLocation {
+    pub path: String,
+    pub label: String,
+    pub available: bool,
+    pub mutations_available: bool,
+}
+impl RemoteLocation {
+    pub(crate) fn contains(&self, path: &str) -> bool {
+        path.strip_prefix(&self.path)
+            .is_some_and(|tail| tail.is_empty() || tail.starts_with('/'))
+    }
+    pub(crate) fn display_path(&self, path: &str) -> String {
+        let tail = path.strip_prefix(&self.path).unwrap_or("");
+        if tail.is_empty() {
+            return self.label.clone();
+        }
+        let separator = if self.label.contains('\\') { "\\" } else { "/" };
+        format!(
+            "{}{}{}",
+            self.label.trim_end_matches(['/', '\\']),
+            separator,
+            festerm_sftp::path::display_name(tail.trim_start_matches('/')).replace('/', separator)
+        )
+    }
+}
+
 pub(crate) trait Transfers: Send + Sync {
+    fn remote_locations(&self) -> Option<Vec<RemoteLocation>> {
+        None
+    }
+    fn remote_path_label(&self, path: &str) -> String {
+        if let Some(locations) = self.remote_locations() {
+            return locations
+                .iter()
+                .find(|location| location.contains(path))
+                .map_or_else(
+                    || "Remote folder".into(),
+                    |location| location.display_path(path),
+                );
+        }
+        let root = self.remote_root_label();
+        if path == "/" {
+            root
+        } else {
+            format!(
+                "{}/{}",
+                root.trim_end_matches('/'),
+                festerm_sftp::path::display_name(path.trim_start_matches('/'))
+            )
+        }
+    }
     fn remote_root_label(&self) -> String {
         "/".into()
     }
@@ -472,12 +525,21 @@ impl Pane {
     /// `(label, path)` for each breadcrumb, root first.
     pub(crate) fn crumbs(&self, root_label: &str) -> Vec<(String, String)> {
         let remote = self.fs.kind() == festerm_sftp::PaneKind::Remote;
-        let mut crumbs = vec![(
-            root_label.to_owned(),
-            if remote { "/" } else { "" }.to_owned(),
-        )];
-        let mut path = String::new();
-        for part in self.path.split('/').filter(|part| !part.is_empty()) {
+        self.crumbs_from(root_label, if remote { "/" } else { "" })
+    }
+
+    pub(crate) fn crumbs_from(&self, root_label: &str, root: &str) -> Vec<(String, String)> {
+        let remote = self.fs.kind() == festerm_sftp::PaneKind::Remote;
+        let mut crumbs = vec![(root_label.to_owned(), root.to_owned())];
+        let relative = if root.is_empty() || root == "/" {
+            self.path.trim_start_matches('/')
+        } else if self.path == root {
+            ""
+        } else {
+            self.path.strip_prefix(&format!("{root}/")).unwrap_or("")
+        };
+        let mut path = root.trim_end_matches('/').to_owned();
+        for part in relative.split('/').filter(|part| !part.is_empty()) {
             if remote || !path.is_empty() {
                 path.push('/');
             }
@@ -516,6 +578,8 @@ pub(crate) struct Ready {
     pub local_root: PathBuf,
     pub transfers: Arc<dyn Transfers>,
     pub start_dir: Option<String>,
+    /// Already admitted first listing for a namespaced HOST start.
+    pub initial_remote_listing: Option<Listing>,
 }
 
 pub(crate) enum LinkEvent {
@@ -588,7 +652,32 @@ pub(crate) struct FilesSession {
 }
 
 impl FilesSession {
+    pub(crate) fn remote_locations(&self) -> Option<Vec<RemoteLocation>> {
+        self.transfers
+            .as_ref()
+            .and_then(|transfers| transfers.remote_locations())
+    }
+    pub(crate) fn remote_location(&self) -> Option<RemoteLocation> {
+        let path = &self.remote.as_ref()?.path;
+        self.remote_locations()?
+            .into_iter()
+            .find(|location| location.contains(path))
+    }
+    pub(crate) fn remote_mutations_available(&self) -> bool {
+        self.remote_locations().is_none()
+            || self
+                .remote_location()
+                .is_some_and(|location| location.available && location.mutations_available)
+    }
+    pub(crate) fn can_upload(&self) -> bool {
+        self.remote_write && self.remote_mutations_available()
+    }
     pub(crate) fn remote_root_label(&self) -> String {
+        if self.remote_locations().is_some() {
+            return self
+                .remote_location()
+                .map_or_else(|| "Allowed locations".into(), |location| location.label);
+        }
         self.transfers
             .as_ref()
             .map_or_else(|| "/".into(), |transfers| transfers.remote_root_label())
@@ -652,7 +741,15 @@ impl FilesSession {
             .clone()
             .unwrap_or_else(|| ready.remote.home());
         let mut remote = Pane::new(ready.remote, remote_start.clone());
-        remote.load(remote_start, ctx);
+        if let Some(listing) = ready.initial_remote_listing {
+            if listing.path != remote_start {
+                self.link = Link::Failed("Files starting folder changed".into());
+                return;
+            }
+            remote.listing = Some(listing);
+        } else {
+            remote.load(remote_start, ctx);
+        }
         let local_start = ready.local.home();
         let mut local = Pane::new(ready.local, local_start.clone());
         local.load(local_start, ctx);
@@ -755,7 +852,7 @@ impl FilesSession {
     }
 
     pub(crate) fn new_folder(&mut self, remote: bool) {
-        if !self.is_ready() || (remote && !self.remote_write) {
+        if !self.is_ready() || (remote && !self.can_upload()) {
             return;
         }
         let pane = if remote {
@@ -778,10 +875,11 @@ impl FilesSession {
             self.folder = None;
             return;
         }
+        let remote_write = self.can_upload();
         let Some(draft) = &mut self.folder else {
             return;
         };
-        if draft.busy() || (draft.remote && !self.remote_write) {
+        if draft.busy() || (draft.remote && !remote_write) {
             return;
         }
         if draft.name.len() > 255 || festerm_sftp::path::validate_name(&draft.name).is_err() {
@@ -972,7 +1070,7 @@ impl FilesSession {
                     self.opening = Some((
                         id,
                         entry.name.clone(),
-                        path,
+                        transfers.remote_path_label(&path),
                         format!("{directory}/{}", entry.name),
                     ));
                     self.notice = Some(format!("Opening {}…", entry.display_name));
@@ -1000,7 +1098,7 @@ impl FilesSession {
 
     /// Queues the selected files of one pane toward the other.
     pub(crate) fn start_transfer(&mut self, upload: bool) {
-        if upload && !self.remote_write {
+        if upload && !self.can_upload() {
             self.notice = Some("Upload is unavailable in this read-only Files view".into());
             return;
         }
@@ -1218,6 +1316,41 @@ mod tests {
             local_root: PathBuf::from("/nonexistent-festerm-files-test"),
             transfers,
             start_dir: None,
+            initial_remote_listing: None,
+        }
+    }
+
+    #[test]
+    fn files_admitted_initial_listing_is_used_once_and_mismatched_path_refuses_ready() {
+        let ctx = egui::Context::default();
+        for matching in [true, false] {
+            let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+            data.start_dir = Some("/already-admitted".into());
+            data.initial_remote_listing = Some(festerm_sftp::finish_listing(
+                if matching {
+                    "/already-admitted"
+                } else {
+                    "/different"
+                }
+                .into(),
+                Vec::new(),
+                false,
+                &ListOptions::default(),
+            ));
+            let mut session = FilesSession::ready("Files".into(), "Host".into(), data, &ctx);
+            assert_eq!(session.is_ready(), matching);
+            if matching {
+                let remote = session.remote.as_ref().unwrap();
+                assert!(
+                    !remote.loading(),
+                    "no second directory request after admission"
+                );
+                assert_eq!(remote.listing.as_ref().unwrap().path, "/already-admitted");
+            } else {
+                assert!(session.remote.is_none());
+                assert!(session.transfers.is_none());
+            }
+            session.cleanup();
         }
     }
 
@@ -1240,6 +1373,169 @@ mod tests {
         let remote = session.remote.as_ref().unwrap();
         assert_eq!(remote.path, "/");
         assert!(!remote.can_go_up());
+    }
+
+    #[test]
+    fn files_allowed_locations_choose_without_exposing_selectors_or_enabling_unavailable_writes() {
+        use egui_kittest::{
+            kittest::{By, Queryable},
+            Harness,
+        };
+        for width in [360.0, 375.0] {
+            let ctx = egui::Context::default();
+            let mut transfers = FixtureTransfers::new(Vec::new());
+            let selector = "/11111111111111111111111111111111";
+            transfers.locations = Some(vec![
+                RemoteLocation {
+                    path: selector.into(),
+                    label: "/Users/example".into(),
+                    available: true,
+                    mutations_available: false,
+                },
+                RemoteLocation {
+                    path: "/22222222222222222222222222222222".into(),
+                    label: "/Volumes/offline".into(),
+                    available: false,
+                    mutations_available: false,
+                },
+            ]);
+            let mut data = ready(Arc::new(transfers));
+            data.start_dir = Some("/".into());
+            let mut session = FilesSession::ready("Files".into(), "Host".into(), data, &ctx);
+            settle(&mut session, &ctx);
+            assert!(!session.can_upload());
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(width, 853.0))
+                .build_ui_state(
+                    |ui, session: &mut FilesSession| {
+                        crate::files_ui::show(ui, session);
+                    },
+                    session,
+                );
+            harness.run();
+            harness.get(
+                By::new()
+                    .label("/Volumes/offline — Unavailable")
+                    .predicate(|node| node.is_disabled()),
+            );
+            harness.get_by_label("/Users/example").click();
+            // Dispatch the actual click, then await the existing bounded
+            // listing worker before asking the UI harness to become idle.
+            harness.step();
+            settle(harness.state_mut(), &ctx);
+            assert!(!harness.state().remote.as_ref().unwrap().loading());
+            harness.run();
+            assert_eq!(harness.state().remote.as_ref().unwrap().path, selector);
+            assert_eq!(harness.state().remote_root_label(), "/Users/example");
+            assert!(!harness.state().can_upload());
+            harness.get(
+                By::new()
+                    .label("New remote folder")
+                    .predicate(|node| node.is_disabled()),
+            );
+            harness.get(
+                By::new()
+                    .label("New local folder")
+                    .predicate(|node| !node.is_disabled()),
+            );
+            assert_eq!(
+                harness
+                    .get_all(
+                        By::new()
+                            .label("Parent folder")
+                            .predicate(|node| node.is_disabled())
+                    )
+                    .count(),
+                2
+            );
+            assert!(harness.query_by_label(selector).is_none());
+            let pane = harness.state_mut().remote.as_mut().unwrap();
+            pane.path = format!("{selector}/projects");
+            assert_eq!(
+                pane.crumbs_from("/Users/example", selector),
+                vec![
+                    ("/Users/example".into(), selector.into()),
+                    ("projects".into(), format!("{selector}/projects")),
+                ]
+            );
+            let mut retired = FixtureTransfers::new(Vec::new());
+            retired.locations = Some(Vec::new());
+            harness.state_mut().transfers = Some(Arc::new(retired));
+            harness.run();
+            harness.get_by_label("Allowed locations");
+            assert!(harness
+                .query_by_label(selector.trim_start_matches('/'))
+                .is_none());
+            assert!(!harness.state().can_upload());
+        }
+    }
+
+    #[test]
+    fn files_location_display_paths_and_namespace_matching_do_not_mix_roots() {
+        for (label, expected) in [
+            ("/", "/projects"),
+            ("/Users/example", "/Users/example/projects"),
+            ("C:\\Users\\example", "C:\\Users\\example\\projects"),
+        ] {
+            let location = RemoteLocation {
+                path: "/11111111111111111111111111111111".into(),
+                label: label.into(),
+                available: true,
+                mutations_available: true,
+            };
+            assert!(location.contains(&location.path));
+            assert!(location.contains(&format!("{}/projects", location.path)));
+            assert!(!location.contains(&format!("{}0/projects", location.path)));
+            assert_eq!(location.display_path(&location.path), label);
+            assert_eq!(
+                location.display_path(&format!("{}/projects", location.path)),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn files_failed_view_offers_explicit_location_choice_only_for_host_context() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        for host_context in [false, true] {
+            let mut session = FilesSession::connecting(
+                "Files".into(),
+                "Dev Tunnels Files".into(),
+                Box::new(NoConnector),
+            );
+            session.link = Link::Failed("Starting folder unavailable".into());
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(375.0, 853.0))
+                .build_ui_state(
+                    move |ui, state: &mut (FilesSession, bool, bool)| {
+                        let outcome = crate::files_ui::show_with_location_choice(
+                            ui,
+                            &mut state.0,
+                            host_context,
+                        );
+                        state.1 |= outcome.choose_location;
+                        state.2 |= outcome.retry;
+                    },
+                    (session, false, false),
+                );
+            harness.run();
+            if host_context {
+                harness.get_by_label("Choose location").click();
+                harness.run();
+                assert!(harness.state().1);
+                assert!(
+                    !harness.state().2,
+                    "choice is distinct from retrying the default start"
+                );
+            } else {
+                assert!(
+                    harness.query_by_label("Choose location").is_none(),
+                    "a protocol caption cannot authorize HOST routing"
+                );
+            }
+            assert!(matches!(harness.state().0.link, Link::Failed(_)));
+            assert!(harness.state().0.remote.is_none());
+        }
     }
 
     #[test]

@@ -238,13 +238,78 @@ pub(crate) fn show(
             ) { draft.files.enabled = !draft.files.enabled; }
             if draft.files.enabled {
                 ui.add_enabled_ui(files_editable, |ui| {
-                    ui.label("Allowed location");
-                    let mut root = draft.files.root.to_string_lossy().into_owned();
-                    if ui.add(egui::TextEdit::singleline(&mut root).char_limit(4096)
-                        .hint_text("Absolute folder path")).changed() { draft.files.root = root.into(); }
-                    ui.label("Start in (optional)");
-                    ui.add(egui::TextEdit::singleline(&mut draft.files.start_in).char_limit(4096)
-                        .hint_text("Allowed location, absolute path, or ~"));
+                    ui.label("Allowed locations");
+                    let mut roots = draft.files.allowed_locations().to_vec();
+                    let mut roots_changed = false;
+                    let mut remove = None;
+                    let can_remove = roots.len() > 1;
+                    for (index, root) in roots.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            let mut text = root.to_string_lossy().into_owned();
+                            if ui.add(egui::TextEdit::singleline(&mut text)
+                                .char_limit(4096)
+                                .hint_text("Absolute folder path")).changed()
+                            {
+                                *root = text.into();
+                                roots_changed = true;
+                            }
+                            if ui.add_enabled(can_remove, egui::Button::new("Remove")).clicked() {
+                                remove = Some(index);
+                            }
+                        });
+                    }
+                    if let Some(index) = remove {
+                        roots.remove(index);
+                        roots_changed = true;
+                        if draft.files.start_root == Some(index) {
+                            draft.files.start_root = None;
+                        } else if let Some(start) = draft.files.start_root.as_mut() {
+                            if *start > index {
+                                *start -= 1;
+                            }
+                        }
+                    }
+                    if ui.add_enabled(
+                        roots.len() < festerm_tunnel_bridge::file_protocol::LOCATION_LIMIT,
+                        egui::Button::new("Add location"),
+                    ).clicked() {
+                        roots.push(PathBuf::new());
+                        roots_changed = true;
+                    }
+                    let start_label = ui.label("Start in (optional)");
+                    ui.add(egui::TextEdit::singleline(&mut draft.files.start_in)
+                        .char_limit(4096)
+                        .hint_text("Absolute path or ~"))
+                        .labelled_by(start_label.id);
+                    if roots.len() > 1 {
+                        let default = if draft.files.start_in.is_empty() {
+                            "Choose a location when opening"
+                        } else {
+                            "Use the matching allowed location"
+                        };
+                        let selected = draft.files.start_root
+                            .and_then(|index| roots.get(index))
+                            .map_or_else(|| default.into(), |root| {
+                                festerm_sftp::path::display_name(&root.to_string_lossy())
+                            });
+                        egui::ComboBox::from_id_salt("host-files-start-location")
+                            .selected_text(selected)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut draft.files.start_root, None, default);
+                                for (index, root) in roots.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut draft.files.start_root,
+                                        Some(index),
+                                        festerm_sftp::path::display_name(&root.to_string_lossy()),
+                                    );
+                                }
+                            });
+                    }
+                    if roots_changed {
+                        // Editing Start alone preserves existing singleton read rules.
+                        draft.files.root = roots[0].clone();
+                        draft.files.locations = Some(roots);
+                    }
                     ui.radio_value(&mut draft.files.write, false, "Read only — browse and download");
                     ui.radio_value(&mut draft.files.write, true, "Read and write — upload and create folders");
                     if settings_toggle_row_enabled(ui,
@@ -256,8 +321,7 @@ pub(crate) fn show(
                         settings_note(ui, "Turn deleting off before choosing read-only access.");
                     }
                 });
-                settings_note(ui, "Start in changes only the initial folder. Use ~ for this computer’s account home folder; leave blank to start at the allowed location.");
-                settings_note(ui, "File transfers stay inside this folder and its subfolders. Shared shells still have your user's file and command permissions.");
+                settings_note(ui, "Start in changes where Files opens. Use an absolute path inside an allowed location or ~ for this computer’s account home folder.");
                 if draft.ordinary_access != OrdinaryAccess::ProviderOwner {
                     settings_note(ui, "Folder access requires account-based connections. Turn folder access off or enable account-based connections explicitly.");
                 } else if !draft.files.root.is_absolute() {
@@ -445,15 +509,21 @@ pub(crate) fn show(
                             "Terminate remote sessions: On — confirm each session"
                         } else { "Terminate remote sessions: Off" });
                         if draft.files.enabled {
-                            ui.label(format!("Allowed location: {}", draft.files.root.display()));
-                            ui.label(format!("Start in: {}", if draft.files.start_in.is_empty() { "Allowed location" } else { &draft.files.start_in }));
+                            for root in draft.files.allowed_locations() {
+                                ui.label(format!("Allowed location: {}", festerm_sftp::path::display_name(&root.to_string_lossy())));
+                            }
+                            show_files_start_review(ui, &draft.files);
                             ui.label(if draft.files.write {
                                 "File permissions: Read and write — upload and create folders"
                             } else { "File permissions: Read only — browse and download" });
                             ui.label(if draft.files.delete {
                                 "Delete files and empty folders: On — permanent, reviewed individually"
                             } else { "Delete files and empty folders: Off" });
-                            settings_note(ui, "Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
+                            if draft.files.locations.is_some() {
+                                settings_note(ui, "Clients authorized through this host’s GitHub account can browse and download supported files this computer’s account can read inside the allowed locations. Write and Delete have stricter folder checks. Shared shells retain this computer’s account permissions.");
+                            } else {
+                                settings_note(ui, "Clients authorized through this host's GitHub account can access this folder. The folder restriction applies to file transfers, not shared shells.");
+                            }
                         } else { ui.label("Remote file access: Off"); }
                         ui.label(if draft.startup_at_sign_in {
                             "Start automatically at sign-in: On"
@@ -574,6 +644,36 @@ pub(crate) fn show(
         });
     }
     action
+}
+
+fn show_files_start_review(ui: &mut egui::Ui, files: &FileAccessDraft) {
+    if !files.start_in.is_empty() {
+        ui.label(format!(
+            "Start in: {}",
+            festerm_sftp::path::display_name(&files.start_in)
+        ));
+    }
+    match files.start_location_index() {
+        Ok(Some(index)) => {
+            let root = festerm_sftp::path::display_name(
+                &files.allowed_locations()[index].to_string_lossy(),
+            );
+            if files.start_in.is_empty() {
+                ui.label(format!("Start in: {root}"));
+            }
+            ui.label(format!("Up stops at: {root}"));
+        }
+        Ok(None) => {
+            ui.label("Start in: Choose a location when opening");
+            ui.label("Up stops at the location you choose.");
+        }
+        Err(_) if files.uses_account_home() => {
+            ui.label("Up stops at the allowed location containing the resolved home path.");
+        }
+        Err(_) => {
+            ui.label("Choose the allowed location for this starting path.");
+        }
+    }
 }
 
 pub(crate) fn show_session_sharing(

@@ -3132,6 +3132,12 @@ pub enum AppCommand {
     OpenDevTunnelFiles {
         target: crate::sftp_file_manager::HostFilesLaunchTarget,
     },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    ReopenDevTunnelFiles {
+        target: crate::sftp_file_manager::HostFilesLaunchTarget,
+        pin: crate::app::host_files::FilesRecoveryPin,
+        navigation: festerm_tunnel_bridge::file_client::NavigationPreference,
+    },
     StartConfiguredDevTunnelFilesProfile {
         profile_id: String,
     },
@@ -5880,7 +5886,8 @@ impl AppState {
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
-            AppCommand::ImportPublicDevTunnelProfile { .. } => {}
+            AppCommand::ReopenDevTunnelFiles { .. }
+            | AppCommand::ImportPublicDevTunnelProfile { .. } => {}
             AppCommand::OpenTextEditor { path } => {
                 if let Some(failure) = self.open_text_editor(&path) {
                     self.open_refusal = Some((path, failure));
@@ -6912,6 +6919,7 @@ impl AppState {
                 self.open_terminal_path_request(tab_id, request, context);
             } else {
                 self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                    _cleanup_diagnostic: None,
                     title: None, acknowledgement_path: None, name: "Remote file link".into(), path: target,
                     headline: "This remote file link cannot be opened".into(),
                     detail: "The URI must address an unambiguous supported path on this source's verified live filesystem capability. No local or OS fallback is permitted.".into(),
@@ -6929,6 +6937,7 @@ impl AppState {
             .and_then(|_| crate::terminal_paths::explicit_local_file_path(&target));
         let Some(path) = path else {
             self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                _cleanup_diagnostic: None,
                 title: None,
                 acknowledgement_path: None,
                 name: "File link".to_owned(),
@@ -6988,6 +6997,7 @@ impl AppState {
                     || !matches!(&origin, Some(TerminalFilesystemOrigin::Remote(origin)) if request.matches_origin(origin))
                 {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        _cleanup_diagnostic: None,
                         title: None,
                         acknowledgement_path: None,
                         name: Path::new(&request.remote_path)
@@ -7002,6 +7012,7 @@ impl AppState {
                 }
                 let Some(requestor) = session.live_remote_file_requestor() else {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        _cleanup_diagnostic: None,
                         title: None,
                         acknowledgement_path: None,
                         name: Path::new(&request.remote_path)
@@ -7017,13 +7028,14 @@ impl AppState {
                 let request = match bind_live_remote_request(requestor, request) {
                     Ok(request) => request,
                     Err(notice) => {
-                        self.queue_open_refusal_notice(notice);
+                        self.queue_open_refusal_notice(*notice);
                         return;
                     }
                 };
                 let display_path = request.request.display_path.clone();
                 if self.pending_terminal_path_opens.len() >= 4 {
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        _cleanup_diagnostic: None,
                         title: None,
                         acknowledgement_path: None,
                         name: "remote path".to_owned(),
@@ -7055,6 +7067,7 @@ impl AppState {
                         }),
                     Err(error) => {
                         self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                            _cleanup_diagnostic: None,
                             title: None,
                             acknowledgement_path: None,
                             name: Path::new(&display_path)
@@ -7094,6 +7107,7 @@ impl AppState {
                         self.dispatch(*command, context);
                     } else {
                         self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                            _cleanup_diagnostic: None,
                             title: None, acknowledgement_path: None, name: "Remote snapshot".into(), path: "remote path".into(),
                             headline: "The source binding changed".into(),
                             detail: "The file result was discarded because its originating profile, verified endpoint, or live session generation no longer matches.".into(),
@@ -7116,6 +7130,7 @@ impl AppState {
                         let _ = handle.join();
                     }
                     self.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                        _cleanup_diagnostic: None,
                         title: None,
                         acknowledgement_path: None,
                         name: "remote path".to_owned(),
@@ -7177,6 +7192,7 @@ impl AppState {
                 .borrow_mut()
                 .take_recovery_notice()
                 .map(|(path, error)| crate::overlay_state::OpenRefusalNotice {
+                    _cleanup_diagnostic: None,
                     title: Some("Saving needs manual recovery".into()),
                     acknowledgement_path: Some(Box::new(path.clone())),
                     name: "Save recovery retained".to_owned(),
@@ -13633,6 +13649,7 @@ mod tests {
         let mut state = AppState::for_test();
         for index in 1..=3 {
             state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                _cleanup_diagnostic: None,
                 title: None,
                 acknowledgement_path: None,
                 name: format!("remote-{index}.md"),
@@ -13657,6 +13674,7 @@ mod tests {
             sender
                 .send(TerminalPathWorkerResult::OpenRefusal(
                     crate::overlay_state::OpenRefusalNotice {
+                        _cleanup_diagnostic: None,
                         title: None,
                         acknowledgement_path: None,
                         name: format!("remote-{index}.md"),
@@ -13691,6 +13709,7 @@ mod tests {
         let mut state = AppState::for_test();
         for index in 0..=MAX_PENDING_OPEN_REFUSAL_NOTICES {
             state.queue_open_refusal_notice(crate::overlay_state::OpenRefusalNotice {
+                _cleanup_diagnostic: None,
                 title: None,
                 acknowledgement_path: None,
                 name: format!("remote-{index}.md"),

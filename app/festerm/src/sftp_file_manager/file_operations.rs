@@ -1,5 +1,104 @@
 use super::*;
 
+/// One paint's presentation metadata, never a source of operation paths.
+pub(super) struct PathLabels {
+    rooted: bool,
+    namespaced: bool,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    source: Option<super::host_files::FilesSource>,
+}
+
+impl PathLabels {
+    pub(super) fn text(&self, text: &str) -> String {
+        if !self.rooted {
+            return text.to_owned();
+        }
+        let display = festerm_sftp::path::display_name(text);
+        if !self.namespaced {
+            return display;
+        }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let Some(source) = &self.source {
+            let mut display = display;
+            for location in source.locations.as_deref().unwrap_or_default() {
+                let virtual_root = location.virtual_root();
+                let root = source.display_root_for(&virtual_root);
+                display = display
+                    .replace(
+                        &format!("{virtual_root}/"),
+                        &format!("{}/", root.trim_end_matches(['/', '\\'])),
+                    )
+                    .replace(&virtual_root, &root);
+            }
+            return display;
+        }
+        // Preserve the raw diagnostic in state, while withdrawing its former
+        // namespace from the view. Do not imply a failed operation was undone.
+        "Details unavailable after disconnect. Completion or cleanup may be uncertain; review the host before retrying.".into()
+    }
+    pub(super) fn connection_failure(&self, text: &str, has_connected_once: bool) -> String {
+        if self.namespaced && !has_connected_once {
+            return "Files could not open the initial folder. Choose an allowed location or review the host.".into();
+        }
+        self.text(text)
+    }
+
+    pub(super) fn path(&self, path: &SftpPath) -> String {
+        if !self.rooted || matches!(path, SftpPath::Local(_)) {
+            return path.display();
+        }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let (Some(source), Some(path)) = (&self.source, remote_virtual_path(path)) {
+            let root = source.display_root_for(path);
+            let relative = source.visible_path(path);
+            if relative == "/" {
+                return root;
+            }
+            let separator = if root.contains('\\') { "\\" } else { "/" };
+            return format!(
+                "{}{}{}",
+                root.trim_end_matches(['/', '\\']),
+                separator,
+                relative.trim_start_matches('/').replace('/', separator)
+            );
+        }
+        // A retired HOST path can contain a former opaque location selector.
+        // Never reinterpret it as an ordinary SFTP path after losing metadata.
+        "Remote folder".into()
+    }
+}
+
+impl SftpFileManagerTab {
+    pub(super) fn file_operation_labels(&self) -> PathLabels {
+        let rooted = matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_));
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let namespaced = self.files_locations_scope
+            || self
+                .files_source
+                .as_ref()
+                .is_some_and(|source| source.locations.is_some());
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        let namespaced = false;
+        #[cfg(feature = "experimental-dev-tunnels")]
+        let source = (rooted
+            && matches!(self.connection_state, SftpConnectionState::Ready)
+            && self.file_operations.current_connection()
+            && !self.host_files_retired
+            && self
+                .host_files_cancel
+                .as_ref()
+                .is_none_or(|stop| !stop.is_cancelled()))
+        .then(|| self.files_source.clone())
+        .flatten();
+        PathLabels {
+            rooted,
+            namespaced,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            source,
+        }
+    }
+}
+
 #[cfg(feature = "experimental-dev-tunnels")]
 mod reviewed_delete;
 #[cfg(feature = "experimental-dev-tunnels")]
@@ -216,6 +315,7 @@ impl SftpFileManagerTab {
             return;
         };
         let current = self.file_review_current(&draft);
+        let labels = self.file_operation_labels();
         let deleting = matches!(draft.request.operation, Operation::Delete(_));
         let mut confirm = false;
         let mut cancel = false;
@@ -229,7 +329,7 @@ impl SftpFileManagerTab {
                         FileManagerLaunchTarget::HostFiles(target) => format!("Dev Tunnels Files · {}", target.locator),
                     }
                 } else { "This computer".to_owned() }));
-                ui.label(format!("Folder: {}", draft.request.directory.display()));
+                ui.label(format!("Folder: {}", labels.path(&draft.request.directory)));
                 match &mut draft.request.operation {
                     Operation::CreateDirectory(name) => {
                         let field = ui.add(TextEdit::singleline(name).hint_text("Directory name").char_limit(255));
@@ -247,7 +347,7 @@ impl SftpFileManagerTab {
                         ui.label(if rooted { "This permanently removes the exact reviewed files and empty directories. Links and non-empty directories are refused. There is no trash or undo." } else { "This permanently removes the listed files or links and empty directories. There is no trash or undo. Non-empty directories are refused." });
                         ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                             for item in items {
-                                ui.label(item.path.display());
+                                ui.label(labels.path(&item.path));
                                 if rooted { ui.label(format!("{} · {} · Modified {}", if item.file_type == SftpEntryType::Directory { "Folder" } else { "File" }, format_size(item.size), format_modified(item.modified_at))); }
                             }
                         });
@@ -509,6 +609,82 @@ pub(super) async fn report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn file_manager_location_labels_hide_namespace_and_retired_metadata() {
+        let selector = "11111111111111111111111111111111";
+        let path = SftpPath::remote(format!("/{selector}/folder/file.md"));
+        let original = path.clone();
+        for (root, expected) in [
+            ("/", "/folder/file.md"),
+            ("/Users/example", "/Users/example/folder/file.md"),
+            ("C:\\Users\\example", "C:\\Users\\example\\folder\\file.md"),
+            (
+                "/Users/مجلد\u{202e}example",
+                "/Users/مجلد�example/folder/file.md",
+            ),
+        ] {
+            let mut source = super::super::host_files::FilesSource::reviewed_delete_fixture(false);
+            source.locations = Some(vec![festerm_tunnel_bridge::file_protocol::FileLocation {
+                selector: selector.into(),
+                label: root.to_owned().try_into().unwrap(),
+                available: true,
+                mutations_available: true,
+            }]);
+            let labels = PathLabels {
+                rooted: true,
+                namespaced: true,
+                source: Some(source),
+            };
+            assert_eq!(labels.path(&path), expected);
+            assert_eq!(
+                labels.path(&SftpPath::remote(format!("/{selector}"))),
+                festerm_sftp::path::display_name(root)
+            );
+            assert_eq!(
+                labels.path(&SftpPath::remote(
+                    "/22222222222222222222222222222222/private.md"
+                )),
+                "Allowed locations"
+            );
+            let raw_error = format!(
+                "Read failed at /{selector}/folder/file.md; recovery /{selector}/.owned-part"
+            );
+            let visible_error = labels.text(&raw_error);
+            assert!(!visible_error.contains(selector));
+            assert!(visible_error.contains("recovery"));
+            assert!(
+                raw_error.contains(selector),
+                "view redaction preserves the raw diagnostic"
+            );
+        }
+        let retired = PathLabels {
+            rooted: true,
+            namespaced: true,
+            source: None,
+        };
+        assert_eq!(retired.path(&path), "Remote folder");
+        assert!(retired
+            .text(&format!("failed at /{selector}/.owned-part"))
+            .contains("cleanup may be uncertain"));
+        assert!(!retired
+            .text(&format!("failed at /{selector}/.owned-part"))
+            .contains(selector));
+        let local = SftpPath::local(Path::new("/owned/local.md"));
+        assert_eq!(retired.path(&local), local.display());
+        let ordinary = PathLabels {
+            rooted: false,
+            namespaced: false,
+            source: None,
+        };
+        assert_eq!(
+            ordinary.path(&path),
+            path.display(),
+            "ordinary SFTP keeps its own path contract"
+        );
+        assert_eq!(path, original, "view labels never replace operation paths");
+    }
     use egui_kittest::kittest::NodeT;
 
     fn request(directory: SftpPath, operation: Operation) -> Request {

@@ -685,3 +685,111 @@ require their separately reviewed follow-up; this increment does not qualify
 all mounted volumes. Existing HOME consent is unchanged until owner reconfiguration.
 Source regressions do not qualify native Desktop/mobile start-directory behavior;
 DT-05/DT-07 and MOB-11 native checks remain pending.
+
+
+### Newly reviewed Allowed locations and independent Start in
+
+Introduce a distinct, explicitly reviewed protected allowlist shape for HOST
+Files. Keep historical singleton Policy serialization, consent and behavior
+unchanged; never silently migrate it to the new read contract. The owner edits
+Allowed locations and Start in separately through existing Disabled, review and
+Enable steps. A Start-only edit retains the singleton read contract. The
+explicit allowlist review shows the initial folder or chooser, identifies the
+location where Up stops, and describes ordinary-data reads alongside the existing
+Read only/Read and write and separate Delete controls. The current production
+HOME grant is unchanged.
+
+Allow one to eight locations, existing per-path/component bounds, and an
+8 KiB total encoded Policy limit. Bound encoded bytes, including escaping, not
+just characters. Qualify actual pending lifecycle serialization with Settings
+stored twice against its unchanged 32 KiB reader limit; reject oversize new
+consent before acquisition/publication. Reject cross-shape fields even if null.
+Historical singleton `start_in: null` still decodes as an omitted Start in.
+Full Policy/Settings equality, native
+anchors, update/migration and revocation carry the entire grant.
+
+Each explicit location binds one retained native root. Clients receive only
+current-grant opaque root selectors and root-relative virtual paths; labels are
+sanitized presentation. Protected Start in identifies the reviewed list entry
+and relative directory; its wire selector is ephemeral. Start in adds no
+authority. With several locations and no explicit start, show a root chooser. Resolve owner `~` through the registered OS-account helper in
+the existing worker. Reject duplicate native roots and ambiguous aliases; an
+intentional nested location has the same grant-wide permissions and remains an
+explicit selectable location. Historical singleton defaults remain unchanged.
+
+A reviewed Unix subtree includes supported subordinate local mounts attached
+later or replaced through fresh contained lookup. No mount inventory or separate
+per-mount approval is required. This differs from substitution of an explicitly
+configured root, which must not be silently adopted during its serving lifetime.
+Retain admitted objects and fail in-flight work when their containment/identity
+cannot be established. Unsupported mounts remain unavailable. Missing locations
+or Start in affect Files availability, not unrelated HOST or shell service;
+malformed protected policy still refuses normally.
+
+Linux requires mount IDs from `statx`: freshness compares mount ID, device and
+inode, while duplicate-root alias checks still compare device and inode.
+Regular-file data reopening resolves the current process's descriptor directory
+on a verified procfs mount. Mutation/review regular-file leaves receive a metadata pin that cannot cross
+their qualified parent's mount; qualification precedes data acquisition. Supported
+directory mounts remain available. The new Windows namespace admits local NTFS and
+refuses ReFS. Legacy filesystem routes retain their previous support.
+
+For the new read contract, qualify OS-contained, no-follow complete-root lookup
+for metadata, directories and regular files. Admit ordinary object kind and
+supported filesystem before disclosure: contained metadata/type checks, contained
+nonblocking/no-controlling-terminal acquisition, then retained-handle type,
+identity and filesystem verification before bytes. Do not promise zero OS open
+side effects. Exclude malicious administrator attacks; refuse device-bearing
+untrusted mounts unless kernel nodev or an equivalent boundary applies.
+
+Broad consent includes ordinary OS-readable personal data. Do not promise
+unenforced control-file exclusions, including aliases/hard links. Private-store
+and record validation remain unchanged. Writes, replacement, staging and Delete
+retain all existing strict mutation/publication gates, even where ordinary reads
+are newly admitted. Pools, limits, deadlines and current-scope/lifetime checks
+remain whole-grant, never multiplied per location.
+
+New-scope Unix mutation checks qualify every absolute and relative ancestor
+before applying existing owner/mode/ACL checks. macOS requires ownership-enforcing
+local APFS. Linux requires the supported filesystem class and a mount ID.
+Upload and Delete recheck the current contained parent against the retained
+parent before acting.
+
+Negotiate the new scope explicitly using existing helper/opening seams. Old
+helpers/clients refuse it clearly before effects or disclosure; historical peers
+retain their bytes. Preserve observation and other service authority unchanged.
+
+The actual Storage APFS local/nodev/nosuid/noowners evidence includes five owned
+directory prerequisites and seven isolated file-API cases on macOS 27.2.1.
+Those cases cover an exact ordinary read, OS denial, special/link refusal,
+nonblocking raced-FIFO acquisition rejected before bytes, raced-link refusal and
+a retained descriptor after parent rename. They do not qualify whole-product,
+concurrent ancestry/mount races or deployment support. Require bounded
+platform/native evidence; a raced FIFO can be opened before type rejection.
+Links remain refused; directory-link read navigation needs its separately
+reviewed destination-containment amendment. No link-mediated mutation is added.
+
+On macOS, before opening a regular leaf for data, the new dispatcher may also
+qualify the complete actual absolute root and parent chain with the unchanged
+private owner/mode/ACL rules, requiring ownership-enforcing local APFS on every
+checked ancestor including `/`. `noowners` never establishes private trust.
+That qualified route uses the existing no-follow private file acquisition after
+regular/same-parent-filesystem metadata admission and retains kind, identity and
+filesystem checks. Lookup, denial or changed-object errors after selection are
+terminal; only a successfully evaluated unsafe private chain selects the separate
+ordinary local APFS/nodev route. The new namespace retains its recorded native
+containment deployment floor. Historical grants and mutation/private-store gates
+are unchanged. Both routes retain fresh root/object checks before metadata and
+before/after file chunks or directory pages are disclosed.
+
+
+If initial Start in fails, an explicit **Choose location…** action starts a new
+authenticated Files opening pinned to the original account, stable host, key,
+installation and principal. Missing or changed identity requires normal host
+selection. Fresh current location metadata and account/lifetime checks precede
+the local chooser. A folder opens only after selection. Default opening fails
+if Start metadata or the first allowlist folder listing is unavailable.
+Malformed metadata and authority failures remain fatal, and historical peers
+without locations refuse the choice without root fallback. The transient
+preference stays in client navigation. Native recovery qualification remains
+pending under DTFILES-05 and MOB-11.

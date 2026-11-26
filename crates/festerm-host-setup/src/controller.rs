@@ -2697,6 +2697,7 @@ mod tests {
             reviewed.ordinary_access = OrdinaryAccess::ProviderOwner;
             reviewed.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
                 start_in: Some("/child".into()),
+                locations: None,
                 delete: false,
                 root: root.path().into(),
                 write: false,

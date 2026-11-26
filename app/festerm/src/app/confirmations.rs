@@ -458,6 +458,7 @@ impl FesTermApp {
         self.overlays.about_licenses_open = false;
         if self.overlays.open_refusal.is_none() {
             self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
+                _cleanup_diagnostic: None,
                 title: Some("Unsaved documents are still open".into()),
                 acknowledgement_path: None,
                 name: dirty.title,

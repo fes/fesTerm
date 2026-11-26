@@ -10,8 +10,9 @@ pub(super) struct ReviewedEntry {
     name: String,
     directory: bool,
     stamp: Stamp,
+    new_shape: bool,
 }
-fn open(parent: &Dir, name: &str, directory: bool) -> io::Result<File> {
+fn open(parent: &Dir, name: &str, directory: bool, new_shape: bool) -> io::Result<File> {
     if directory {
         #[cfg(windows)]
         let file = festerm_windows_security::open_directory_no_reparse(
@@ -23,7 +24,7 @@ fn open(parent: &Dir, name: &str, directory: bool) -> io::Result<File> {
         trusted(&Dir::from_std_file(file.try_clone()?))?;
         Ok(file)
     } else {
-        open_file(parent, name)
+        open_mutation_file(parent, name, new_shape)
     }
 }
 fn empty(file: &File) -> Outcome<()> {
@@ -41,7 +42,11 @@ pub(super) fn review(filesystem: &Filesystem, path: &str) -> Outcome<ReviewedEnt
         return Err(ErrorCode::Invalid.into());
     }
     let directory = info.is_dir();
-    let file = open(&parent, &name, directory)?;
+    let file = open(&parent, &name, directory, filesystem.has_locations())?;
+    if directory && filesystem.has_locations() {
+        mutation_trusted(&Dir::from_std_file(file.try_clone()?))?;
+    }
+    filesystem.check_mutation_parent(path, &parent)?;
     if directory {
         empty(&file)?;
     }
@@ -53,6 +58,7 @@ pub(super) fn review(filesystem: &Filesystem, path: &str) -> Outcome<ReviewedEnt
         name,
         directory,
         stamp,
+        new_shape: filesystem.has_locations(),
     })
 }
 fn move_handle(entry: &ReviewedEntry) -> io::Result<File> {
@@ -111,15 +117,24 @@ fn recovery(entry: &ReviewedEntry, capture: &str) -> Failure {
     }
 }
 fn current_capture(entry: &ReviewedEntry, capture: &str, captured: &File) -> io::Result<File> {
-    let current = open(&entry.parent, capture, entry.directory)?;
+    let current = open(&entry.parent, capture, entry.directory, entry.new_shape)?;
     if !same(&current, captured)? {
         return Err(invalid());
     }
     Ok(current)
 }
-fn restore(entry: &ReviewedEntry, capture: &str, captured: &File, mover: &File) -> Outcome<()> {
+fn restore(
+    entry: &ReviewedEntry,
+    capture: &str,
+    captured: &File,
+    mover: &File,
+    filesystem: &Filesystem,
+) -> Outcome<()> {
     // Do not move a substituted capture or replace a concurrent public entry.
     trusted(&entry.parent).map_err(|_| recovery(entry, capture))?;
+    if filesystem.has_locations() {
+        mutation_trusted(&entry.parent).map_err(|_| recovery(entry, capture))?;
+    }
     current_capture(entry, capture, captured).map_err(|_| recovery(entry, capture))?;
     move_name(&entry.parent, capture, mover, &entry.name, entry.directory)
         .map_err(|_| recovery(entry, capture))
@@ -148,13 +163,15 @@ pub(super) fn remove(
     entry: ReviewedEntry,
     admission: &Admission,
     cancel: &CancellationToken,
+    filesystem: &Filesystem,
 ) -> Outcome<()> {
     if cancel.is_cancelled() {
         return Err(ErrorCode::Denied.into());
     }
     admission(AdmissionStage::Publication)?;
     trusted(&entry.parent)?;
-    let current = open(&entry.parent, &entry.name, entry.directory)?;
+    filesystem.check_mutation_parent(&entry.path, &entry.parent)?;
+    let current = open(&entry.parent, &entry.name, entry.directory, entry.new_shape)?;
     if !same(&current, &entry.file)? || stamp_kind(&current, entry.directory)? != entry.stamp {
         return Err(ErrorCode::Conflict.into());
     }
@@ -171,6 +188,10 @@ pub(super) fn remove(
         // A capture must always have a representable bounded recovery locator.
         return Err(ErrorCode::Invalid.into());
     }
+    filesystem.check_mutation_parent(&entry.path, &entry.parent)?;
+    if entry.directory && filesystem.has_locations() {
+        mutation_trusted(&Dir::from_std_file(entry.file.try_clone()?))?;
+    }
     move_name(
         &entry.parent,
         &entry.name,
@@ -180,8 +201,8 @@ pub(super) fn remove(
     )?;
     // From capture onward the original public pathname is never unlinked or
     // followed. Only no-replace restoration may address that name.
-    let captured =
-        open(&entry.parent, &capture, entry.directory).map_err(|_| recovery(&entry, &capture))?;
+    let captured = open(&entry.parent, &capture, entry.directory, entry.new_shape)
+        .map_err(|_| recovery(&entry, &capture))?;
     let captured_stamp =
         stamp_kind(&captured, entry.directory).map_err(|_| recovery(&entry, &capture))?;
     let result = (|| -> Outcome<()> {
@@ -207,6 +228,10 @@ pub(super) fn remove(
         }
         // Windows removes by exact retained handle. Unix uses the last verified
         // service-owned capture under the trusted parent, not a public path.
+        filesystem.check_mutation_parent(&entry.path, &entry.parent)?;
+        if entry.directory && filesystem.has_locations() {
+            mutation_trusted(&Dir::from_std_file(current.try_clone()?))?;
+        }
         remove_capture(&entry, &capture, &mover).map_err(|error| {
             if entry.directory && error.kind() == io::ErrorKind::DirectoryNotEmpty {
                 Failure::from(ErrorCode::NotEmpty)
@@ -217,7 +242,7 @@ pub(super) fn remove(
         Ok(())
     })();
     if let Err(error) = result {
-        restore(&entry, &capture, &captured, &mover)?;
+        restore(&entry, &capture, &captured, &mover, filesystem)?;
         return Err(error);
     }
     Ok(())
@@ -235,6 +260,7 @@ mod tests {
         let root = crate::test_support::private_directory("festerm-reviewed-delete");
         let filesystem = Filesystem::open(&rpc::Policy {
             start_in: None,
+            locations: None,
             root: root.clone(),
             write: true,
             delete,

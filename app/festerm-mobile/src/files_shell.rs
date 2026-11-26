@@ -130,6 +130,23 @@ impl MobileApp {
         }
     }
 
+    #[cfg(feature = "host-clients")]
+    fn choose_files_location(&mut self, ctx: &egui::Context) {
+        let Some(target) = self.files_ctx.host.clone() else {
+            return;
+        };
+        if let Err(error) = self.open_host_files_target_with_navigation(
+            target,
+            festerm_tunnel_bridge::file_client::NavigationPreference::ChooseLocation,
+            ctx,
+        ) {
+            self.notice = Some(error);
+        }
+    }
+
+    #[cfg(not(feature = "host-clients"))]
+    fn choose_files_location(&mut self, _: &egui::Context) {}
+
     /// Pumps the Files session once per frame and applies what it reports.
     pub(super) fn poll_files(&mut self, ctx: &egui::Context) {
         let events = match self.files.as_mut() {
@@ -174,10 +191,17 @@ impl MobileApp {
             ui.vertical_centered(|ui| ui.weak("No file session is open"));
             return;
         };
-        let outcome = files_ui::show(ui, session);
+        #[cfg(feature = "host-clients")]
+        let can_choose_location = self.files_ctx.host.is_some();
+        #[cfg(not(feature = "host-clients"))]
+        let can_choose_location = false;
+        let outcome = files_ui::show_with_location_choice(ui, session, can_choose_location);
         let ctx = ui.ctx().clone();
         if outcome.retry {
             self.retry_files(&ctx);
+        }
+        if outcome.choose_location {
+            self.choose_files_location(&ctx);
         }
         self.apply_files_events(outcome.events);
     }

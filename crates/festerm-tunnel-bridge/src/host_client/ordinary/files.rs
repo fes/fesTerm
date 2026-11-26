@@ -100,6 +100,8 @@ impl Files {
 /// Provider-authorized direct Files opening. None confirms files are disabled
 /// on the authenticated host; old/closed/malformed hosts are errors, not Off.
 /// A pinned scope is an explicit existing-handle constraint, never a grant.
+/// Current guarded transfers negotiate the explicit allowlist namespace when
+/// advertised; historical descriptions retain the original Open2 bytes.
 pub async fn open_files(
     identity: &Identity,
     locator: &str,

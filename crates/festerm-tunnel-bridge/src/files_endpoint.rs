@@ -163,11 +163,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
             file_type: kind(metadata.kind),
             size: Some(size),
             modified_at,
-            permissions: Some(if self.client.capabilities().write {
-                0o700
-            } else {
-                0o500
-            }),
+            permissions: Some(
+                if self.client.capabilities().write
+                    && self.client.location_metadata().is_none_or(|roots| {
+                        roots.iter().any(|root| {
+                            root.contains(path) && root.available && root.mutations_available
+                        })
+                    })
+                {
+                    0o700
+                } else {
+                    0o500
+                },
+            ),
         })
     }
 }
@@ -470,6 +478,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
         path: &str,
     ) -> Result<(festerm_ssh::SftpDirectorySnapshot, SftpPathMetadata, usize), SftpSessionError>
     {
+        if self.client.location_chooser(path) {
+            self.check_current()?;
+            let metadata = SftpPathMetadata {
+                path: SftpPath::remote("/"),
+                file_type: SftpEntryType::Directory,
+                size: None,
+                modified_at: None,
+                permissions: Some(0o500),
+            };
+            return Ok((
+                festerm_ssh::SftpDirectorySnapshot {
+                    location: festerm_ssh::SftpLocation::Remote,
+                    path: SftpPath::remote("/"),
+                    loaded_at: std::time::SystemTime::now(),
+                    entries: Vec::new(),
+                },
+                metadata,
+                0,
+            ));
+        }
         let metadata = self.metadata(path).await?.ok_or_else(|| {
             Self::error(
                 path,
@@ -1226,6 +1254,7 @@ mod tests {
         std::fs::write(root.join("download.txt"), b"controlled download").unwrap();
         let filesystem = Filesystem::open(&rpc::Policy {
             start_in: None,
+            locations: None,
             root: root.clone(),
             write: false,
             delete: false,

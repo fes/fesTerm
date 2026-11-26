@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "4c2ca1911c91fc246eba5750e19995d31793d60c60e9a926c93aeba1654f35d5"} -->
+<!-- agent-navigation: {"domain": "ssh-sftp", "generator": "2", "model": "codex-source-verified", "sources": "40424b98a5c2cc63f5faf34eca10f526552cdd3eebcf55b574f83f3b6ff48b45"} -->
 # SSH transport, trust, and SFTP
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -70,9 +70,19 @@ Use for: When GUI SFTP tabs read remote files or start a remote pane after trust
 
 Evidence:
 - [`live_remote_file_read_returns_exact_bytes_and_honest_bounds`](../../crates/festerm-ssh/tests/live_remote_files.rs) — Remote reads surface exact bytes plus honest max-length boundaries.
-- [`controlled_openssh_interactive_password_interoperability`](../../crates/festerm-ssh/tests/openssh_interop.rs) — The GUI connect flow resolves trust before interactive password prompts.
 
 Caveats:
 - Remote reads are bound to a verified fingerprint and transport generation to avoid stale reads.
 - The app keeps terminal and GUI SFTP lifecycles separate even when they share a profile.
 - A host-key prompt is resume-oriented; dropping the completion cancels the connect attempt.
+
+## HOST Files presentation
+
+Use for: Displaying allowed locations without exposing request selectors.
+
+- [`FilesSource`](../../app/festerm/src/sftp_file_manager/host_files.rs) — Physical labels and captured location metadata; virtual callbacks stay immutable.
+- [`SftpCleanupReporter`](../../app/festerm/src/sftp_file_manager.rs) — Bounded masked notices retain private typed diagnostics.
+
+Caveats:
+- Recovery retains authenticated account and host identities; new uploads wait for a matching successful folder snapshot.
+- Legacy SFTP paths remain unchanged; allowlist native qualification is separate.

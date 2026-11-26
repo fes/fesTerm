@@ -118,7 +118,11 @@ async fn serve_inner(
         &mut stream,
         rpc::HOST_DESCRIPTION,
         &serde_json::to_vec(&rpc::HostDescription {
-            version: rpc::HOST_VERSION,
+            version: if filesystem.as_ref().is_some_and(|fs| fs.has_locations()) {
+                rpc::HOST_LOCATIONS_VERSION
+            } else {
+                rpc::HOST_VERSION
+            },
             scope: captured.scope.clone(),
             filesystem: filesystem.as_ref().map(|root| root.capabilities()),
         })?,
@@ -135,8 +139,11 @@ async fn serve_inner(
     }
     let open: rpc::HostOpen = serde_json::from_slice(&bytes).map_err(|_| denied())?;
     open.scope.validate()?;
-    if !matches!(open.version, rpc::HOST_VERSION | rpc::HOST_REVIEWED_VERSION)
-        || open.scope != captured.scope
+    if (if filesystem.has_locations() {
+        open.version != rpc::HOST_LOCATIONS_VERSION
+    } else {
+        !matches!(open.version, rpc::HOST_VERSION | rpc::HOST_REVIEWED_VERSION)
+    }) || open.scope != captured.scope
     {
         return Err(denied());
     }
@@ -146,7 +153,10 @@ async fn serve_inner(
         }
         Ok(())
     });
-    if open.version == rpc::HOST_REVIEWED_VERSION {
+    if matches!(
+        open.version,
+        rpc::HOST_REVIEWED_VERSION | rpc::HOST_LOCATIONS_VERSION
+    ) {
         filesystem::serve_authorized_reviewed(stream, filesystem, admission, cancel).await
     } else {
         filesystem::serve_authorized(stream, filesystem, admission, cancel).await
@@ -156,6 +166,263 @@ async fn serve_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    async fn location_channel(
+        prepared: Arc<Prepared>,
+        reviewed: bool,
+    ) -> (
+        Result<
+            Option<(
+                crate::file_client::Client<tokio::io::DuplexStream>,
+                rpc::HostScope,
+            )>,
+            crate::file_client::Error,
+        >,
+        tokio::task::JoinHandle<io::Result<()>>,
+    ) {
+        let (stream, peer) = tokio::io::duplex(8192);
+        let scope = prepared.policy.scope.clone();
+        let captured = prepared.policy.clone();
+        let server = tokio::spawn(serve_inner(
+            peer,
+            Arc::new(move || Ok(captured.clone())),
+            Some(prepared),
+            CancellationToken::new(),
+        ));
+        let opened = if reviewed {
+            crate::file_client::Client::open_host_reviewed(
+                stream,
+                &scope.host,
+                &scope.installation,
+                CancellationToken::new(),
+            )
+            .await
+        } else {
+            let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+                CancellationToken::new(),
+                Arc::new(|| Ok(())),
+            );
+            crate::file_client::Client::open_host_guarded(
+                stream,
+                &scope.host,
+                &scope.installation,
+                Some(&scope),
+                guard,
+                CancellationToken::new(),
+            )
+            .await
+        };
+        (opened, server)
+    }
+    async fn drain_location_channel(mut server: tokio::task::JoinHandle<io::Result<()>>) {
+        if tokio::time::timeout(std::time::Duration::from_secs(3), &mut server)
+            .await
+            .is_err()
+        {
+            server.abort();
+            let _ = server.await;
+            panic!("owned Files channel did not drain")
+        }
+    }
+    #[tokio::test]
+    async fn allowed_locations_current_transfer_guard_retirement_sends_no_open_or_metadata_request()
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for before_description in [true, false] {
+            let scope = rpc::HostScope {
+                host: Default::default(),
+                installation: Default::default(),
+                epoch: "1".into(),
+            };
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let description = rpc::HostDescription {
+                version: rpc::HOST_LOCATIONS_VERSION,
+                scope: scope.clone(),
+                filesystem: Some(rpc::Capabilities {
+                    version: rpc::VERSION,
+                    write: true,
+                    chunk_limit: rpc::CHUNK_LIMIT,
+                    page_limit: rpc::PAGE_LIMIT,
+                    handle_limit: rpc::HANDLE_LIMIT,
+                }),
+            };
+            write_frame(
+                &mut peer,
+                rpc::HOST_DESCRIPTION,
+                &serde_json::to_vec(&description).unwrap(),
+            )
+            .await
+            .unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let guard = crate::host_client::ordinary::OrdinaryAccountGuard::new(
+                CancellationToken::new(),
+                Arc::new(move || {
+                    let index = observed.fetch_add(1, Ordering::SeqCst);
+                    if before_description || index > 0 {
+                        Err(festerm_host_protocol::ContractError::Stale)
+                    } else {
+                        Ok(())
+                    }
+                }),
+            );
+            assert!(matches!(
+                crate::file_client::Client::open_host_guarded(
+                    stream,
+                    &scope.host,
+                    &scope.installation,
+                    Some(&scope),
+                    guard,
+                    CancellationToken::new()
+                )
+                .await,
+                Err(crate::file_client::Error::Cancelled)
+            ));
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                if before_description { 1 } else { 2 }
+            );
+            assert!(
+                crate::wire::read_frame(&mut peer).await.is_err(),
+                "retirement must emit no Open4 or locations/start request"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn allowed_locations_two_channels_share_selectors_captured_paths_and_one_budget() {
+        #[cfg(unix)]
+        let home_fixture = tempfile::Builder::new()
+            .prefix(".festerm-locations-channels-")
+            .tempdir_in(festerm_unix_security::current_user_home().unwrap())
+            .unwrap();
+        #[cfg(unix)]
+        let base = home_fixture.path().to_owned();
+        #[cfg(windows)]
+        let base = crate::test_support::private_directory("festerm-locations-channels");
+        let first = base.join("first");
+        let second = base.join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        std::fs::write(second.join("saved.txt"), b"second original").unwrap();
+        let policy = rpc::Policy {
+            root: first.clone(),
+            start_in: None,
+            locations: Some(rpc::AllowedLocations {
+                roots: vec![first.clone(), second.clone()],
+                start: None,
+            }),
+            write: true,
+            delete: true,
+        };
+        let prepared = Prepared::open(HostPolicy {
+            scope: rpc::HostScope {
+                host: Default::default(),
+                installation: Default::default(),
+                epoch: "1".into(),
+            },
+            filesystem: Some(policy),
+        })
+        .unwrap();
+        // A historical opening mode must refuse before interpreting selectors.
+        let (old_stream, old_peer) = tokio::io::duplex(8192);
+        let old_prepared = prepared.clone();
+        let old_policy = prepared.policy.clone();
+        let old_server = tokio::spawn(serve_inner(
+            old_peer,
+            Arc::new(move || Ok(old_policy.clone())),
+            Some(old_prepared),
+            CancellationToken::new(),
+        ));
+        assert!(crate::file_client::Client::open_host(
+            old_stream,
+            &prepared.policy.scope.host,
+            &prepared.policy.scope.installation,
+            CancellationToken::new()
+        )
+        .await
+        .is_err());
+        drain_location_channel(old_server).await;
+        let (browse, server1) = location_channel(prepared.clone(), true).await;
+        let (mut browse, _) = browse.unwrap().unwrap();
+        let roots = browse.locations().await.unwrap().unwrap();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(browse.start_directory().await.unwrap(), "/");
+        let captured = format!("{}/saved.txt", roots[0].virtual_root());
+        let (transfer, server2) = location_channel(prepared.clone(), false).await;
+        let (mut transfer, _) = transfer.unwrap().unwrap();
+        assert!(
+            transfer.location_metadata().is_none(),
+            "transfer never re-queries or remaps browsing selectors"
+        );
+        let (third, server3) = location_channel(prepared.clone(), false).await;
+        assert!(
+            third.is_err(),
+            "all roots share the original two-channel pool"
+        );
+        drain_location_channel(server3).await;
+        if roots.iter().all(|root| root.available) {
+            let changed = browse
+                .open_directory(&roots[1].virtual_root())
+                .await
+                .unwrap();
+            let _ = browse
+                .read_directory(&changed, rpc::PAGE_LIMIT)
+                .await
+                .unwrap();
+            browse.close(&changed).await.unwrap();
+            let payload = b"captured first root";
+            let upload = transfer
+                .begin_upload(&captured, payload.len() as u64, None)
+                .await
+                .unwrap();
+            transfer.write(&upload, payload).await.unwrap();
+            transfer.finish_upload(&upload).await.unwrap();
+            let (read, metadata) = transfer.open_read(&captured).await.unwrap();
+            assert_eq!(metadata.size, payload.len().to_string());
+            assert_eq!(transfer.read(&read, 0, 64).await.unwrap().bytes, payload);
+            transfer.close(&read).await.unwrap();
+            assert_eq!(std::fs::read(first.join("saved.txt")).unwrap(), payload);
+            assert_eq!(
+                std::fs::read(second.join("saved.txt")).unwrap(),
+                b"second original"
+            );
+        } else {
+            #[cfg(target_os = "macos")]
+            {
+                let root = festerm_unix_security::open_absolute_directory_read_nofollow(
+                    std::path::Path::new("/"),
+                )
+                .unwrap();
+                assert_eq!(
+                    festerm_unix_security::open_contained_data_directory(
+                        &root,
+                        first.strip_prefix("/").unwrap()
+                    )
+                    .unwrap_err()
+                    .kind(),
+                    io::ErrorKind::Unsupported
+                );
+                assert!(transfer.open_read(&captured).await.is_err());
+                assert!(!first.join("saved.txt").exists());
+                assert_eq!(
+                    std::fs::read(second.join("saved.txt")).unwrap(),
+                    b"second original"
+                );
+                eprintln!(
+                    "allowlist native prerequisite unavailable; new-scope refused without effects, shared namespace/budget still checked"
+                );
+            }
+            #[cfg(not(target_os = "macos"))]
+            panic!("supported local fixture unexpectedly unavailable");
+        }
+        browse.cancel();
+        transfer.cancel();
+        drain_location_channel(server1).await;
+        drain_location_channel(server2).await;
+        drop(browse);
+        drop(transfer);
+        drop(prepared);
+        std::fs::remove_dir_all(base).unwrap();
+    }
     #[tokio::test]
     async fn prepared_root_survives_missing_start_directory_and_serves_root() {
         let path = crate::test_support::private_directory("festerm-start-prepared");
@@ -172,6 +439,7 @@ mod tests {
             filesystem: Some(rpc::Policy {
                 root: path.clone(),
                 start_in: Some("/missing".into()),
+                locations: None,
                 write: false,
                 delete: false,
             }),

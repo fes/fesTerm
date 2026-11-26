@@ -2012,6 +2012,128 @@ mod imp {
         }
     }
 
+    /// Ordinary-data reads require an explicitly supported local volume. This
+    /// does not relax any private-store, mutation or publication ACL gate.
+    fn supported_data_volume(name: &str) -> bool {
+        name == "NTFS"
+    }
+    #[test]
+    fn new_data_namespace_declines_refs_legacy_identity_subset() {
+        assert!(supported_data_volume("NTFS"));
+        for name in ["ReFS", "FAT32", "exFAT", ""] {
+            assert!(!supported_data_volume(name));
+        }
+    }
+    fn qualified_data_volume(file: &File) -> io::Result<()> {
+        let mut name = [0u16; 32];
+        if unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetVolumeInformationByHandleW(
+                file.as_raw_handle() as HANDLE,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                name.as_mut_ptr(),
+                name.len() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let length = name.iter().position(|v| *v == 0).unwrap_or(name.len());
+        let name = String::from_utf16(&name[..length]).map_err(|_| io::ErrorKind::InvalidData)?;
+        if !supported_data_volume(&name) {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        Ok(())
+    }
+    /// New namespace only: NTFS identity qualification precedes ACL trust.
+    pub fn qualify_data_mutation_ancestor(file: &File) -> io::Result<()> {
+        qualified_data_volume(file)?;
+        trusted_private_storage_ancestor(file)
+    }
+    /// Opens a relative directory chain without reparse traversal. Every
+    /// ancestor remains retained without delete sharing for the full I/O lease.
+    pub fn open_contained_data_directory(
+        root: &File,
+        path: &Path,
+    ) -> io::Result<(File, Vec<File>)> {
+        let mut parents = Vec::new();
+        let mut current = root.try_clone()?;
+        let root_volume = file_information(root)?.dwVolumeSerialNumber;
+        qualified_data_volume(root)?;
+        for part in path.components() {
+            let std::path::Component::Normal(name) = part else {
+                return Err(io::ErrorKind::InvalidInput.into());
+            };
+            let next = open_relative(
+                &current,
+                Path::new(name),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                FILE_OPEN,
+                FILE_DIRECTORY_FILE,
+                ptr::null(),
+            )?;
+            let info = file_information(&next)?;
+            if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                || info.dwVolumeSerialNumber != root_volume
+                || !next.metadata()?.is_dir()
+            {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            parents.push(current);
+            current = next;
+        }
+        Ok((current, parents))
+    }
+    /// Acquires only an ordinary disk file relative to a retained, locked
+    /// parent chain. No reparse, device alias, write or private-state authority.
+    pub fn open_contained_data_file(root: &File, path: &Path) -> io::Result<(File, Vec<File>)> {
+        let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+        let (parent, mut parents) =
+            open_contained_data_directory(root, path.parent().unwrap_or(Path::new("")))?;
+        let file = open_file_no_reparse_with_access_and_sharing(
+            &parent,
+            Path::new(name),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+        )?;
+        if !file.metadata()?.is_file()
+            || unsafe {
+                windows_sys::Win32::Storage::FileSystem::GetFileType(file.as_raw_handle() as HANDLE)
+            } != windows_sys::Win32::Storage::FileSystem::FILE_TYPE_DISK
+        {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        qualified_data_volume(&file)?;
+        parents.push(parent);
+        Ok((file, parents))
+    }
+    /// The drive and every configured-root ancestor remain pinned. A changed
+    /// drive/path is revalidated against this retained identity by the caller.
+    pub fn open_absolute_data_directory(path: &Path) -> io::Result<(File, Vec<File>)> {
+        let mut parts = path.components();
+        let Some(std::path::Component::Prefix(prefix)) = parts.next() else {
+            return Err(io::ErrorKind::InvalidInput.into());
+        };
+        if !matches!(prefix.kind(), std::path::Prefix::Disk(_))
+            || parts.next() != Some(std::path::Component::RootDir)
+        {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let mut drive = prefix.as_os_str().to_os_string();
+        drive.push("\\");
+        let drive = PathBuf::from(drive);
+        require_local_disk_root(&drive)?;
+        let root = lock_directory_path_without_delete_sharing(&drive)?;
+        let rest = parts.collect::<PathBuf>();
+        let (file, mut parents) = open_contained_data_directory(&root, &rest)?;
+        parents.push(root);
+        Ok((file, parents))
+    }
+
     /// Reopens and pins the same directory with write access for durable flushes.
     pub fn lock_directory_for_sync(directory: &File) -> io::Result<File> {
         let file = OpenOptions::new()
@@ -4173,16 +4295,17 @@ pub use imp::{
     current_user_service_context, delete_directory_by_handle, disable_std_handle_inheritance,
     enable_security_privilege, file_change_time, file_identity, file_link_count,
     is_current_user_only, lock_directory_for_sync, lock_directory_path_without_delete_sharing,
+    open_absolute_data_directory, open_contained_data_directory, open_contained_data_file,
     open_directory_no_reparse, open_file_no_reparse, open_file_no_reparse_for_capture,
     open_file_no_reparse_for_move, open_file_no_reparse_for_security_capture,
     open_file_no_reparse_for_security_verification, open_file_no_reparse_for_verification,
     open_file_read_write_no_reparse, open_lock_no_reparse_without_delete_sharing,
     open_private_directory_for_move, open_reviewed_directory_for_move, opened_file_path,
-    remove_private_staging_file, remove_reviewed_empty_directory, remove_reviewed_file,
-    rename_file_noreplace, rename_private_directory_noreplace, rename_reviewed_directory_noreplace,
-    replace_private_file, require_local_disk_root, restrict_default_dacl_to_current_user,
-    restrict_to_current_user, same_file_identity, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, system_directory, trusted_legacy_lock_file,
-    trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
-    StagingParentSecurity, UnsupportedSecurityMetadata,
+    qualify_data_mutation_ancestor, remove_private_staging_file, remove_reviewed_empty_directory,
+    remove_reviewed_file, rename_file_noreplace, rename_private_directory_noreplace,
+    rename_reviewed_directory_noreplace, replace_private_file, require_local_disk_root,
+    restrict_default_dacl_to_current_user, restrict_to_current_user, same_file_identity,
+    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
+    system_directory, trusted_legacy_lock_file, trusted_private_storage_ancestor, DefaultDaclGuard,
+    SecurityMetadata, SecurityPrivilegeGuard, StagingParentSecurity, UnsupportedSecurityMetadata,
 };

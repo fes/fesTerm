@@ -3525,6 +3525,7 @@ mod tests {
         settings.ordinary_access = crate::lifecycle::OrdinaryAccess::ProviderOwner;
         settings.filesystem = Some(festerm_tunnel_bridge::file_protocol::Policy {
             start_in: None,
+            locations: None,
             delete: false,
             root: root.path().to_path_buf(),
             write: false,

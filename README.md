@@ -42,8 +42,11 @@ with a current write grant, regular-file upload and folder creation through the
 shared transfer queue. Saved Files destinations reopen with fresh account-bound
 Files authority; separately granted remote Delete reviews up to eight files or
 empty folders before confirmation. Local Delete independently reviews up to eight
-Documents files or empty folders, even when remote Delete is off; native
-qualification of this new local action remains pending. Pinned [Android ordinary Files components](validation/dev-tunnels/mobile-files-android-native-components.json)
+Documents files or empty folders, even when remote Delete is off. A scoped
+[iOS Simulator Local Delete check](validation/dev-tunnels/mobile-files-ios-local-delete-native.json)
+passed file/empty-folder Cancel and fresh Confirm; Android and the remaining
+native lifecycle cases are pending. Remote-permission independence is covered
+by automated composition tests, not a native OFF-grant claim. Pinned [Android ordinary Files components](validation/dev-tunnels/mobile-files-android-native-components.json)
 are accepted against Linux, Windows and Mac, with separately attributed builds.
 Pinned [iOS Simulator components](validation/dev-tunnels/mobile-files-ios-native-components.json)
 qualify only their recorded private SDK artifact and component scope. Full iOS
@@ -59,6 +62,23 @@ Delete Cancel/Confirm component. Separate [provider-boundary components](validat
 record pinned Linux/Windows HOST24 and Mac HOST26 RO/WRITE refusals and original
 permission restoration; these use distinct SDK builds. Wider
 native/provider Desktop qualification remains pending.
+
+Newly reviewed Files settings separate **Allowed locations** from **Start in**.
+If a starting folder becomes unavailable, **Choose location…** opens a fresh
+authenticated chooser for the same host. When the failed opening has no
+authenticated host identity, select the host again. This recovery still needs
+native Desktop/iOS/Android qualification.
+An explicit bounded allowlist uses authenticated location selection on Desktop
+and Mobile; display paths remain separate from the virtual paths captured by
+transfers. Existing singleton settings retain their encoding shape and read
+rules when only Start in changes.
+The new read route admits supported ordinary data directories while preserving
+strict mutation/publication checks and the separate Write/Delete controls.
+Mounted-volume, starting-directory and allowlist native qualification remain
+pending under [#938](https://github.com/fes/fesTerm/issues/938). Links remain
+unavailable; the current production HOME grant is unchanged. On macOS, the
+new allowlist requires the qualified 27.2.1 native containment boundary; older
+systems retain the existing singleton behavior.
 
 An independent [read-only observation protocol](docs/remote-observation-protocol.md)
 adds explicitly approved roots, revision-checked offset reads, bounded native

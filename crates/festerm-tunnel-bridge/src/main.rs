@@ -125,6 +125,7 @@ fn run() -> io::Result<()> {
     }
     let filesystem = file_root.map(|root| festerm_tunnel_bridge::file_protocol::Policy {
         start_in: None,
+        locations: None,
         delete: false,
         root,
         write: allow_file_write,

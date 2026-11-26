@@ -2,9 +2,20 @@
 pub(crate) use festerm_tunnel_bridge::files_endpoint::{
     DeleteObservation, DeleteOutcome, FilesChannel, FilesEndpoint, FirstFailure,
 };
-use festerm_tunnel_bridge::host_client::ordinary::Files;
+use festerm_tunnel_bridge::{
+    file_client::NavigationPreference,
+    host_client::ordinary::{ExpectedHost, Files},
+};
 use std::{future::Future, pin::Pin};
 use tokio_util::sync::CancellationToken;
+
+/// The stable identity of an authenticated Files opening, held for foreground
+/// recovery only. Current account and host authority are checked on reopening.
+#[derive(Clone, Debug)]
+pub(crate) struct FilesRecoveryPin {
+    pub(crate) account_id: u64,
+    pub(crate) expected_host: ExpectedHost,
+}
 
 /// Worker-only ownership handoff. These streams never enter configuration or
 /// the tab's presentation state, and share the retained account lifetime.
@@ -13,6 +24,7 @@ pub(crate) struct FilesConnection {
     pub transfer: Files,
     pub account_id: u64,
     pub lifetime: CancellationToken,
+    pub navigation: NavigationPreference,
 }
 pub(crate) type ConnectFiles = Pin<
     Box<dyn Future<Output = Result<FilesConnection, super::host_browser::RequestFailure>> + Send>,
@@ -46,9 +58,31 @@ impl super::FesTermApp {
         target: crate::sftp_file_manager::HostFilesLaunchTarget,
         context: &eframe::egui::Context,
     ) {
+        self.open_host_files(target, None, context);
+    }
+
+    pub(super) fn reopen_host_files(
+        &mut self,
+        target: crate::sftp_file_manager::HostFilesLaunchTarget,
+        pin: FilesRecoveryPin,
+        navigation: NavigationPreference,
+        context: &eframe::egui::Context,
+    ) {
+        self.open_host_files(target, Some((pin, navigation)), context);
+    }
+
+    fn open_host_files(
+        &mut self,
+        target: crate::sftp_file_manager::HostFilesLaunchTarget,
+        recovery: Option<(FilesRecoveryPin, NavigationPreference)>,
+        context: &eframe::egui::Context,
+    ) {
         use festerm_tunnel_bridge::host_client::{
             self,
-            ordinary::{open_files, open_files_reviewed, OrdinaryKeyIndex},
+            ordinary::{
+                open_files, open_files_pinned, open_files_pinned_reviewed, open_files_reviewed,
+                OrdinaryKeyIndex,
+            },
         };
         use festerm_tunnel_client::{host_control::ConnectionPermit, service};
         if !context.input(|input| input.focused) {
@@ -97,6 +131,14 @@ impl super::FesTermApp {
                 Some("Choose a signed-in account in the Files profile before connecting.");
             return;
         };
+        if recovery
+            .as_ref()
+            .is_some_and(|(pin, _)| pin.account_id != account.account_id())
+        {
+            self.secure_storage_feedback =
+                Some("The original Files account changed. Choose the account and host again.");
+            return;
+        }
         let store = match &self.secret_store {
             Ok(store) => store.clone(),
             Err(_) => {
@@ -154,16 +196,30 @@ impl super::FesTermApp {
             );
             let index = OrdinaryKeyIndex::native()
                 .map_err(|error| super::host_browser::RequestFailure::from(error.message()))?;
-            let browsing = open_files_reviewed(
-                &identity,
-                &locator,
-                index.clone(),
-                &budgets,
-                guard.clone(),
-                &request,
-                None,
-            )
-            .await
+            let browsing = if let Some((pin, _)) = &recovery {
+                open_files_pinned_reviewed(
+                    &identity,
+                    &locator,
+                    index.clone(),
+                    &budgets,
+                    guard.clone(),
+                    &request,
+                    None,
+                    &pin.expected_host,
+                )
+                .await
+            } else {
+                open_files_reviewed(
+                    &identity,
+                    &locator,
+                    index.clone(),
+                    &budgets,
+                    guard.clone(),
+                    &request,
+                    None,
+                )
+                .await
+            }
             .map_err(|error| super::host_browser::RequestFailure::from(error.to_string()))?
             .ok_or_else(|| {
                 super::host_browser::RequestFailure::from(
@@ -171,16 +227,30 @@ impl super::FesTermApp {
                 )
             })?;
             let scope = browsing.scope().clone();
-            let transfer = open_files(
-                &identity,
-                &locator,
-                index,
-                &budgets,
-                guard.clone(),
-                &request,
-                Some(&scope),
-            )
-            .await
+            let transfer = if let Some((pin, _)) = &recovery {
+                open_files_pinned(
+                    &identity,
+                    &locator,
+                    index,
+                    &budgets,
+                    guard.clone(),
+                    &request,
+                    Some(&scope),
+                    &pin.expected_host,
+                )
+                .await
+            } else {
+                open_files(
+                    &identity,
+                    &locator,
+                    index,
+                    &budgets,
+                    guard.clone(),
+                    &request,
+                    Some(&scope),
+                )
+                .await
+            }
             .map_err(|error| super::host_browser::RequestFailure::from(error.to_string()))?
             .ok_or_else(|| {
                 super::host_browser::RequestFailure::from(
@@ -198,6 +268,7 @@ impl super::FesTermApp {
                 transfer,
                 account_id: account.account_id(),
                 lifetime: request,
+                navigation: recovery.map_or(NavigationPreference::DefaultStart, |(_, mode)| mode),
             })
         });
         let settings = self.state.configuration().interface_settings();
@@ -215,5 +286,80 @@ impl super::FesTermApp {
             context,
         );
         self.state.place_sftp_file_manager(tab);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app::FesTermApp, sftp_file_manager::HostFilesLaunchTarget};
+    use festerm_config::{AccountProvider, Configuration, DevTunnelAccount};
+    use festerm_secret_store::{SecretReference, SecretStoreError};
+    use festerm_tunnel_bridge::owner_auth::PinnedHost;
+
+    #[test]
+    fn desktop_files_recovery_refuses_remapped_provider_account_before_preparation() {
+        let label = "owned-account";
+        let pin = FilesRecoveryPin {
+            account_id: 42,
+            expected_host: ExpectedHost {
+                host: PinnedHost {
+                    host: Default::default(),
+                    host_key_fingerprint: format!("SHA256:{}", "A".repeat(43)),
+                },
+                installation: Default::default(),
+                principal: Default::default(),
+            },
+        };
+        let target = HostFilesLaunchTarget {
+            label: "Owned Files".into(),
+            profile_id: None,
+            account: Some(label.into()),
+            locator: "owned.use".into(),
+        };
+        let context = eframe::egui::Context::default();
+        for (account_id, feedback) in [
+            (
+                43,
+                "The original Files account changed. Choose the account and host again.",
+            ),
+            (
+                42,
+                "Native secure storage is unavailable. No Files fallback was attempted.",
+            ),
+        ] {
+            let account = DevTunnelAccount::new(
+                label,
+                AccountProvider::Github,
+                account_id,
+                "owned-login",
+                SecretReference::generate(),
+            )
+            .unwrap();
+            let (configuration, stored_label) =
+                Configuration::empty().with_account(account).unwrap();
+            assert_eq!(stored_label, label);
+            let mut app = FesTermApp::for_test_with_configuration(configuration);
+            // The unchanged account should reach this sentinel. A replacement
+            // must refuse before this check or any account preparation.
+            app.secret_store = Err(SecretStoreError::LockedOrUnavailable);
+            let tab_count = app.state.tabs().len();
+            for navigation in [
+                NavigationPreference::ChooseLocation,
+                NavigationPreference::DefaultStart,
+            ] {
+                app.secure_storage_feedback = None;
+                let mut output = context.run_ui(
+                    eframe::egui::RawInput {
+                        focused: true,
+                        ..Default::default()
+                    },
+                    |_| app.reopen_host_files(target.clone(), pin.clone(), navigation, &context),
+                );
+                output.textures_delta.clear();
+                assert_eq!(app.secure_storage_feedback, Some(feedback));
+                assert_eq!(app.state.tabs().len(), tab_count);
+            }
+        }
     }
 }
