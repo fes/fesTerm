@@ -1184,11 +1184,25 @@ async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_orig
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation() {
-    use crate::host_client::{CreationIntent, CreationMode, HostSession, Scope, Worker};
+    use crate::host_client::{
+        AttachStage, CreationIntent, CreationMode, Failure, HostSession, Scope, Worker,
+    };
+    use festerm_host_protocol::Refusal;
     use festerm_session::{Session, SessionEvent, SessionEventNotifier, SessionLifecycle};
     struct Wake;
     impl SessionEventNotifier for Wake {
         fn notify(&self) {}
+    }
+    async fn lock_generation(lease_lock: &std::fs::File) {
+        loop {
+            match fs2::FileExt::try_lock_exclusive(lease_lock) {
+                Ok(()) => return,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("exact mobile generation lease failed: {error}"),
+            }
+        }
     }
     let mut fixture = NativeRuntimeFixture::new();
     let context = fixture.client_context();
@@ -1241,33 +1255,84 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
         .text_snapshot()
         .text()
         .contains("OWNED-MOBILE"));
-    let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+    let directory =
+        festerm_sessiond::private_storage::private_directory(&fixture.native.root, false).unwrap();
+    let lease_lock = festerm_sessiond::private_storage::open_private_file(
+        &directory,
+        std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+        false,
+    )
+    .unwrap();
     let scope = Scope {
         request: OperationId::new(),
         generation: 1,
         binding: fixture.binding(),
     };
     let selection = (target.clone(), intent.creation().attachment.clone());
-    let worker = Worker::spawn(
-        scope,
-        Arc::new(|| {}),
-        move |scope, cancel, events, wake| async move {
-            crate::host_client::attach_reserved_authenticated(
-                stream, permit, &scope, selection, &cancel, &events, &wake,
+    let session = tokio::time::timeout(native_timeout, async {
+        // The exact generation must refuse attachment while its lease is
+        // held. A capability refusal does not exercise that attachment gate.
+        lock_generation(&lease_lock).await;
+        let mut contended = true;
+        loop {
+            let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+            let selection = selection.clone();
+            let (report_failure, mut attempt_failure) = tokio::sync::oneshot::channel();
+            let worker = Worker::spawn(
+                scope.clone(),
+                Arc::new(|| {}),
+                move |scope, cancel, events, wake| async move {
+                    let result = crate::host_client::attach_reserved_authenticated(
+                        stream, permit, &scope, selection, &cancel, &events, &wake,
+                    )
+                    .await;
+                    if let Err(failure) = &result {
+                        let _ = report_failure.send(*failure);
+                    }
+                    result
+                },
             )
-            .await
-        },
-    )
-    .unwrap();
-    let mut session = HostSession::from_worker(worker, Arc::new(Wake));
-    session.set_creation_intent(Some(intent.clone()));
-    tokio::time::timeout(native_timeout, async {
-        while !session.has_pending_snapshot() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            .unwrap();
+            let mut session = HostSession::from_worker(worker, Arc::new(Wake));
+            session.set_creation_intent(Some(intent.clone()));
+            let busy_stage = loop {
+                match native_snapshot_ready(&session) {
+                    Ok(true) => {
+                        assert!(!contended, "held generation published a snapshot");
+                        return session;
+                    }
+                    Ok(false) => tokio::time::sleep(Duration::from_millis(5)).await,
+                    Err(reason) => match attempt_failure.try_recv() {
+                        Ok(Failure::Attachment {
+                            stage: stage @ (AttachStage::Capabilities | AttachStage::Snapshot),
+                            error: Error::Refused(Refusal::Busy),
+                        }) => break stage,
+                        other => panic!("{reason}: {other:?}"),
+                    },
+                }
+            };
+            assert!(!intent.is_presented());
+            assert!(session.try_send_input(b"must-not-be-queued").is_err());
+            assert!(!session.has_pending_snapshot());
+            drop(session);
+            assert!(matches!(
+                fixture.servers.last_mut().unwrap().await.unwrap(),
+                Err(Error::Refused(Refusal::Busy))
+            ));
+            fixture.servers.pop();
+            let ssh = fixture.connections.last_mut().unwrap();
+            ssh.abort();
+            let _ = ssh.await;
+            fixture.connections.pop();
+            if contended && busy_stage == AttachStage::Snapshot {
+                fs2::FileExt::unlock(&lease_lock).unwrap();
+                contended = false;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
     .await
-    .unwrap();
+    .expect("same-target native mobile attachment did not publish a snapshot");
     assert_eq!(session.lifecycle(), SessionLifecycle::Starting);
     assert!(
         !intent.is_presented(),
@@ -1278,8 +1343,14 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
         festerm_core::Terminal::new(festerm_core::Dimensions::new(40, 12).unwrap()).unwrap();
     assert!(session.adopt_into(&mut frontend).unwrap());
     tokio::time::timeout(native_timeout, async {
-        while session.lifecycle() != SessionLifecycle::Running {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+        loop {
+            match session.lifecycle() {
+                SessionLifecycle::Running => break,
+                lifecycle if lifecycle.is_terminal() => {
+                    panic!("native mobile attachment terminated during activation: {lifecycle:?}")
+                }
+                _ => tokio::time::sleep(Duration::from_millis(5)).await,
+            }
         }
     })
     .await
@@ -1307,25 +1378,9 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     assert!(session.try_send_input(b"never-replay").is_err());
     drop(session);
     let mut control = fixture.control().await;
-    let directory =
-        festerm_sessiond::private_storage::private_directory(&fixture.native.root, false).unwrap();
-    let lease_lock = festerm_sessiond::private_storage::open_private_file(
-        &directory,
-        std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
-        false,
-    )
-    .unwrap();
     let operation = OperationId::new();
     tokio::time::timeout(native_timeout, async {
-        loop {
-            match fs2::FileExt::try_lock_exclusive(&lease_lock) {
-                Ok(()) => break,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-                Err(error) => panic!("exact mobile generation lease failed: {error}"),
-            }
-        }
+        lock_generation(&lease_lock).await;
         // Cancellation cleanup can contend with observation. Exercise that
         // exact outcome without treating an Unknown generation as absent.
         let mut contention = Some(lease_lock);

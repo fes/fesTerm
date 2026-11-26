@@ -338,13 +338,12 @@ fn retained_ntfs_junction_extracts_and_revalidates_with_live_writers() {
             io::ErrorKind::InvalidInput
         );
     }
-    assert_eq!(
-        RetainedDataLink::open(&root, Path::new("target-a"))
-            .err()
-            .unwrap()
-            .kind(),
-        io::ErrorKind::Unsupported
-    );
+    // The fixture root is an ordinary directory held with compatible read sharing.
+    let plain = RetainedDataLink::open(&fixture.temp, &fixture.name)
+        .err()
+        .expect("plain fixture directory produced a link snapshot");
+    assert_eq!(plain.kind(), io::ErrorKind::Unsupported, "{plain:?}");
+    assert_eq!(plain.raw_os_error(), None, "{plain:?}");
 
     let snapshot = RetainedDataLink::open(&root, name).unwrap();
     fixture.assert_target(&snapshot, 0);
