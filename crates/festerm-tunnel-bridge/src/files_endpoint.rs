@@ -24,6 +24,42 @@ pub use reviewed_delete::{DeleteObservation, DeleteOutcome};
 mod first_failure;
 pub use first_failure::{Channel as FilesChannel, FirstFailure};
 
+/// Only an authenticated NotFound reply while opening a folder is a
+/// recoverable navigation miss. Transport, authority and cleanup errors retain
+/// their existing failed-session route.
+#[derive(Debug)]
+pub enum DirectorySnapshotError {
+    Missing(SftpSessionError),
+    Other(SftpSessionError),
+}
+impl DirectorySnapshotError {
+    pub fn into_inner(self) -> SftpSessionError {
+        match self {
+            Self::Missing(error) | Self::Other(error) => error,
+        }
+    }
+}
+impl From<SftpSessionError> for DirectorySnapshotError {
+    fn from(error: SftpSessionError) -> Self {
+        Self::Other(error)
+    }
+}
+impl std::fmt::Display for DirectorySnapshotError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing(error) | Self::Other(error) => std::fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl std::error::Error for DirectorySnapshotError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Missing(error) | Self::Other(error) => Some(error),
+        }
+    }
+}
+
 pub struct FilesEndpoint<S> {
     client: Client<S>,
     lifetime: CancellationToken,
@@ -284,21 +320,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
     }
     fn open_directory<'a>(&'a mut self, path: &'a str) -> RemoteTransferFuture<'a, u64> {
         Box::pin(async move {
-            if self.directory.is_some() {
-                return Err(Self::error(
-                    path,
-                    "open directory",
-                    file_client::Error::Invalid,
-                ));
-            }
-            let id = self.next_id()?;
-            let handle = self
-                .client
-                .open_readable_directory(path)
+            self.open_snapshot_directory(path)
                 .await
-                .map_err(|error| Self::error(path, "open directory", error))?;
-            self.directory = Some((id, handle, path.into()));
-            Ok(id)
+                .map_err(DirectorySnapshotError::into_inner)
         })
     }
     fn read_directory(&mut self, id: u64) -> RemoteTransferFuture<'_, RemoteDirectoryPage> {
@@ -482,10 +506,38 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
         })?;
         self.check_current()
     }
+    async fn open_snapshot_directory(&mut self, path: &str) -> Result<u64, DirectorySnapshotError> {
+        if self.directory.is_some() {
+            return Err(Self::error(path, "open directory", file_client::Error::Invalid).into());
+        }
+        let id = self.next_id()?;
+        let handle = self
+            .client
+            .open_readable_directory(path)
+            .await
+            .map_err(|error| {
+                let missing = matches!(
+                    &error,
+                    file_client::Error::Remote {
+                        code: rpc::ErrorCode::NotFound,
+                        ..
+                    }
+                );
+                let error = Self::error(path, "open directory", error);
+                if missing {
+                    DirectorySnapshotError::Missing(error)
+                } else {
+                    DirectorySnapshotError::Other(error)
+                }
+            })?;
+        self.directory = Some((id, handle, path.into()));
+        Ok(id)
+    }
+
     pub async fn directory_snapshot(
         &mut self,
         path: &str,
-    ) -> Result<(festerm_ssh::SftpDirectorySnapshot, SftpPathMetadata, usize), SftpSessionError>
+    ) -> Result<(festerm_ssh::SftpDirectorySnapshot, SftpPathMetadata, usize), DirectorySnapshotError>
     {
         if self.client.location_chooser(path) {
             self.check_current()?;
@@ -511,21 +563,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
             None
         } else {
             let metadata = self.metadata(path).await?.ok_or_else(|| {
-                Self::error(
+                DirectorySnapshotError::Missing(Self::error(
                     path,
                     "list directory",
                     file_client::Error::Remote {
                         code: rpc::ErrorCode::NotFound,
                         recovery_path: None,
                     },
-                )
+                ))
             })?;
             if metadata.file_type != SftpEntryType::Directory {
-                return Err(SftpSessionError::RemotePathNotDirectory { path: path.into() });
+                return Err(SftpSessionError::RemotePathNotDirectory { path: path.into() }.into());
             }
             Some(metadata)
         };
-        let handle = self.open_directory(path).await?;
+        let handle = self.open_snapshot_directory(path).await?;
         let result = async {
             let (_, wire_handle, _) = self.directory.as_ref().ok_or(SftpSessionError::SessionClosed)?;
             let metadata = match legacy_metadata {
@@ -563,8 +615,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
         }.await;
         let closed = self.close_directory(handle).await;
         match (result, closed) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
+            (Err(error), _) => Err(error.into()),
+            (Ok(_), Err(error)) => Err(error.into()),
             (Ok(value), Ok(())) => Ok(value),
         }
     }
@@ -2683,6 +2735,105 @@ mod tests {
             "returned result keeps existing Desktop marker semantics"
         );
         assert!(!endpoint.client.available());
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_directory_missing_reply_keeps_stream_for_explicit_navigation() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            let stat = request(&mut peer).await;
+            assert!(matches!(stat.operation, rpc::Operation::Stat { path } if path == "/missing"));
+            reply(&mut peer, stat.id, None, Some(rpc::ErrorCode::NotFound)).await;
+            let ping = request(&mut peer).await;
+            assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+            reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+            assert!(
+                read_frame(&mut peer).await.is_err(),
+                "no automatic navigation retry"
+            );
+        });
+        let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+        assert!(matches!(
+            endpoint.directory_snapshot("/missing").await,
+            Err(DirectorySnapshotError::Missing(_))
+        ));
+        assert!(endpoint.directory.is_none());
+        endpoint.check_current().unwrap();
+        endpoint.ping().await.unwrap();
+        endpoint.client.cancel();
+        joined(server).await;
+    }
+
+    #[tokio::test]
+    async fn files_directory_open_missing_is_typed_but_transport_loss_is_not() {
+        for outcome in [0, 1, 2] {
+            let missing = outcome == 0;
+            let replied = outcome != 2;
+            let (stream, mut peer) = tokio::io::duplex(8192);
+            let server = tokio::spawn(async move {
+                opened(&mut peer).await;
+                let open = request(&mut peer).await;
+                assert!(
+                    matches!(open.operation, rpc::Operation::OpenDirectory { path } if path == "/missing")
+                );
+                if replied {
+                    reply(
+                        &mut peer,
+                        open.id,
+                        None,
+                        Some(if missing {
+                            rpc::ErrorCode::NotFound
+                        } else {
+                            rpc::ErrorCode::Denied
+                        }),
+                    )
+                    .await;
+                    let ping = request(&mut peer).await;
+                    assert!(matches!(ping.operation, rpc::Operation::Ping {}));
+                    reply(&mut peer, ping.id, Some(rpc::Result::Pong), None).await;
+                    assert!(read_frame(&mut peer).await.is_err());
+                }
+            });
+            let mut endpoint = endpoint(stream, CancellationToken::new()).await;
+            let result = endpoint.open_snapshot_directory("/missing").await;
+            if missing {
+                assert!(matches!(result, Err(DirectorySnapshotError::Missing(_))));
+                endpoint.check_current().unwrap();
+                endpoint.ping().await.unwrap();
+            } else {
+                assert!(matches!(result, Err(DirectorySnapshotError::Other(_))));
+                if replied {
+                    endpoint.check_current().unwrap();
+                    endpoint.ping().await.unwrap();
+                } else {
+                    assert!(endpoint.check_current().is_err());
+                }
+            }
+            endpoint.client.cancel();
+            joined(server).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn files_directory_authority_retirement_is_never_missing() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            opened(&mut peer).await;
+            assert!(
+                read_frame(&mut peer).await.is_err(),
+                "retired authority sends no Stat/Open"
+            );
+        });
+        let lifetime = CancellationToken::new();
+        let mut endpoint = endpoint(stream, lifetime.clone()).await;
+        lifetime.cancel();
+        assert!(matches!(
+            endpoint.directory_snapshot("/missing").await,
+            Err(DirectorySnapshotError::Other(_))
+        ));
+        endpoint.client.cancel();
         joined(server).await;
     }
 }

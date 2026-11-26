@@ -1,6 +1,7 @@
 //! Desktop Files authentication/tab composition; the protocol adapter is shared.
 pub(crate) use festerm_tunnel_bridge::files_endpoint::{
-    DeleteObservation, DeleteOutcome, FilesChannel, FilesEndpoint, FirstFailure,
+    DeleteObservation, DeleteOutcome, DirectorySnapshotError, FilesChannel, FilesEndpoint,
+    FirstFailure,
 };
 use festerm_tunnel_bridge::{
     file_client::NavigationPreference,
