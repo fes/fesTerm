@@ -1853,20 +1853,20 @@ mod tests {
                     .kind(),
                     io::ErrorKind::Unsupported
                 );
+                assert!(session
+                    .execute(
+                        Operation::OpenDirectory {
+                            path: roots[0].virtual_root()
+                        },
+                        Vec::new(),
+                        &CancellationToken::new()
+                    )
+                    .is_err());
+                std::fs::remove_dir_all(base).unwrap();
+                return;
             }
             #[cfg(not(target_os = "macos"))]
             panic!("local fixture unavailable");
-            assert!(session
-                .execute(
-                    Operation::OpenDirectory {
-                        path: roots[0].virtual_root()
-                    },
-                    Vec::new(),
-                    &CancellationToken::new()
-                )
-                .is_err());
-            std::fs::remove_dir_all(base).unwrap();
-            return;
         }
         let path = format!("{}/inside", roots[0].virtual_root());
         let id = handle(run(&mut session, Operation::OpenDirectory { path }));

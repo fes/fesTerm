@@ -41,16 +41,14 @@ fn owned(fd: i32) -> io::Result<File> {
 pub fn same_data_object(a: &File, b: &File) -> io::Result<bool> {
     let left = a.metadata()?;
     let right = b.metadata()?;
-    if left.dev() != right.dev() || left.ino() != right.ino() {
-        return Ok(false);
-    }
+    let same_inode = left.dev() == right.dev() && left.ino() == right.ino();
     #[cfg(target_os = "linux")]
     {
-        Ok(mount_id(a)? == mount_id(b)?)
+        Ok(same_inode && mount_id(a)? == mount_id(b)?)
     }
     #[cfg(target_os = "macos")]
     {
-        Ok(true)
+        Ok(same_inode)
     }
 }
 #[cfg(target_os = "linux")]

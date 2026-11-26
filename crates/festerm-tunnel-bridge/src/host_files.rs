@@ -401,16 +401,18 @@ mod tests {
                     .kind(),
                     io::ErrorKind::Unsupported
                 );
+                assert!(transfer.open_read(&captured).await.is_err());
+                assert!(!first.join("saved.txt").exists());
+                assert_eq!(
+                    std::fs::read(second.join("saved.txt")).unwrap(),
+                    b"second original"
+                );
+                eprintln!(
+                    "allowlist native prerequisite unavailable; new-scope refused without effects, shared namespace/budget still checked"
+                );
             }
             #[cfg(not(target_os = "macos"))]
             panic!("supported local fixture unexpectedly unavailable");
-            assert!(transfer.open_read(&captured).await.is_err());
-            assert!(!first.join("saved.txt").exists());
-            assert_eq!(
-                std::fs::read(second.join("saved.txt")).unwrap(),
-                b"second original"
-            );
-            eprintln!("allowlist native prerequisite unavailable; new-scope refused without effects, shared namespace/budget still checked");
         }
         browse.cancel();
         transfer.cancel();
