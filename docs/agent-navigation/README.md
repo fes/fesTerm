@@ -15,7 +15,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Automation, workflows, and MCP](automation.md) | This domain owns brokered automation authority, workflow validation, and MCP protocol gating for observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns HOST selection, owner consent, hosted runtime preparation, portable recipe boundaries, and rooted file-stream cancellation for dev tunnels and enterprise/PowerShell flows. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns authenticated host runtime admission, route selection, and rooted file-transfer semantics that preserve ownership and cancellation invariants. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, macOS AppKit/Finder bridging, and wake/privacy event monitoring for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns shared mobile runtime, private state, input and sessions. |
 | [Desktop application shell and screens](app-shell.md) | Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings. |
