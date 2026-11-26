@@ -538,8 +538,29 @@ ID and names, never protocol handles. At most eight files/empty folders require
 separate confirmation and negotiated Delete consent. Selection, location,
 listing and authority changes cancel the review. Confirmed prefix/total remain
 observable across cleanup timeout, while only an outstanding mutation is labeled
-unobserved. No automatic retry, replay, recursive/local Delete, background work
+unobserved. No automatic retry, replay, recursive Delete, background work
 or durable mobile recovery is added.
+
+Local Delete is a separate Documents-only action on the existing review sheet;
+it requires no remote write/Delete permission and sends no Files RPC. One worker
+retains at most eight direct-child handles from one current successful listing,
+bound to its pane, generation, selection and lifetime. The listing gates selection;
+Prepare binds the current native object and returns its current file size or
+empty-folder kind for fresh explicit confirmation. It does not assume a listing
+inode cache or promise pre-Review identity continuity. Rooted no-follow traversal
+refuses cross-device components, unsafe/reserved native spellings, links, special
+files and file hard links. Final directory removal is empty-only. Commit holds
+the existing native document writer exclusion through one no-replace capture,
+removal or conditional restore, even if its UI disappears. A capture is restored
+only once to a vacant original name while its exact parent remains rooted. If
+restoration is unsafe it is retained; a sanitized recovery locator is shown only
+when current authority, rooted parent and exact capture identity still verify.
+Otherwise the result stays honestly unknown. Recovery detail is separate from
+persistent generic counts/notices/errors, rechecked at paint and cleared on
+later authority/lifetime cutover; counts remain visible. No startup sweep or durable recovery
+ledger is introduced. Existing same-UID/root stat/rename/unlink race exclusions
+remain; this is not hostile same-account race immunity. iOS and Android native
+Local Delete qualification remain pending independently of earlier remote results.
 
 Validation impact: GUI:MOB-13, ADR-0067, ADR-0059. Preserve shared endpoint and
 ordinary SFTP behavior; test profile migration/downgrade, exact account/identity

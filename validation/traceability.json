@@ -7933,7 +7933,8 @@
       ],
       "decisions": [
         "ADR-0067",
-        "ADR-0059"
+        "ADR-0059",
+        "ADR-0069"
       ],
       "automated_tests": [
         "files_profiles_roundtrip_without_authority_and_stay_inert_after_account_removal",
@@ -7962,15 +7963,34 @@
         "files_delete_unknown_partial_result_is_retained_without_replay_after_retirement",
         "files_delete_rendered_folder_selection_review_and_confirm_are_separate_actions",
         "host_files_delete_cancel_and_stale_review_preserve_stream_without_mutation",
-        "host_files_delete_partial_unobserved_reply_keeps_counts_and_never_replays"
+        "host_files_delete_partial_unobserved_reply_keeps_counts_and_never_replays",
+        "files_delete_local_failed_listing_side_generation_and_confirmation",
+        "files_delete_local_rendered_menu_review_cancel_and_confirm_with_remote_delete_off",
+        "host_files_delete_local_commands_do_not_require_remote_write_delete_or_rpc",
+        "files_delete_local_file_empty_0755_folder_and_cancel",
+        "files_delete_local_rejects_alias_reserved_symlink_hardlink_and_batches",
+        "files_delete_local_stale_id_replacement_nonempty_and_root_move_refuse",
+        "files_delete_local_capture_cancel_restore_collision_and_nonempty_preserve",
+        "files_delete_local_postcapture_root_and_leaf_swap_preserve_without_locator",
+        "files_delete_local_detached_cleanup_settles_before_writer_wakeup",
+        "ordinary_empty_directory_removal_and_bounded_exact_spelling_are_retained",
+        "files_delete_local_recovery_locator_is_hidden_after_review_retirement",
+        "native_save_excludes_mutations_until_completion",
+        "all_detached_transfer_leases_must_finish_before_save",
+        "files_delete_local_cancel_at_final_admission_does_not_capture",
+        "files_delete_local_received_locator_is_separate_and_cleared_before_retired_render",
+        "files_delete_review_widget_sanitizes_folder_labels_without_changing_raw_paths",
+        "files_delete_local_owner_lifetime_canceled_during_final_validation_refuses_or_restores",
+        "host_files_delete_local_pre_review_file_to_folder_shows_current_kind_before_confirm",
+        "host_files_delete_local_availability_rechecks_lifetime_after_callback"
       ],
       "manual_scenarios": [
         "MOB-13"
       ],
       "status": "partial",
       "prerequisites": [
-        "Pinned Android Linux/Windows/Mac named pinned Files profile save/fresh reopening and reviewed regular-file/empty-folder Delete Cancel/fresh Confirm are accepted in validation/dev-tunnels/mobile-files-android-native-components.json, followed by owned profile cleanup and original preservation. Native iOS, Files-profile process restart, offline edit/sign-out, changed identity/stale-authority and unknown-result presentation remain separate pending checks. No shell-matrix cases or full item25 closure added.",
-        "Foreground Files authority is required. No background continuation, durable mobile recovery ledger, recursive/local Delete, rename/chmod/links or automatic replay is added."
+        "Pinned Android Linux/Windows/Mac named pinned Files profile save/fresh reopening and reviewed regular-file/empty-folder Delete Cancel/fresh Confirm are accepted in validation/dev-tunnels/mobile-files-android-native-components.json, followed by owned profile cleanup and original preservation. Full native iOS pairs, Files-profile process restart, offline edit/sign-out, changed identity/stale-authority and unknown-result presentation remain separate pending checks. No shell-matrix cases or full item25 closure added. Pinned iOS Simulator source 3d6ed76b components are separately attributed in validation/dev-tunnels/mobile-files-ios-native-components.json; they do not qualify the new Local Delete implementation.",
+        "Foreground Files authority and a current successful listing are required. Local Delete uses pinned Documents without remote write/Delete permission or RPC and retains native Save exclusion through capture/settlement. Native Local Delete on iOS and Android remains pending. No background continuation, durable mobile recovery ledger, recursive Delete, rename/chmod/links or automatic replay is added."
       ]
     }
   ]

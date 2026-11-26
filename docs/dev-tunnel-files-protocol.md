@@ -637,6 +637,21 @@ no automatic retry or replay. These source/framed/UI tests do not qualify native
 mobile Files behavior, durable recovery, recursive Delete or background work.
 
 
+Local Delete independently uses the pinned App Documents root in the same worker
+and side-bound review sheet, without a remote capability or RPC. A current
+successful listing and up to eight exact files/empty folders are required.
+Prepare binds the current object, whose file size or empty-folder kind is shown
+before confirmation. Review folder labels are sanitized presentation only;
+actual virtual paths remain unchanged. Native
+no-follow handles and one conditional capture/restore retain the existing local
+writer permit through settlement. Unsafe restore preserves the capture with a
+sanitized recovery locator only while its current rooted identity verifies; an
+unverifiable location remains unknown. Recovery details stay separate from generic
+counts/errors and disappear after later authority retirement. No recursive deletion, startup sweep,
+durable recovery ledger or protocol operation is added. New Local Delete native
+iOS/Android qualification remains pending.
+
+
 ### Optional display-root presentation
 
 A reviewed Files stream may advertise `display_root` in its existing bounded

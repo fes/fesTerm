@@ -1,0 +1,67 @@
+{
+  "record_version": 1,
+  "tracker": "https://github.com/fes/fesTerm/issues/778",
+  "date_utc": "2026-11-26",
+  "status": "Scoped iOS Simulator Files components accepted against three pinned hosts. Full pair and release qualification remain open.",
+  "mobile_files_item25_complete": false,
+  "combined_release_qualified": false,
+  "client_build": {
+    "platform": "arm64 iOS Simulator",
+    "features": ["host-clients"],
+    "kind": "Private development SDK artifact",
+    "commit": "3d6ed76b3f897418ab02a481465fb493cb8e4b90",
+    "tree": "428eeed872daa9381e43e24045374242494cbbf9",
+    "executable_sha256": "2539c0fae07b54e8e772ed94f60a347468721d7e7d2f89cf46f09bb34a94ec8f"
+  },
+  "main_at_review": {
+    "commit": "d3f1f6d7842a2ae5897c286b3794f23668249e5b",
+    "tree": "51252a5c0021f83d55f22db92fdbabd219d6ee69",
+    "result": "Main CI passed separately. Native results in this record apply only to the pinned Simulator artifact."
+  },
+  "common_accepted_components": [
+    "Ordinary host discovery reached Files Ready. The compact Local and Remote panes each showed three complete rows.",
+    "Saved a default-named Files destination, reopened it after closing the Files view, and removed the test profile.",
+    "Uploaded a 512 KiB Markdown fixture to a previously absent destination and rendered its preview. The source, server file, and preview copy matched by size and SHA-256.",
+    "Remote Delete Cancel preserved the reviewed file identity and hash. Confirm on a fresh review removed only the uploaded file."
+  ],
+  "components": [
+    {
+      "server_os": "Linux",
+      "server_version": "0.17.24",
+      "server_runtime_epoch": 95,
+      "accepted": "Browsed an existing empty directory. Preview fetched the uploaded fixture into the private cache.",
+      "explicit_download": "Pending",
+      "folder_attempt": "The runner stopped before tapping or typing after the plan opened the local form for a remote-form check.",
+      "private_acceptance_sha256": "6ed545a71ebfe8ed3871ff48879ea5ca7037fde03ac303b19528031038059cb7"
+    },
+    {
+      "server_os": "Windows",
+      "server_version": "0.17.24",
+      "server_runtime_epoch": 82,
+      "accepted": "Browsed an existing remote folder and used Download to transfer a 97-byte file to an absent local destination. The size and SHA-256 matched.",
+      "folder_attempt": "The correct remote form opened. The runner stopped before tapping or typing. The failed check remains unidentified.",
+      "private_acceptance_sha256": "09ef4f7a4cf961acbdfef4c4bba34e39ac0d965edc78747f99cdd91bbb382c10"
+    },
+    {
+      "server_os": "macOS",
+      "server_version": "0.17.26",
+      "server_native_epoch": 32,
+      "server_runtime_epoch": 51,
+      "accepted": "Browsed an existing remote folder and used Download to transfer a 97-byte file to an absent local destination. The size and SHA-256 matched.",
+      "folder_attempt": "Untested in this run.",
+      "private_acceptance_sha256": "07596717aa354a60f0576f4bccfc0fa30fbba8b4678917a52affff9d8f37dbc3"
+    }
+  ],
+  "preservation": "Original app documents, profiles and account metadata, and the targeted server fixtures were preserved. The two explicit downloads were removed as fixture cleanup after Simulator shutdown. Three verified private preview cache copies remained.",
+  "mac_run_windows_observer": {
+    "original": "Windows resumed. The immediate post-resume PowerShell observer timed out after 90 seconds. The cause remains unknown.",
+    "late": "A separate read-only observation matched the baseline for all 33 tracked Windows processes and the recorded host state.",
+    "private_late_acceptance_sha256": "667aa10e96ce3f1fdff0ba07ffc6d9b19676e7a19d2671d991f42c661ae4aa72"
+  },
+  "pending": [
+    "Full iOS pairs and the combined mobile Files campaign.",
+    "Folder typing, creation, and reviewed empty-folder Delete, and in-app Local Delete.",
+    "In-flight transfer Cancel, same-queue continuation, background retirement, and reconnect.",
+    "Native testing of current main and production-release qualification."
+  ]
+}
