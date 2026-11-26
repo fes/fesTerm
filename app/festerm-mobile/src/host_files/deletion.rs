@@ -28,6 +28,7 @@ pub(super) async fn execute<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 Ok(Ok((id, items))) => {
                     let review = Review {
                         id,
+                        local_details: None,
                         names: items.into_iter().map(|item| item.name).collect(),
                     };
                     if reply.send(Ok(review)).is_err() || stop.is_cancelled() {
@@ -64,6 +65,7 @@ pub(super) async fn execute<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                         total: result.total,
                         unknown: result.failure.as_ref().is_some_and(|(unknown, _)| *unknown),
                         failed: result.failure.is_some(),
+                        recovery: None,
                     },
                     endpoint.check_current().is_ok(),
                 ),
@@ -75,6 +77,7 @@ pub(super) async fn execute<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                             total: counts.map_or(0, |(_, total)| total),
                             unknown: observation.result_is_uncertain(),
                             failed: true,
+                            recovery: None,
                         },
                         false,
                     )

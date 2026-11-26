@@ -63,6 +63,8 @@ successful reads supersede obsolete pending failures.
 
 An app-owned admission lease excludes native saves from local Files mutations
 and SFTP downloads. Parallel downloads retain their existing admission, but
+reviewed local file/empty-folder deletion retains the lease through its actual
+capture/removal/conditional restore, including detached UI cleanup;
 a document save refuses visibly until all such mutations settle; mutations
 likewise refuse during an admitted save. This intentionally conservative,
 process-wide exclusion avoids uncoordinated app-owned writers racing the

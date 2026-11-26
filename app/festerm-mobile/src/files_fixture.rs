@@ -64,7 +64,11 @@ impl festerm_sftp::PaneFs for FixtureFs {
         Ok(())
     }
     fn join(&self, directory: &str, name: &str) -> festerm_sftp::Result<String> {
-        Ok(format!("{}/{name}", directory.trim_end_matches('/')))
+        if self.kind == festerm_sftp::PaneKind::Local {
+            festerm_sftp::path::join_local(directory, name)
+        } else {
+            Ok(format!("{}/{name}", directory.trim_end_matches('/')))
+        }
     }
     fn parent(&self, path: &str) -> Option<String> {
         path.trim_end_matches('/')

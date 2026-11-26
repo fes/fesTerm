@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "a9423c3b0e713bf66c36126aa8c6433e0ffc87426db0e85b712a9b31e44e4789"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "ddcb8f46538ad707e452860db813a61e1404f4d5e56b35e53fe5128181fa41be"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns shared iOS/Android runtime, private state, native input and session flows.
+Owns shared mobile runtime, private state, input and sessions.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
@@ -13,7 +13,7 @@ Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.m
 Use for: What owns app launch, lifecycle, auth lock, and suspend policy?
 
 - [`Lifecycle`](../../app/festerm-mobile/src/lib.rs) — Counts native lifecycle transitions.
-- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock, and session plumbing.
+- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Owns tabs, terminal state, lock and sessions.
 - [`apply_native_input`](../../app/festerm-mobile/src/lib.rs) — Fences native edits by current focus and authority.
 - [`TerminalInputBatch`](../../app/festerm-mobile/src/lib.rs) — Bounds and fences one terminal input batch.
 
@@ -29,12 +29,12 @@ Caveats:
 
 Use for: Which files handle host discovery, inventory, and save-before-connect?
 
-- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns discovery, creation review and profile metadata.
-- [`begin_host_reconnect`](../../app/festerm-mobile/src/host_clients/reconnect.rs) — Refreshes exact ordinary account/host/session proof for same-tab Attach without creation or takeover.
+- [`HostUi`](../../app/festerm-mobile/src/host_clients.rs) — Owns discovery, review and profiles.
+- [`begin_host_reconnect`](../../app/festerm-mobile/src/host_clients/reconnect.rs) — Refreshes same-tab Attach proof without creation/takeover.
 - [`saved_receipt_loaded`](../../app/festerm-mobile/src/host_clients.rs) — Validates saved-profile receipts against the current host, account, and fingerprint.
 - [`show_tabs`](../../app/festerm-mobile/src/shell.rs) — Keeps the Profiles host-browser entry above tabs, outside the saved-profile scroller.
 - [`NativeAppPrivateRoot`](../../crates/festerm-secret-store/src/native_root.rs) — Pins the Foundation-selected iOS app namespace; no alternate storage path is tried.
-- [`KeyDiagnostic`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/key_diagnostics.rs) — Finite preparation stages; no source strings or key data.
+- [`KeyDiagnostic`](../../crates/festerm-tunnel-bridge/src/host_client/ordinary/key_diagnostics.rs) — Bounded metadata-only stages.
 
 Evidence:
 - [`mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays`](../../app/festerm-mobile/src/host_clients_tests.rs)
@@ -48,13 +48,14 @@ Caveats:
 
 ## Documents and files
 
-Use for: document authority and file browsing.
+Use for: Documents and Files.
 
 - [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns document authority and save policy.
 
-- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Owns Files and the shared upload queue adapter.
+- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Owns Files and its upload queue.
 
 - [`Root`](../../app/festerm-mobile/src/host_files/local_root.rs) — Pins Documents before canonicalization.
+- [`Owner`](../../app/festerm-mobile/src/host_files/local_delete.rs) — Reviews Documents-only deletion.
 - [`FilesHostIdentity`](../../app/festerm-mobile/src/host_files_profiles.rs) — Pins saved Files destinations; reopen uses fresh authority.
 
 Evidence:
@@ -62,12 +63,13 @@ Evidence:
 
 Caveats:
 - Private copies preserve originals; imports are bounded.
+- Local Delete needs no remote Delete grant; native checks remain separate.
 
 ## Live SSH shell
 
 Use for: When transient SSH trust, suspension, and reconnect are needed?
 
-- [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Holds transient SSH state, prompts, recovery logic, and tunnel attachment.
+- [`LiveSsh`](../../app/festerm-mobile/src/live_ssh.rs) — Holds transient SSH trust, recovery and attachments.
 
 Evidence:
 - [`mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs)

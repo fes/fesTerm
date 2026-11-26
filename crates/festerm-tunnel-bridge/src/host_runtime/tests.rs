@@ -2436,10 +2436,15 @@ async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_auth
     assert!(stale.is_issued() && !stale.is_resolved());
     let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
     let original_end = end.operation().clone();
-    assert!(matches!(
-        client_end_worker(&mut fixture, end.clone()).await,
-        crate::host_client::Outcome::Ended { target: ended } if ended == target
-    ));
+    let actual = client_end_worker(&mut fixture, end.clone()).await;
+    assert!(
+        matches!(&actual, crate::host_client::Outcome::Ended { target: ended } if ended == &target),
+        "native End stage=initial-worker-completion actual={} issued={} resolved={} operation_unchanged={}",
+        native_end_outcome_diagnostic(&actual, &target),
+        end.is_issued(),
+        end.is_resolved(),
+        end.operation() == &original_end,
+    );
     assert!(
         end.is_issued() && end.is_resolved(),
         "one End confirms only its observed exact gone generation"

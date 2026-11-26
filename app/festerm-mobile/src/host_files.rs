@@ -21,6 +21,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 mod deletion;
+mod local_delete;
 mod local_download;
 mod local_root;
 mod local_upload;
@@ -35,6 +36,7 @@ type Reply<T> = mpsc::SyncSender<Result<T, SftpError>>;
 enum Command {
     Ping,
     Delete(deletion::Command),
+    LocalDelete(deletion::Command),
     List(String, ListOptions, Reply<Listing>),
     Stat(String, Reply<Entry>),
     Download(u64, String, String, CancellationToken),
@@ -342,6 +344,50 @@ impl Transfers for HostTransfers {
         // The UI cancels the shared stop token synchronously before this
         // best-effort close request; a full queue cannot permit a stale commit.
         let _ = self.0.send(Command::Delete(deletion::Command::Cancel));
+    }
+    fn local_delete_available(&self) -> bool {
+        cfg!(unix)
+            && !self.0.cancel.is_cancelled()
+            && (self.0.current)().is_ok()
+            && self.0.root.lock().unwrap().is_some()
+            && !self.0.cancel.is_cancelled()
+    }
+    fn review_local_delete(
+        &self,
+        paths: Vec<String>,
+        stop: CancellationToken,
+    ) -> Result<super::files::deletion::Reply<super::files::deletion::Review>, String> {
+        if !self.local_delete_available() {
+            return Err("Deletion is unavailable".into());
+        }
+        let (send, receive) = mpsc::sync_channel(1);
+        self.0
+            .commands
+            .try_send(Command::LocalDelete(deletion::Command::Prepare(
+                paths, stop, send,
+            )))
+            .map_err(|_| "Files is busy")?;
+        Ok(receive)
+    }
+    fn commit_local_delete(
+        &self,
+        id: u64,
+    ) -> Result<super::files::deletion::Reply<super::files::deletion::Outcome>, String> {
+        if !self.local_delete_available() {
+            return Err("Deletion is unavailable".into());
+        }
+        let (send, receive) = mpsc::sync_channel(1);
+        self.0
+            .commands
+            .try_send(Command::LocalDelete(deletion::Command::Commit(id, send)))
+            .map_err(|_| "Files is busy")?;
+        Ok(receive)
+    }
+    fn cancel_local_delete(&self) {
+        let _ = self
+            .0
+            .commands
+            .try_send(Command::LocalDelete(deletion::Command::Cancel));
     }
     fn rows(&self) -> Vec<TransferRow> {
         if let Some(uploads) = self.0.uploads.lock().unwrap().clone() {
@@ -736,11 +782,15 @@ impl HostConnector {
                         .send(LinkEvent::Ready(Box::new(ready)))
                         .map_err(|_| "Files view closed")?;
                     wake.request_repaint();
+                    let repaint = wake.clone();
+                    let mut local_delete = local_delete::Owner::new(root.clone(), publish_guard.clone(), cancel.clone(), Arc::new(move || repaint.request_repaint()));
                     loop {
+                        let local_stop = local_delete.stop();
                         let next = rt.block_on(async {
                         tokio::select! {
                             biased;
                             _ = cancel.cancelled() => None,
+                            _ = local_stop.cancelled() => Some(Command::LocalDelete(deletion::Command::Cancel)),
                             command = rx.recv() => command,
                             _ = tokio::time::sleep(Duration::from_secs(10)) => Some(Command::Ping),
                         }
@@ -751,6 +801,12 @@ impl HostConnector {
                         if (publish_guard)().is_err() || root.check().is_err() {
                             break;
                         }
+                        if let Command::LocalDelete(command) = command {
+                            local_delete.execute(command);
+                            wake.request_repaint();
+                            continue;
+                        }
+                        if !matches!(command, Command::Ping) { local_delete.retire(); }
                         if let Command::Delete(command) = command {
                             if !rt.block_on(deletion::execute(&mut endpoint, command)) {
                                 break;
@@ -784,7 +840,7 @@ impl HostConnector {
                             break;
                         };
                         match command {
-                            Command::Delete(_) => unreachable!("handled before client access"),
+                            Command::LocalDelete(_) | Command::Delete(_) => unreachable!("handled before client access"),
                             Command::Mkdir(path, reply) => {
                                 let result = rt.block_on(async {
                                     tokio::time::timeout(DEADLINE, client.mkdir(&path)).await
@@ -1819,6 +1875,200 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn host_files_delete_local_availability_rechecks_lifetime_after_callback() {
+        let local = tempfile::tempdir().unwrap();
+        let root = local_root::Root::open(local.path()).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);
+        let cancel = CancellationToken::new();
+        let retired = cancel.clone();
+        let lease = Arc::new(Lease {
+            commands: tx,
+            cancel,
+            state: Arc::new(Mutex::new(State::default())),
+            wake: egui::Context::default(),
+            write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(Some(root)),
+            display_root: Mutex::new(None),
+            current: Arc::new(move || {
+                retired.cancel();
+                Ok(())
+            }),
+        });
+        let transfers = HostTransfers(lease);
+        assert!(!transfers.local_delete_available());
+        assert!(transfers
+            .review_local_delete(vec!["canary".into()], CancellationToken::new())
+            .is_err());
+        assert!(rx.try_recv().is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn host_files_delete_local_pre_review_file_to_folder_shows_current_kind_before_confirm() {
+        use crate::files::{FilesSession, Ready};
+        use egui_kittest::{kittest::Queryable, Harness};
+        let local = tempfile::tempdir().unwrap();
+        std::fs::write(local.path().join("chosen"), b"old file").unwrap();
+        let root = local_root::Root::open(local.path()).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);
+        let lease = Arc::new(Lease {
+            commands: tx,
+            cancel: CancellationToken::new(),
+            state: Arc::new(Mutex::new(State::default())),
+            wake: egui::Context::default(),
+            write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(Some(root.clone())),
+            display_root: Mutex::new(None),
+            current: Arc::new(|| Ok(())),
+        });
+        let ctx = egui::Context::default();
+        let mut session = FilesSession::ready(
+            "Files".into(),
+            "Dev Tunnels Files".into(),
+            Ready {
+                remote: Arc::new(crate::files_fixture::FixtureFs {
+                    kind: festerm_sftp::PaneKind::Remote,
+                    home: "/",
+                    entries: vec![],
+                }),
+                local: Arc::new(festerm_sftp::LocalFs::new(local.path()).unwrap()),
+                local_root: local.path().into(),
+                transfers: Arc::new(HostTransfers(lease.clone())),
+                start_dir: Some("/".into()),
+                remote_write: false,
+            },
+            &ctx,
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while session.local.as_ref().unwrap().loading() {
+            session.poll(&ctx);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "initial owned listing did not finish"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            session
+                .local
+                .as_ref()
+                .unwrap()
+                .listing
+                .as_ref()
+                .unwrap()
+                .entries[0]
+                .kind,
+            festerm_sftp::EntryKind::File
+        );
+        session
+            .local
+            .as_mut()
+            .unwrap()
+            .selected
+            .insert("chosen".into());
+        std::fs::remove_file(local.path().join("chosen")).unwrap();
+        std::fs::create_dir(local.path().join("chosen")).unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, session: &mut FilesSession| {
+                    session.poll_delete(ui.ctx());
+                    crate::files_ui::show(ui, session);
+                },
+                session,
+            );
+        harness.run_steps(3);
+        harness
+            .get_all_by_label("Sort and view options")
+            .nth(1)
+            .unwrap()
+            .click();
+        harness.run_steps(3);
+        harness.get_by_label("Delete selected").click();
+        harness.run_steps(3);
+        let Command::LocalDelete(command) = rx.try_recv().unwrap() else {
+            panic!("local preparation must not use remote RPC")
+        };
+        let mut owner = local_delete::Owner::new(
+            root,
+            lease.current.clone(),
+            lease.cancel.clone(),
+            Arc::new(|| {}),
+        );
+        owner.execute(command);
+        harness.run_steps(3);
+        harness.get_by_label("Empty folder");
+        assert!(harness.query_by_label("File · 8 B").is_none());
+        assert!(local.path().join("chosen").is_dir());
+        assert!(rx.try_recv().is_err());
+        harness.get_by_label("Delete reviewed entries").click();
+        harness.run_steps(3);
+        assert!(
+            local.path().join("chosen").is_dir(),
+            "only worker confirmation may mutate"
+        );
+        let Command::LocalDelete(command) = rx.try_recv().unwrap() else {
+            panic!("local confirmation must not use remote RPC")
+        };
+        owner.execute(command);
+        harness.run_steps(3);
+        assert!(!local.path().join("chosen").exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn host_files_delete_local_commands_do_not_require_remote_write_delete_or_rpc() {
+        let local = tempfile::tempdir().unwrap();
+        std::fs::write(local.path().join("canary"), b"original").unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);
+        let root = local_root::Root::open(local.path()).unwrap();
+        let lease = Arc::new(Lease {
+            commands: tx,
+            cancel: CancellationToken::new(),
+            state: Arc::new(Mutex::new(State::default())),
+            wake: egui::Context::default(),
+            write: std::sync::atomic::AtomicBool::new(false),
+            delete: std::sync::atomic::AtomicBool::new(false),
+            uploads: Mutex::new(None),
+            root: Mutex::new(Some(root.clone())),
+            display_root: Mutex::new(None),
+            current: Arc::new(|| Ok(())),
+        });
+        let transfers = HostTransfers(lease.clone());
+        assert!(!transfers.delete_available());
+        assert!(transfers.local_delete_available());
+        let stop = CancellationToken::new();
+        let reply = transfers
+            .review_local_delete(vec!["canary".into()], stop.clone())
+            .unwrap();
+        let Command::LocalDelete(command) = rx.try_recv().unwrap() else {
+            panic!("local command must never enter remote dispatcher")
+        };
+        let mut owner = local_delete::Owner::new(
+            root,
+            lease.current.clone(),
+            lease.cancel.clone(),
+            Arc::new(|| {}),
+        );
+        owner.execute(command);
+        let review = reply.recv().unwrap().unwrap();
+        assert_eq!(
+            std::fs::read(local.path().join("canary")).unwrap(),
+            b"original"
+        );
+        let result = transfers.commit_local_delete(review.id).unwrap();
+        let Command::LocalDelete(command) = rx.try_recv().unwrap() else {
+            panic!("local commit must not use Files RPC")
+        };
+        owner.execute(command);
+        assert_eq!(result.recv().unwrap().unwrap().confirmed, 1);
+        assert!(rx.try_recv().is_err());
+        assert!(!local.path().join("canary").exists());
+    }
     #[test]
     fn host_files_mutations_and_invalid_paths_never_reach_worker() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);

@@ -115,6 +115,24 @@ pub(crate) trait Transfers: Send + Sync {
     }
     #[cfg(feature = "host-clients")]
     fn cancel_delete(&self) {}
+    #[cfg(feature = "host-clients")]
+    fn local_delete_available(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "host-clients")]
+    fn review_local_delete(
+        &self,
+        _: Vec<String>,
+        _: tokio_util::sync::CancellationToken,
+    ) -> Result<deletion::Reply<deletion::Review>, String> {
+        Err("Deletion is unavailable".into())
+    }
+    #[cfg(feature = "host-clients")]
+    fn commit_local_delete(&self, _: u64) -> Result<deletion::Reply<deletion::Outcome>, String> {
+        Err("Deletion is unavailable".into())
+    }
+    #[cfg(feature = "host-clients")]
+    fn cancel_local_delete(&self) {}
     /// Ordinary Files keeps private preview copies; SSH retains its historical
     /// preparation, read and cleanup path through these default hooks.
     fn retains_preview_copies(&self) -> bool {
@@ -546,6 +564,8 @@ pub(crate) struct FilesSession {
     pub(crate) deletion: Option<deletion::Draft>,
     #[cfg(feature = "host-clients")]
     delete_result: Option<String>,
+    #[cfg(feature = "host-clients")]
+    delete_recovery: Option<String>,
     pub(crate) remote_write: bool,
     pub(crate) folder: Option<FolderDraft>,
     pub(crate) title: String,
@@ -587,6 +607,8 @@ impl FilesSession {
             deletion: None,
             #[cfg(feature = "host-clients")]
             delete_result: None,
+            #[cfg(feature = "host-clients")]
+            delete_recovery: None,
             remote_write: false,
             folder: None,
             remote: None,
@@ -620,6 +642,10 @@ impl FilesSession {
     }
 
     fn install(&mut self, ready: Ready, ctx: &egui::Context) {
+        #[cfg(feature = "host-clients")]
+        {
+            self.delete_recovery = None;
+        }
         self.remote_write = ready.remote_write;
         let remote_start = ready
             .start_dir
@@ -1032,6 +1058,10 @@ impl FilesSession {
 
     /// Removes opened-document copies; called when the session closes.
     pub(crate) fn cleanup(&mut self) {
+        #[cfg(feature = "host-clients")]
+        {
+            self.delete_recovery = None;
+        }
         #[cfg(feature = "host-clients")]
         self.cancel_delete();
         if self

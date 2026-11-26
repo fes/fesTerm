@@ -663,6 +663,8 @@ const FILES_MAX_WIDTH: f32 = 1100.0;
 
 /// The Files screen body below the header.
 pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
+    #[cfg(feature = "host-clients")]
+    session.clear_retired_delete_recovery();
     let mut outcome = FilesOutcome::default();
     let ctx = ui.ctx().clone();
     // Pane minimum heights may expand max_rect; sheets belong to the original
@@ -701,6 +703,10 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                     });
                 }
                 #[cfg(feature = "host-clients")]
+                if let Some(path) = session.deletion_recovery() {
+                    footnote(ui, &format!("Recovery copy in {}: {path}. Keep this copy until recovery is complete.", crate::platform_text("This iPhone", "This device")));
+                }
+                #[cfg(feature = "host-clients")]
                 let delete = select_folders.then(|| session.can_review_delete());
                 #[cfg(not(feature = "host-clients"))]
                 let delete = None;
@@ -709,9 +715,16 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                     select_folders,
                     delete,
                 };
+                #[cfg(feature = "host-clients")]
+                let local_delete = session
+                    .local_deletion_available()
+                    .then(|| session.can_review_delete_side(true));
+                #[cfg(not(feature = "host-clients"))]
+                let local_delete: Option<bool> = None;
                 let local_controls = PaneControls {
                     create: true,
-                    ..Default::default()
+                    select_folders: local_delete.is_some(),
+                    delete: local_delete,
                 };
                 let (mut remote, mut local) = (PaneOutcome::default(), PaneOutcome::default());
                 // Keep the lists in the actual visible body. On a very short screen the
@@ -790,6 +803,10 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
                 #[cfg(feature = "host-clients")]
                 if remote.delete {
                     session.review_delete();
+                }
+                #[cfg(feature = "host-clients")]
+                if local.delete {
+                    session.review_delete_side(true);
                 }
                 if remote.open {
                     outcome.events.extend(session.open_markdown(true));
@@ -901,7 +918,36 @@ fn delete_sheet(ctx: &egui::Context, bounds: Rect, session: &mut FilesSession) {
     let result = bottom_sheet(ctx, "files-reviewed-delete", bounds, |ui| {
         let draft = session.deletion.as_ref().expect("open review");
         sheet_title(ui, "Delete selected entries?", None);
-        footnote(ui, &format!("Remote folder: {}", draft.path()));
+        let folder = if draft.local() {
+            let relative = draft.path().trim_start_matches('/');
+            if relative.is_empty() {
+                "Documents".to_owned()
+            } else {
+                format!("Documents/{relative}")
+            }
+        } else {
+            let root = session.remote_root_label();
+            let root = if root.is_empty() {
+                "Shared folder"
+            } else {
+                &root
+            };
+            let relative = draft.path().trim_start_matches('/');
+            if relative.is_empty() {
+                root.to_owned()
+            } else {
+                format!("{}/{relative}", root.trim_end_matches('/'))
+            }
+        };
+        let label = if draft.local() {
+            crate::platform_text("This iPhone", "This device")
+        } else {
+            "Remote"
+        };
+        footnote(
+            ui,
+            &festerm_sftp::path::display_name(&format!("{label}: {folder}")),
+        );
         footnote(
             ui,
             "Only the reviewed files or empty folders will be removed. This cannot be undone.",
@@ -910,8 +956,25 @@ fn delete_sheet(ctx: &egui::Context, bounds: Rect, session: &mut FilesSession) {
             egui::ScrollArea::vertical()
                 .max_height(220.0)
                 .show(ui, |ui| {
-                    for name in &review.names {
+                    for (index, name) in review.names.iter().enumerate() {
                         ui.label(name);
+                        if draft.local() {
+                            if let Some(detail) = review
+                                .local_details
+                                .as_ref()
+                                .and_then(|items| items.get(index))
+                            {
+                                let label = match detail {
+                                    crate::files::deletion::LocalDetail::File(size) => {
+                                        format!("File · {}", format_size(*size))
+                                    }
+                                    crate::files::deletion::LocalDetail::EmptyFolder => {
+                                        "Empty folder".to_owned()
+                                    }
+                                };
+                                footnote(ui, &label);
+                            }
+                        }
                     }
                 });
         } else {

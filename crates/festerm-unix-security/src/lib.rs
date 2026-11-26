@@ -549,6 +549,87 @@ mod imp {
             .map_err(io::Error::from)
     }
 
+    /// Checks exact native spelling without following aliases or collecting a
+    /// directory listing. The bounded scan stops as soon as a match is found.
+    pub fn directory_has_exact_entry(
+        directory: &File,
+        name: &std::ffi::OsStr,
+        limit: usize,
+    ) -> io::Result<bool> {
+        directory_find(directory, limit, |entry| entry == name)
+    }
+    pub fn directory_is_empty(directory: &File) -> io::Result<bool> {
+        directory_find(directory, 1, |_| true).map(|found| !found)
+    }
+    fn directory_find(
+        directory: &File,
+        limit: usize,
+        mut matches: impl FnMut(&std::ffi::OsStr) -> bool,
+    ) -> io::Result<bool> {
+        use std::os::fd::IntoRawFd;
+        use std::os::unix::ffi::OsStrExt;
+        let fd = reopen_directory_read(directory)?.into_raw_fd();
+        // fdopendir takes ownership on success only.
+        let raw = unsafe { nix::libc::fdopendir(fd) };
+        if raw.is_null() {
+            let error = io::Error::last_os_error();
+            unsafe {
+                nix::libc::close(fd);
+            }
+            return Err(error);
+        }
+        struct Entries(*mut nix::libc::DIR);
+        impl Drop for Entries {
+            fn drop(&mut self) {
+                unsafe {
+                    nix::libc::closedir(self.0);
+                }
+            }
+        }
+        let entries = Entries(raw);
+        let mut count = 0;
+        loop {
+            nix::errno::Errno::clear();
+            let entry = unsafe { nix::libc::readdir(entries.0) };
+            if entry.is_null() {
+                return if nix::errno::Errno::last_raw() == 0 {
+                    Ok(false)
+                } else {
+                    Err(io::Error::last_os_error())
+                };
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            if count >= limit {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            count += 1;
+            if matches(std::ffi::OsStr::from_bytes(name)) {
+                return Ok(true);
+            }
+        }
+    }
+
+    /// Empty-only removal of one ordinary directory from its retained safe
+    /// parent. Unlike private staging cleanup, safe 0755 directories qualify.
+    /// As with regular-file removal, same-UID replacement between the final
+    /// identity check and unlinkat is outside this primitive's threat model.
+    pub fn remove_empty_directory(parent: &File, name: &Path, expected: &File) -> io::Result<()> {
+        one_component(name)?;
+        trusted_private_storage_ancestor(parent)?;
+        trusted_private_storage_ancestor(expected)?;
+        let current = open_directory_read_nofollow(parent, name)?;
+        let a = current.metadata()?;
+        let b = expected.metadata()?;
+        if a.dev() != b.dev() || a.ino() != b.ino() {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        nix::unistd::unlinkat(parent, name, nix::unistd::UnlinkatFlags::RemoveDir)
+            .map_err(io::Error::from)
+    }
+
     /// Opens an ordinary selected download parent, following its existing
     /// symlink semantics but refusing non-directories without opening a FIFO.
     pub fn open_download_parent(path: &Path) -> io::Result<File> {
@@ -1322,15 +1403,15 @@ mod imp {
 #[cfg(unix)]
 pub use imp::{
     create_download_file, create_private_directory, current_user_home, current_user_id,
-    current_user_shell, download_file_matches, is_current_user_only,
-    is_current_user_only_executable, make_private, make_private_directory,
+    current_user_shell, directory_has_exact_entry, directory_is_empty, download_file_matches,
+    is_current_user_only, is_current_user_only_executable, make_private, make_private_directory,
     open_absolute_directory_read_nofollow, open_directory_read_nofollow,
     open_directory_search_nofollow, open_download_parent, open_file_nofollow, open_private_file,
-    preserve_security_metadata, remove_download_file, remove_empty_private_directory,
-    remove_private_staging_file, rename_noreplace, reopen_directory_read, replace_private_file,
-    secure_staging_parent, security_metadata, security_metadata_matches, staging_parent_matches,
-    trusted_packaged_executable_ancestor, trusted_private_storage_ancestor, writable_directory,
-    SecurityMetadata, StagingParentSecurity,
+    preserve_security_metadata, remove_download_file, remove_empty_directory,
+    remove_empty_private_directory, remove_private_staging_file, rename_noreplace,
+    reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
+    security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
+    trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(target_os = "macos")]
@@ -1883,6 +1964,34 @@ mod tests {
             .map(str::to_owned)
             .collect()
     }
+    #[test]
+    fn ordinary_empty_directory_removal_and_bounded_exact_spelling_are_retained() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = TemporaryDirectory::new();
+        let parent = fixture.open();
+        make_private_directory(&parent).unwrap();
+        fs::create_dir(fixture.0.join("Public")).unwrap();
+        fs::set_permissions(fixture.0.join("Public"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(directory_has_exact_entry(&parent, std::ffi::OsStr::new("Public"), 1).unwrap());
+        assert!(!directory_has_exact_entry(&parent, std::ffi::OsStr::new("public"), 1).unwrap());
+        assert!(directory_has_exact_entry(&parent, std::ffi::OsStr::new("Public"), 0).is_err());
+        let child = open_directory_read_nofollow(&parent, Path::new("Public")).unwrap();
+        assert!(directory_is_empty(&child).unwrap());
+        fs::write(fixture.0.join("Public/canary"), b"original").unwrap();
+        assert!(!directory_is_empty(&child).unwrap());
+        assert!(remove_empty_directory(&parent, Path::new("Public"), &child).is_err());
+        assert_eq!(
+            fs::read(fixture.0.join("Public/canary")).unwrap(),
+            b"original"
+        );
+        fs::remove_file(fixture.0.join("Public/canary")).unwrap();
+        fs::rename(fixture.0.join("Public"), fixture.0.join("held")).unwrap();
+        fs::create_dir(fixture.0.join("Public")).unwrap();
+        assert!(remove_empty_directory(&parent, Path::new("Public"), &child).is_err());
+        remove_empty_directory(&parent, Path::new("held"), &child).unwrap();
+        assert!(fixture.0.join("Public").is_dir());
+    }
+
     #[test]
     fn empty_private_directory_cleanup_refuses_nonempty_symlink_and_replacement() {
         use std::os::unix::fs::symlink;
