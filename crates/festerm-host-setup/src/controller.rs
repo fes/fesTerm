@@ -1324,20 +1324,41 @@ async fn run_admitted(
         return Ok(());
     }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
-    let helper = stage.sessiond_path()?;
     let policy_log = RuntimeLog::new(state, record);
-    let policy = Arc::new(
-        CurrentHostPolicySource::prepare(
-            store.clone(),
-            OwnerStorage::NativeVault,
-            expected,
-            &cancel,
-        )
-        .await?
-        .with_diagnostic(Arc::new(move |event, error| {
-            policy_log.readiness(event, error);
-        })),
+    let helper = stage.sessiond_path();
+    policy_log.event(
+        DiagnosticPhase::HelperValidation,
+        if helper.is_ok() {
+            DiagnosticOutcome::Ok
+        } else {
+            DiagnosticOutcome::Error
+        },
+        helper.as_ref().err(),
+        None,
+        None,
     );
+    let helper = helper?;
+    let prepared = CurrentHostPolicySource::prepare(
+        store.clone(),
+        OwnerStorage::NativeVault,
+        expected,
+        &cancel,
+    )
+    .await;
+    policy_log.event(
+        DiagnosticPhase::InitialPolicyPrepare,
+        if prepared.is_ok() {
+            DiagnosticOutcome::Ok
+        } else {
+            DiagnosticOutcome::Error
+        },
+        prepared.as_ref().err(),
+        None,
+        None,
+    );
+    let policy = Arc::new(prepared?.with_diagnostic(Arc::new(move |event, error| {
+        policy_log.readiness(event, error);
+    })));
     record.failure = Some(RunFailure::DaemonBoundaryUnavailable);
     let sessions = SessionControl::with_helper(&state.join("daemon"), helper)
         .map_err(|_| refused("host.runtime_daemon_boundary_unavailable"))?;
@@ -1962,6 +1983,115 @@ mod tests {
                 .iter()
                 .any(|row| row.phase == DiagnosticPhase::RuntimeServe));
         }
+    }
+
+    #[tokio::test]
+    async fn host_runtime_initial_preparation_reports_policy_failure_after_valid_helper() {
+        let (root, store) = fixture();
+        provision(&store);
+        let state = root.path().join("host");
+        let (_lease, original, mut record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let stage = crate::services::fixture_stage(root.path());
+        let mut expected = original.clone();
+        // Inject the real prepare scope refusal before any vault or network work.
+        expected.settings.friendly_name = "Changed expected scope".into();
+        let error = run_admitted(
+            store.clone(),
+            &state,
+            &expected,
+            &mut record,
+            &stage,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "host.ordinary_scope_changed");
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+        let rows = runtime_diagnostics::read(&store, &state);
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.phase.code(), row.outcome))
+                .collect::<Vec<_>>(),
+            [
+                ("helper_validation", DiagnosticOutcome::Ok),
+                ("initial_policy_prepare", DiagnosticOutcome::Error),
+            ]
+        );
+        assert_eq!(store.snapshot().unwrap(), original);
+        assert!(!state.join("daemon").exists());
+        assert!(!state.join("host-cloud.json").exists());
+    }
+
+    #[tokio::test]
+    async fn host_runtime_initial_preparation_log_failure_preserves_original_error() {
+        let (root, store) = fixture();
+        provision(&store);
+        let state = root.path().join("missing-log-directory");
+        let (_lease, original, mut record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let stage = crate::services::fixture_stage(root.path());
+        let mut expected = original.clone();
+        expected.settings.friendly_name = "Changed expected scope".into();
+        let error = run_admitted(
+            store.clone(),
+            &state,
+            &expected,
+            &mut record,
+            &stage,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "host.ordinary_scope_changed");
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+        assert!(runtime_diagnostics::read(&store, &state).is_empty());
+        assert!(!state.exists());
+        assert_eq!(store.snapshot().unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn host_runtime_initial_preparation_reports_helper_failure_before_policy() {
+        let (root, store) = fixture();
+        provision(&store);
+        let state = root.path().join("host");
+        let (_lease, expected, mut record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let stage = crate::services::fixture_stage(root.path());
+        std::fs::remove_file(stage.sessiond_path().unwrap()).unwrap();
+        let error = run_admitted(
+            store.clone(),
+            &state,
+            &expected,
+            &mut record,
+            &stage,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+        let rows = runtime_diagnostics::read(&store, &state);
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.phase.code(), row.outcome))
+                .collect::<Vec<_>>(),
+            [("helper_validation", DiagnosticOutcome::Error),]
+        );
+        assert_eq!(store.snapshot().unwrap(), expected);
+        assert!(!state.join("daemon").exists());
+        assert!(!state.join("host-cloud.json").exists());
     }
 
     #[tokio::test]
