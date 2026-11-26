@@ -991,13 +991,27 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, path).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(target, path).unwrap();
+        {
+            // std forwards target bytes; construct native separators without
+            // resolving ParentDir or changing the intended fixture components.
+            let native: PathBuf = target.components().collect();
+            assert!(native.components().eq(target.components()));
+            assert!(!native.as_os_str().as_encoded_bytes().contains(&b'/'));
+            std::os::windows::fs::symlink_dir(&native, path).unwrap();
+        }
     }
     fn link_file(target: &Path, path: &Path) {
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, path).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_file(target, path).unwrap();
+        {
+            // std forwards target bytes; construct native separators without
+            // resolving ParentDir or changing the intended fixture components.
+            let native: PathBuf = target.components().collect();
+            assert!(native.components().eq(target.components()));
+            assert!(!native.as_os_str().as_encoded_bytes().contains(&b'/'));
+            std::os::windows::fs::symlink_file(&native, path).unwrap();
+        }
     }
     #[test]
     fn readable_links_union_directory_file_and_direct_access_keep_provenance() {
