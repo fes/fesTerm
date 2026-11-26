@@ -1,7 +1,7 @@
 //! Shared Files transfer adapter. Authentication and GUI lifecycles stay with
 //! their application owners; this adapter owns one already-authorized stream.
 use crate::{
-    file_client::{self, Client, Handle},
+    file_client::{self, Client, Handle, ReadablePathMetadata},
     file_protocol as rpc,
     host_client::ordinary::{Files, FilesStream},
 };
@@ -140,8 +140,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
     fn metadata_value(
         &self,
         path: &str,
-        metadata: rpc::Metadata,
+        value: ReadablePathMetadata,
     ) -> Result<SftpPathMetadata, SftpSessionError> {
+        let ReadablePathMetadata {
+            metadata,
+            read_only,
+        } = value;
         let size = metadata
             .size
             .parse()
@@ -163,20 +167,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FilesEndpoint<S> {
             file_type: kind(metadata.kind),
             size: Some(size),
             modified_at,
-            permissions: Some(
-                if self.client.capabilities().write
-                    && self.client.location_metadata().is_none_or(|roots| {
-                        roots.iter().any(|root| {
-                            root.contains(path) && root.available && root.mutations_available
-                        })
-                    })
-                {
-                    0o700
-                } else {
-                    0o500
-                },
-            ),
+            permissions: Some(self.permissions(path, read_only)),
         })
+    }
+
+    fn permissions(&self, path: &str, read_only: bool) -> u32 {
+        if !read_only
+            && self.client.capabilities().write
+            && self.client.location_metadata().is_none_or(|roots| {
+                roots
+                    .iter()
+                    .any(|root| root.contains(path) && root.available && root.mutations_available)
+            })
+        {
+            0o700
+        } else {
+            0o500
+        }
     }
 }
 fn kind(value: rpc::Kind) -> SftpEntryType {
@@ -265,7 +272,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
         path: &'a str,
     ) -> RemoteTransferFuture<'a, Option<SftpPathMetadata>> {
         Box::pin(async move {
-            match self.client.stat(path).await {
+            match self.client.stat_readable_path(path).await {
                 Ok(value) => self.metadata_value(path, value).map(Some),
                 Err(file_client::Error::Remote {
                     code: rpc::ErrorCode::NotFound,
@@ -287,7 +294,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
             let id = self.next_id()?;
             let handle = self
                 .client
-                .open_directory(path)
+                .open_readable_directory(path)
                 .await
                 .map_err(|error| Self::error(path, "open directory", error))?;
             self.directory = Some((id, handle, path.into()));
@@ -315,11 +322,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
                     reason: "The host omitted names that cannot be represented safely; a complete folder transfer could not be planned.".into(),
                 });
             }
-            let permissions = Some(if self.client.capabilities().write {
-                0o700
-            } else {
-                0o500
-            });
             Ok(RemoteDirectoryPage {
                 done: page.done,
                 entries: page
@@ -331,6 +333,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
                         } else {
                             format!("{path}/{0}", entry.name)
                         };
+                        let permissions = Some(self.permissions(&child, entry.read_only));
                         SftpDirectoryItem {
                             name: entry.name,
                             path: SftpPath::remote(child),
@@ -386,7 +389,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
                 .open_read(path)
                 .await
                 .map_err(|error| Self::error(path, "review replacement", error))?;
-            let metadata = match self.metadata_value(path, info) {
+            let metadata = match self.metadata_value(
+                path,
+                ReadablePathMetadata {
+                    metadata: info,
+                    read_only: false,
+                },
+            ) {
                 Ok(value) => value,
                 Err(error) => {
                     self.client.cancel();
@@ -451,7 +460,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> RemoteTransferEndpoint
         mut sink: &'a mut (dyn AsyncWrite + Unpin + Send),
     ) -> RemoteTransferFuture<'a, u64> {
         Box::pin(async move {
-            let result = self.client.download(path, &mut sink).await;
+            let result = self.client.download_readable_path(path, &mut sink).await;
             if let Err(error) = &result {
                 self.record_transfer_failure("download", error);
             }
@@ -498,26 +507,41 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
                 0,
             ));
         }
-        let metadata = self.metadata(path).await?.ok_or_else(|| {
-            Self::error(
-                path,
-                "list directory",
-                file_client::Error::Remote {
-                    code: rpc::ErrorCode::NotFound,
-                    recovery_path: None,
-                },
-            )
-        })?;
-        if metadata.file_type != SftpEntryType::Directory {
-            return Err(SftpSessionError::RemotePathNotDirectory { path: path.into() });
-        }
+        let legacy_metadata = if self.client.read_links_advertised() {
+            None
+        } else {
+            let metadata = self.metadata(path).await?.ok_or_else(|| {
+                Self::error(
+                    path,
+                    "list directory",
+                    file_client::Error::Remote {
+                        code: rpc::ErrorCode::NotFound,
+                        recovery_path: None,
+                    },
+                )
+            })?;
+            if metadata.file_type != SftpEntryType::Directory {
+                return Err(SftpSessionError::RemotePathNotDirectory { path: path.into() });
+            }
+            Some(metadata)
+        };
         let handle = self.open_directory(path).await?;
         let result = async {
+            let (_, wire_handle, _) = self.directory.as_ref().ok_or(SftpSessionError::SessionClosed)?;
+            let metadata = match legacy_metadata {
+                Some(metadata) => metadata,
+                None => {
+                    let opened = self.client.directory_metadata(wire_handle)
+                        .map_err(|error| Self::error(path, "list directory", error))?
+                        .cloned()
+                        .ok_or_else(|| Self::error(path, "list directory", file_client::Error::Protocol))?;
+                    self.metadata_value(path, opened)?
+                }
+            };
             let mut entries = Vec::new();
             let mut bytes = 0usize;
             let mut skipped = 0usize;
             for _ in 0..FILES_DIRECTORY_PAGE_LIMIT {
-                let (_, wire_handle, _) = self.directory.as_ref().ok_or(SftpSessionError::SessionClosed)?;
                 let limit = self.client.capabilities().page_limit;
                 let page = self.client.read_directory(wire_handle, limit).await.map_err(|error| Self::error(path, "list directory", error))?;
                 skipped = skipped.checked_add(usize::from(page.skipped)).ok_or(SftpSessionError::SessionClosed)?;
@@ -527,7 +551,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
                     if entries.len() >= FILES_DIRECTORY_ENTRY_LIMIT || bytes > FILES_DIRECTORY_BYTE_LIMIT {
                         return Err(SftpSessionError::RemoteOperationFailed { operation: "list directory", path: path.into(), reason: "Folder exceeds the bounded Files view. No partial listing was published; enter a narrower folder path.".into() });
                     }
-                    entries.push(SftpDirectoryItem { name: entry.name, path: SftpPath::remote(child), file_type: kind(entry.kind), size: None, modified_at: None, permissions: metadata.permissions });
+                    let permissions = Some(self.permissions(&child, entry.read_only));
+                    entries.push(SftpDirectoryItem { name: entry.name, path: SftpPath::remote(child), file_type: kind(entry.kind), size: None, modified_at: None, permissions });
                 }
                 if page.done {
                     self.check_current()?;
@@ -551,7 +576,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> FilesEndpoint<S> {
     ) -> Result<Vec<u8>, SftpSessionError> {
         let (handle, info) = self
             .client
-            .open_read(path)
+            .open_readable_file(path)
             .await
             .map_err(|error| Self::error(path, "open preview", error))?;
         let result = async {
@@ -1907,6 +1932,218 @@ mod tests {
             endpoint.client.cancel();
             joined(server).await;
         }
+    }
+
+    #[tokio::test]
+    async fn files_endpoint_readable_rows_and_preview_keep_alias_path_and_strict_review() {
+        const SELECTOR: &str = "11111111111111111111111111111111";
+        let directory = format!("/{SELECTOR}");
+        let alias = format!("{directory}/alias.md");
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let scripted_directory = directory.clone();
+        let scripted_alias = alias.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            write_frame(
+                &mut peer,
+                rpc::HOST_DESCRIPTION,
+                &serde_json::to_vec(&rpc::HostDescription {
+                    version: rpc::HOST_LOCATIONS_VERSION,
+                    scope: expected,
+                    filesystem: Some(limits()),
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+            let (kind, bytes) = read_frame(&mut peer).await.unwrap();
+            assert_eq!(kind, rpc::OPEN);
+            let open: rpc::HostOpen = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(open.version, rpc::HOST_LOCATIONS_VERSION);
+            reply(
+                &mut peer,
+                0,
+                Some(rpc::Result::ReadyV3 {
+                    capabilities: rpc::OperationCapabilities {
+                        version: rpc::HOST_REVIEWED_VERSION,
+                        write: true,
+                        operations: vec![
+                            "locations".into(),
+                            "start_directory".into(),
+                            "read_links".into(),
+                        ],
+                        chunk_limit: rpc::CHUNK_LIMIT,
+                        page_limit: rpc::PAGE_LIMIT,
+                        handle_limit: rpc::HANDLE_LIMIT,
+                    },
+                }),
+                None,
+            )
+            .await;
+            let locations = request(&mut peer).await;
+            assert!(matches!(locations.operation, rpc::Operation::Locations {}));
+            reply(
+                &mut peer,
+                locations.id,
+                Some(rpc::Result::Locations {
+                    locations: vec![rpc::FileLocation {
+                        selector: SELECTOR.into(),
+                        label: "/owned/direct".to_owned().try_into().unwrap(),
+                        available: true,
+                        mutations_available: true,
+                    }],
+                }),
+                None,
+            )
+            .await;
+
+            for handle in [1, 2] {
+                let directory = request(&mut peer).await;
+                assert!(
+                    matches!(directory.operation, rpc::Operation::OpenReadableDirectory { path } if path == scripted_directory)
+                );
+                reply(
+                    &mut peer,
+                    directory.id,
+                    Some(rpc::Result::ReadableDirectory {
+                        handle,
+                        metadata: rpc::Metadata {
+                            kind: rpc::Kind::Directory,
+                            size: "0".into(),
+                            modified_ms: Some("13".into()),
+                        },
+                        read_only: false,
+                    }),
+                    None,
+                )
+                .await;
+                let page = request(&mut peer).await;
+                assert!(
+                    matches!(page.operation, rpc::Operation::ReadDirectory { handle: actual, .. } if actual == handle)
+                );
+                reply(
+                    &mut peer,
+                    page.id,
+                    Some(rpc::Result::ReadableEntries {
+                        entries: vec![
+                            rpc::ReadableEntry {
+                                name: "alias.md".into(),
+                                kind: rpc::Kind::File,
+                                read_only: true,
+                            },
+                            rpc::ReadableEntry {
+                                name: "direct".into(),
+                                kind: rpc::Kind::Directory,
+                                read_only: false,
+                            },
+                        ],
+                        done: true,
+                        skipped: 0,
+                    }),
+                    None,
+                )
+                .await;
+                let close = request(&mut peer).await;
+                assert!(
+                    matches!(close.operation, rpc::Operation::Close { handle: actual } if actual == handle)
+                );
+                reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            }
+
+            let metadata = rpc::Metadata {
+                kind: rpc::Kind::File,
+                size: "5".into(),
+                modified_ms: None,
+            };
+            let stat = request(&mut peer).await;
+            assert!(
+                matches!(stat.operation, rpc::Operation::StatReadable { path } if path == scripted_alias)
+            );
+            reply(
+                &mut peer,
+                stat.id,
+                Some(rpc::Result::ReadableStat {
+                    metadata: metadata.clone(),
+                    read_only: true,
+                }),
+                None,
+            )
+            .await;
+            let preview = request(&mut peer).await;
+            assert!(
+                matches!(preview.operation, rpc::Operation::OpenReadableFile { path } if path == scripted_alias)
+            );
+            reply(
+                &mut peer,
+                preview.id,
+                Some(rpc::Result::File {
+                    handle: 3,
+                    metadata,
+                }),
+                None,
+            )
+            .await;
+            let close = request(&mut peer).await;
+            assert!(matches!(
+                close.operation,
+                rpc::Operation::Close { handle: 3 }
+            ));
+            reply(&mut peer, close.id, Some(rpc::Result::Closed), None).await;
+            let review = request(&mut peer).await;
+            assert!(
+                matches!(review.operation, rpc::Operation::OpenRead { path } if path == scripted_alias)
+            );
+            reply(&mut peer, review.id, None, Some(rpc::ErrorCode::Denied)).await;
+            assert!(read_frame(&mut peer).await.is_err());
+        });
+
+        let lifetime = CancellationToken::new();
+        let (mut client, _) =
+            Client::open_host_reviewed(stream, &scope.host, &scope.installation, lifetime.clone())
+                .await
+                .unwrap()
+                .unwrap();
+        client.locations().await.unwrap();
+        let mut endpoint = FilesEndpoint::from_client(
+            client,
+            lifetime,
+            FirstFailure::default(),
+            FilesChannel::Transfer,
+        );
+        let (snapshot, metadata, skipped) = endpoint.directory_snapshot(&directory).await.unwrap();
+        assert_eq!(metadata.size, Some(0));
+        assert_eq!(
+            metadata.modified_at,
+            Some(UNIX_EPOCH + Duration::from_millis(13))
+        );
+        assert_eq!(metadata.permissions, Some(0o700));
+        assert_eq!(skipped, 0);
+        assert_eq!(snapshot.entries[0].path, SftpPath::remote(&alias));
+        assert_eq!(snapshot.entries[0].permissions, Some(0o500));
+        assert_eq!(snapshot.entries[1].permissions, Some(0o700));
+        let handle = endpoint.open_directory(&directory).await.unwrap();
+        let page = endpoint.read_directory(handle).await.unwrap();
+        assert!(page.done);
+        assert_eq!(page.entries, snapshot.entries);
+        endpoint.close_directory(handle).await.unwrap();
+        assert_eq!(
+            endpoint
+                .metadata(&alias)
+                .await
+                .unwrap()
+                .unwrap()
+                .permissions,
+            Some(0o500)
+        );
+        assert!(matches!(
+            endpoint.markdown_snapshot(&alias, 4).await,
+            Err(SftpSessionError::RemoteFileTooLarge { limit_bytes: 4, .. })
+        ));
+        assert!(endpoint.review_replacement(&alias).await.is_err());
+        assert!(endpoint.client.available());
+        endpoint.client.cancel();
+        joined(server).await;
     }
 
     #[tokio::test]

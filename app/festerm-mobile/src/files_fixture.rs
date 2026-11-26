@@ -45,6 +45,7 @@ impl festerm_sftp::PaneFs for FixtureFs {
     ) -> festerm_sftp::Result<festerm_sftp::Listing> {
         Ok(festerm_sftp::Listing {
             path: path.to_owned(),
+            directory_read_only: None,
             entries: self.entries.clone(),
             scanned: self.entries.len(),
             hidden_count: 0,

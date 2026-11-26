@@ -791,7 +791,7 @@ mod tests {
             wire::{read_frame, write_frame},
         };
         const SELECTOR: &str = "0123456789abcdef0123456789abcdef";
-        for namespaced in [false, true] {
+        for (namespaced, tagged) in [(false, false), (true, false), (true, true)] {
             let raw = if namespaced {
                 format!("/{SELECTOR}/starting-folder")
             } else {
@@ -806,7 +806,7 @@ mod tests {
             let (stream, mut peer) = tokio::io::duplex(8192);
             let wire_path = raw.clone();
             let mut server = tokio::spawn(async move {
-                let (version, operations) = if namespaced {
+                let (version, mut operations) = if namespaced {
                     (
                         rpc::HOST_LOCATIONS_VERSION,
                         vec!["locations", "start_directory"],
@@ -814,7 +814,10 @@ mod tests {
                 } else {
                     (rpc::HOST_VERSION, vec!["start_directory"])
                 };
-                let description = serde_json::json!({"version":version,"scope":expected,"filesystem":{"version":rpc::VERSION,"write":false,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}});
+                if tagged {
+                    operations.push("read_links");
+                }
+                let description = serde_json::json!({"version":version,"scope":expected,"filesystem":{"version":rpc::VERSION,"write":tagged,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}});
                 write_frame(
                     &mut peer,
                     rpc::HOST_DESCRIPTION,
@@ -823,7 +826,7 @@ mod tests {
                 .await
                 .unwrap();
                 assert_eq!(read_frame(&mut peer).await.unwrap().0, rpc::OPEN);
-                let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":false,"operations":operations,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
+                let ready = serde_json::json!({"id":0,"result":{"type":"ready_v3","capabilities":{"version":rpc::HOST_REVIEWED_VERSION,"write":tagged,"operations":operations,"chunk_limit":rpc::CHUNK_LIMIT,"page_limit":rpc::PAGE_LIMIT,"handle_limit":rpc::HANDLE_LIMIT}}});
                 write_frame(
                     &mut peer,
                     rpc::RESPONSE,
@@ -835,7 +838,7 @@ mod tests {
                     let (_, bytes) = read_frame(&mut peer).await.unwrap();
                     let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
                     assert!(matches!(request.operation, rpc::Operation::Locations {}));
-                    let reply = serde_json::json!({"id":request.id,"result":{"type":"locations","locations":[{"selector":SELECTOR,"label":"/Volumes/Allowed","available":true,"mutations_available":false}]}});
+                    let reply = serde_json::json!({"id":request.id,"result":{"type":"locations","locations":[{"selector":SELECTOR,"label":"/Volumes/Allowed","available":true,"mutations_available":tagged}]}});
                     write_frame(
                         &mut peer,
                         rpc::RESPONSE,
@@ -860,6 +863,48 @@ mod tests {
                 .unwrap();
                 let (_, bytes) = read_frame(&mut peer).await.unwrap();
                 let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                if tagged {
+                    assert!(
+                        matches!(request.operation, rpc::Operation::OpenReadableDirectory { path } if path == wire_path)
+                    );
+                    let opened = serde_json::json!({"id":request.id,"result":{"type":"readable_directory","handle":2,"metadata":{"kind":"directory","size":"0","modified_ms":"17"},"read_only":true}});
+                    write_frame(
+                        &mut peer,
+                        rpc::RESPONSE,
+                        &serde_json::to_vec(&opened).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                    let (_, bytes) = read_frame(&mut peer).await.unwrap();
+                    let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                    assert!(matches!(
+                        request.operation,
+                        rpc::Operation::ReadDirectory { handle: 2, .. }
+                    ));
+                    let page = serde_json::json!({"id":request.id,"result":{"type":"readable_entries","entries":[{"name":"notes.md","kind":"file","read_only":true}],"done":true,"skipped":0}});
+                    write_frame(
+                        &mut peer,
+                        rpc::RESPONSE,
+                        &serde_json::to_vec(&page).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                    let (_, bytes) = read_frame(&mut peer).await.unwrap();
+                    let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                    assert!(matches!(
+                        request.operation,
+                        rpc::Operation::Close { handle: 2 }
+                    ));
+                    let closed = serde_json::json!({"id":request.id,"result":{"type":"closed"}});
+                    write_frame(
+                        &mut peer,
+                        rpc::RESPONSE,
+                        &serde_json::to_vec(&closed).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                    return;
+                }
                 assert!(
                     matches!(request.operation, rpc::Operation::Stat { path } if path == wire_path)
                 );
@@ -907,7 +952,29 @@ mod tests {
                 first.clone(),
                 FilesChannel::Browsing,
             );
-            let error = browsing.directory_snapshot(&start).await.unwrap_err();
+            let snapshot = browsing.directory_snapshot(&start).await;
+            if tagged {
+                let (snapshot, metadata, skipped) = snapshot.unwrap();
+                assert_eq!(snapshot.path, SftpPath::remote(&raw));
+                assert_eq!(metadata.size, Some(0));
+                assert_eq!(
+                    metadata.modified_at,
+                    Some(std::time::UNIX_EPOCH + std::time::Duration::from_millis(17)),
+                );
+                assert_eq!(metadata.permissions, Some(0o500));
+                assert_eq!(skipped, 0);
+                assert_eq!(
+                    snapshot.entries[0].path,
+                    SftpPath::remote(format!("{raw}/notes.md"))
+                );
+                assert_eq!(snapshot.entries[0].permissions, Some(0o500));
+                tokio::time::timeout(std::time::Duration::from_secs(3), server)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                continue;
+            }
+            let error = snapshot.unwrap_err();
             assert!(
                 matches!(&error, festerm_ssh::SftpSessionError::RemoteOperationFailed { path, .. } if path == &raw)
             );

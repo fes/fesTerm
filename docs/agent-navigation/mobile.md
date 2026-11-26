@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "32ffff5db19fd52dddbe9abd7e2f63ee56dfae6ac58608b7b7e7de6bd6f7ebca"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "codex-source-verified", "sources": "d6c7fbddda1cc213623cfd3f5c843c88749433d02a321e1b3024dc01e71545d9"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -52,7 +52,7 @@ Use for: Documents and Files.
 
 - [`DocumentHost`](../../app/festerm-mobile/src/documents.rs) — Owns document authority and save policy.
 
-- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Chooser, verified first listing and uploads.
+- [`HostConnector`](../../app/festerm-mobile/src/host_files.rs) — Same-open listing access; read-only links.
 
 - [`Root`](../../app/festerm-mobile/src/host_files/local_root.rs) — Pins Documents before canonicalization.
 - [`Owner`](../../app/festerm-mobile/src/host_files/local_delete.rs) — Reviews Documents-only deletion.

@@ -3072,9 +3072,9 @@ impl SftpFileManagerTab {
     fn show_pane(&mut self, ui: &mut Ui, focus: PaneFocus) {
         // A physical label never becomes pane state, an editable request path,
         // or a breadcrumb destination. Ordinary SFTP keeps its existing labels.
-        let display_root = if focus == PaneFocus::Remote
-            && matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
-        {
+        let host_files_remote = focus == PaneFocus::Remote
+            && matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_));
+        let display_root = if host_files_remote {
             #[cfg(feature = "experimental-dev-tunnels")]
             let root = (matches!(self.connection_state, SftpConnectionState::Ready)
                 && self.file_operations.current_connection()
@@ -3591,6 +3591,7 @@ impl SftpFileManagerTab {
                                 let selected = pane.selected_items();
                                 selected.len() == pane.selected_count() && selected.iter().all(|item|
                                     item.file_type != SftpEntryType::Other
+                                    && (!host_files_remote || files_item_writable(item))
                                     && item.path.parent_directory() == pane.current_path
                                     && item.path.file_name().is_ok())
                             };
@@ -6959,6 +6960,10 @@ fn read_local_snapshot(path: &Path) -> Result<SftpDirectorySnapshot, String> {
 pub(crate) struct TransferActionState {
     pub(crate) enabled: bool,
     pub(crate) reason: Option<String>,
+}
+
+fn files_item_writable(item: &SftpDirectoryItem) -> bool {
+    item.permissions.is_none_or(|bits| bits & 0o222 != 0)
 }
 
 pub(crate) fn transfer_action(
@@ -10994,6 +10999,20 @@ pub(crate) mod tests {
             None,
         );
         tab.local_pane.select_single(&local.path);
+        tab.remote_pane
+            .directory_metadata
+            .as_mut()
+            .unwrap()
+            .permissions = Some(0o500);
+        assert!(!tab.pane_transfer_action(PaneFocus::Local).enabled);
+        tab.queue_transfer(PaneFocus::Local);
+        assert!(tab
+            .enqueue_external_drop_upload(vec![PathBuf::from("/owned/alias-dropped.txt")])
+            .is_err());
+        tab.review_file_operation(PaneFocus::Remote, false);
+        assert!(!tab.file_operation_open());
+        assert!(commands.try_recv().is_err());
+        tab.remote_pane.directory_metadata = Some(original_metadata.clone());
         assert!(tab.pane_transfer_action(PaneFocus::Local).enabled);
         tab.queue_transfer(PaneFocus::Local);
         let WorkerCommand::Enqueue(requests) = commands.try_recv().unwrap() else {

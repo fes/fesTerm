@@ -75,8 +75,10 @@ rules when only Start in changes.
 The new read route admits supported ordinary data directories while preserving
 strict mutation/publication checks and the separate Write/Delete controls.
 Mounted-volume, starting-directory and allowlist native qualification remain
-pending under [#938](https://github.com/fes/fesTerm/issues/938). Links remain
-unavailable; the current production HOME grant is unchanged. On macOS, the
+pending under [#938](https://github.com/fes/fesTerm/issues/938). New peers can
+negotiate read-only link traversal within the explicit allowed union; legacy
+operations retain link refusal. The new Desktop/mobile link workflow still
+requires native qualification; production HOME access is unchanged. On macOS, the
 new allowlist requires the qualified 27.2.1 native containment boundary; older
 systems retain the existing singleton behavior.
 

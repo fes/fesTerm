@@ -664,10 +664,21 @@ impl FilesSession {
             .find(|location| location.contains(path))
     }
     pub(crate) fn remote_mutations_available(&self) -> bool {
-        self.remote_locations().is_none()
-            || self
-                .remote_location()
-                .is_some_and(|location| location.available && location.mutations_available)
+        let Some(locations) = self.remote_locations() else {
+            return true;
+        };
+        self.remote.as_ref().is_some_and(|pane| {
+            !pane.loading()
+                && pane.error.is_none()
+                && pane.listing.as_ref().is_some_and(|listing| {
+                    listing.path == pane.path && listing.directory_read_only != Some(true)
+                })
+                && locations.iter().any(|location| {
+                    location.contains(&pane.path)
+                        && location.available
+                        && location.mutations_available
+                })
+        })
     }
     pub(crate) fn can_upload(&self) -> bool {
         self.remote_write && self.remote_mutations_available()
@@ -894,6 +905,9 @@ impl FilesSession {
         let Some(pane) = pane else {
             return;
         };
+        if draft.remote && pane.path != draft.path {
+            return;
+        }
         let path = match pane.fs.join(&draft.path, &draft.name) {
             Ok(path) => path,
             Err(e) => {
@@ -1643,7 +1657,16 @@ mod tests {
             Harness,
         };
         let ctx = egui::Context::default();
-        let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+        let selector = "/11111111111111111111111111111111";
+        let mut transfers = FixtureTransfers::new(Vec::new());
+        transfers.locations = Some(vec![RemoteLocation {
+            path: selector.into(),
+            label: "/owned".into(),
+            available: true,
+            mutations_available: true,
+        }]);
+        let mut data = ready(Arc::new(transfers));
+        data.start_dir = Some(format!("{selector}/child"));
         data.remote_write = false;
         let mut session = FilesSession::ready("Files".into(), "Read-only".into(), data, &ctx);
         settle(&mut session, &ctx);
@@ -1717,11 +1740,61 @@ mod tests {
                 .label("New local folder")
                 .predicate(|node| !node.is_disabled()),
         );
-        harness.state_mut().remote_write = true;
+        let session = harness.state_mut();
+        session.remote_write = true;
+        assert!(
+            session.can_upload(),
+            "legacy location listings allow mutations"
+        );
+        let pane = session.remote.as_mut().unwrap();
+        pane.listing.as_mut().unwrap().directory_read_only = Some(true);
+        session.start_transfer(true);
+        session.new_folder(true);
+        assert_eq!(
+            session.notice.as_deref(),
+            Some("Upload is unavailable in this read-only Files view")
+        );
+        assert!(session.folder.is_none());
         harness.run();
         harness.get(
             By::new()
                 .label("Upload 1")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("New remote folder")
+                .predicate(|node| node.is_disabled()),
+        );
+        let session = harness.state_mut();
+        let pane = session.remote.as_mut().unwrap();
+        let mut snapshot = pane.listing.take().unwrap();
+        assert!(!session.can_upload());
+        snapshot.directory_read_only = Some(false);
+        let pane = session.remote.as_mut().unwrap();
+        let current_path = pane.path.clone();
+        snapshot.path = selector.into();
+        pane.listing = Some(snapshot);
+        assert!(!session.can_upload());
+        let pane = session.remote.as_mut().unwrap();
+        pane.listing.as_mut().unwrap().path = current_path.clone();
+        pane.error = Some("Refresh failed".into());
+        assert!(!session.can_upload());
+        let pane = session.remote.as_mut().unwrap();
+        pane.error = None;
+        let (_send, receive) = mpsc::channel();
+        pane.pending = Some((current_path, receive));
+        assert!(!session.can_upload());
+        session.remote.as_mut().unwrap().pending = None;
+        harness.run();
+        harness.get(
+            By::new()
+                .label("Upload 1")
+                .predicate(|node| !node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("New remote folder")
                 .predicate(|node| !node.is_disabled()),
         );
     }

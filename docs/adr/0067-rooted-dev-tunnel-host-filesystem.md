@@ -797,9 +797,10 @@ pending under DTFILES-05 and MOB-11.
 
 ## Read-only link preparation: retained metadata only
 
-The next bounded enabler is native link metadata acquisition, not permission to
-follow links. Existing Files operations continue to refuse them on every host;
-there is no new advertised operation, opening version or settings field. A native
+Native link metadata acquisition alone grants no permission to follow targets.
+The strict Files operations retain refusal. This native layer adds no advertised
+operation, opening version or settings field; the client extension below uses
+those retained snapshots under its separate traversal and disclosure contract. A native
 helper retains the link and its parent, captures one bounded target payload
 without opening the target, and can compare that payload and the original
 no-follow entry identity again. The snapshot grants neither target access nor
@@ -866,3 +867,28 @@ an explicitly deferred local run is not positive evidence. Do not change
 Developer Mode, token privileges or OS permissions. The junction fixture retains
 the separate attribute-only edit controls. These metadata cases still do not
 authorize following a target or add a Files operation.
+
+
+## Read-only traversal inside the explicit allowed union
+
+The native metadata preparation above supports an additive `read_links`
+operation family on reviewed v4 allowlist streams. The [protocol contract](../dev-tunnel-files-protocol.md#optional-read-only-paths-through-links)
+specifies the tagged requests, handle-owned page schema, shared work/deadline
+bounds and strict legacy compatibility. No new policy field or opening version
+is needed to read a target that is already inside the explicit allowed union.
+
+Traverse only qualified allowed ancestry. Keep the original virtual alias path,
+retained source/root witnesses, exact link snapshots and independently admitted
+target. Revalidate every participating root, source ancestry and target before
+disclosure and around reads/pages; popped ordinary directories also need
+witnesses so `dir/../target` cannot conceal an observed intermediate replacement.
+Unknown native forms, ungranted intermediate travel, budget/cancellation and
+failed fences refuse without a normal-path fallback. Native descriptor counts
+remain bounded by the existing handle/page limits and shared traversal work.
+
+Every alias-derived path is read-only. Same-opened-directory access and per-row
+facts feed the existing Desktop/mobile SFTP presentation. Strict operations and
+replacement proof retain their no-follow rules; readable handles cannot become
+expected replacement proof even after same-inode name cutover. Neither caller
+UI state nor a descriptive Stat grants mutation authority. Native whole-workflow
+qualification and screenshots remain required separately from component tests.

@@ -292,6 +292,7 @@ pub const HOST_REVIEWED_VERSION: u16 = 3;
 pub const HOST_LOCATIONS_VERSION: u16 = 4;
 pub const OPERATION_LIMIT: usize = 16;
 pub const OPERATION_NAME_LIMIT: usize = 32;
+pub const READ_LINKS_OPERATION: &str = "read_links";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -349,6 +350,11 @@ impl OperationCapabilities {
     pub fn allows_delete(&self) -> bool {
         self.operations.iter().any(|name| name == "delete")
     }
+    pub fn allows_read_links(&self) -> bool {
+        self.operations
+            .iter()
+            .any(|name| name == READ_LINKS_OPERATION)
+    }
     pub fn validate(&self, base: &Capabilities) -> bool {
         self.version == HOST_REVIEWED_VERSION
             && self.write == base.write
@@ -379,6 +385,13 @@ impl OperationCapabilities {
                 .filter(|name| name.as_str() == "start_directory")
                 .count()
                 <= 1
+            && self
+                .operations
+                .iter()
+                .filter(|name| name.as_str() == READ_LINKS_OPERATION)
+                .count()
+                <= 1
+            && (!self.allows_read_links() || self.allows_locations())
             && (!self.allows_delete() || self.write)
     }
 }
@@ -525,7 +538,13 @@ pub enum Operation {
     Stat {
         path: String,
     },
+    StatReadable {
+        path: String,
+    },
     OpenDirectory {
+        path: String,
+    },
+    OpenReadableDirectory {
         path: String,
     },
     ReadDirectory {
@@ -533,6 +552,9 @@ pub enum Operation {
         limit: u16,
     },
     OpenRead {
+        path: String,
+    },
+    OpenReadableFile {
         path: String,
     },
     Read {
@@ -586,6 +608,14 @@ pub struct Entry {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadableEntry {
+    pub name: String,
+    pub kind: Kind,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Result {
     Locations {
@@ -611,11 +641,25 @@ pub enum Result {
     Stat {
         metadata: Metadata,
     },
+    ReadableStat {
+        metadata: Metadata,
+        read_only: bool,
+    },
     Directory {
         handle: u32,
     },
+    ReadableDirectory {
+        handle: u32,
+        metadata: Metadata,
+        read_only: bool,
+    },
     Entries {
         entries: Vec<Entry>,
+        done: bool,
+        skipped: u16,
+    },
+    ReadableEntries {
+        entries: Vec<ReadableEntry>,
         done: bool,
         skipped: u16,
     },
@@ -891,16 +935,72 @@ mod tests {
         assert_eq!(serde_json::to_vec(&historical).unwrap(), bytes);
         assert!(serde_json::from_value::<OldResult>(old_value).is_ok());
         let mut advertised = serde_json::to_value(&greeting).unwrap();
-        advertised["capabilities"]["operations"] = serde_json::json!(["display_root"]);
+        advertised["capabilities"]["operations"] = serde_json::json!([
+            "display_root",
+            "locations",
+            "start_directory",
+            READ_LINKS_OPERATION
+        ]);
         let OldResult::ReadyV3 {
             capabilities: old_caps,
         } = serde_json::from_value::<OldResult>(advertised.clone()).unwrap();
-        assert_eq!(old_caps.operations, ["display_root"]);
+        assert_eq!(
+            old_caps.operations,
+            [
+                "display_root",
+                "locations",
+                "start_directory",
+                READ_LINKS_OPERATION
+            ]
+        );
         assert!(!old_caps.operations.iter().any(|name| name == "delete"));
         assert!(serde_json::from_value::<Result>(advertised).is_ok());
         let mut unsolicited = serde_json::to_value(greeting).unwrap();
         unsolicited["display_root"] = "/Users/example".into();
         assert!(serde_json::from_value::<OldResult>(unsolicited).is_err());
+    }
+
+    #[test]
+    fn readable_link_wire_variants_are_additive_and_strict() {
+        for request in [
+            r#"{"op":"stat","path":"/owned"}"#,
+            r#"{"op":"open_directory","path":"/owned"}"#,
+            r#"{"op":"open_read","path":"/owned"}"#,
+            r#"{"op":"read_directory","handle":1,"limit":1}"#,
+            r#"{"op":"stat_readable","path":"/owned"}"#,
+            r#"{"op":"open_readable_directory","path":"/owned"}"#,
+            r#"{"op":"open_readable_file","path":"/owned"}"#,
+        ] {
+            let operation: Operation = serde_json::from_str(request).unwrap();
+            assert_eq!(serde_json::to_string(&operation).unwrap(), request);
+        }
+        for reply in [
+            r#"{"type":"stat","metadata":{"kind":"file","size":"1","modified_ms":null}}"#,
+            r#"{"type":"directory","handle":1}"#,
+            r#"{"type":"entries","entries":[{"name":"owned","kind":"file"}],"done":true,"skipped":0}"#,
+            r#"{"type":"file","handle":1,"metadata":{"kind":"file","size":"1","modified_ms":null}}"#,
+            r#"{"type":"readable_stat","metadata":{"kind":"file","size":"1","modified_ms":null},"read_only":true}"#,
+            r#"{"type":"readable_directory","handle":1,"metadata":{"kind":"directory","size":"0","modified_ms":null},"read_only":true}"#,
+            r#"{"type":"readable_entries","entries":[{"name":"owned","kind":"file","read_only":true}],"done":true,"skipped":0}"#,
+        ] {
+            let result: Result = serde_json::from_str(reply).unwrap();
+            assert_eq!(serde_json::to_string(&result).unwrap(), reply);
+        }
+        assert!(serde_json::from_str::<Operation>(
+            r#"{"op":"open_read","path":"/owned","read_links":true}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Operation>(
+            r#"{"op":"open_readable_file","path":"/owned","allow_outside":true}"#
+        )
+        .is_err());
+        for invalid in [
+            r#"{"type":"entries","entries":[{"name":"owned","kind":"file","read_only":true}],"done":true,"skipped":0}"#,
+            r#"{"type":"readable_entries","entries":[{"name":"owned","kind":"file"}],"done":true,"skipped":0}"#,
+            r#"{"type":"readable_entries","entries":[{"name":"owned","kind":"file","read_only":true,"target":"outside"}],"done":true,"skipped":0}"#,
+        ] {
+            assert!(serde_json::from_str::<Result>(invalid).is_err());
+        }
     }
 
     #[test]

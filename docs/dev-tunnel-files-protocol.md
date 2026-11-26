@@ -298,7 +298,7 @@ root, `/notes/a.md` is below it even on Windows. Do not send drive letters,
 host-absolute paths or a source cwd. Reject `.`/`..`, repeated/trailing separators,
 backslashes, controls, Windows ambiguous/reserved names, components over 255
 UTF-8 bytes and total paths over 4096 bytes. `.festerm-transfer-*` names are
-reserved. Symlinks/reparse points are not followed. Unsupported entries are
+reserved. The strict operations do not follow symlinks/reparse points. Unsupported entries are
 marked `unsupported`; unrepresentable/reserved names are counted as skipped.
 Directory iteration is native order, not a sorted or immutable snapshot.
 
@@ -754,7 +754,8 @@ namespace and retains non-reparse ancestor handles. macOS requires the recorded
 27.2.1 containment floor and local APFS. Regular-file data requires either an
 ownership-enforcing private full chain, or the separately qualified APFS/nodev
 ordinary route. A failure after selecting the private route is terminal.
-Unsupported filesystem classes stay unavailable; links remain refused.
+Unsupported filesystem classes stay unavailable. Strict operations retain link refusal;
+the optional read-only path extension below separately admits contained targets.
 
 Existing global write/Delete consent, complete strict trusted ancestor checks,
 replacement/publication rules, channel/handle pools and deadlines remain whole
@@ -782,3 +783,73 @@ location choice. DefaultStart requires a successful first folder listing for
 an allowlist Start. ChooseLocation requires its own successful authorization and
 uses only metadata from the fresh opening. Legacy metadata absence refuses
 clearly. Native Desktop/iOS/Android recovery qualification remains pending.
+
+
+## Optional read-only paths through links
+
+An authenticated v4 allowlist stream may advertise `read_links` in its existing
+ReadyV3 optional operation list. No opening version, protected setting or legacy
+DTO changes. Each channel checks its own capability. Without this name, the new
+client methods select strict requests before exchange; a failed new request
+never retries using another operation or path.
+
+| New request | Reply |
+| --- | --- |
+| `stat_readable`, `path` | `readable_stat`, `metadata`, `read_only` |
+| `open_readable_directory`, `path` | `readable_directory`, `handle`, `metadata`, `read_only` |
+| `open_readable_file`, `path` | Existing `file`, `handle`, `metadata` |
+
+Existing `read_directory` on a new directory handle returns `readable_entries`
+with rows `{name,kind,read_only}`, `done` and `skipped`. A strict directory handle
+still returns historical `entries`. The opened handle fixes the page schema;
+there is no mutable stream mode. Directory metadata and access come from that
+same retained object, not a separate earlier Stat. Unsupported children are
+read-only `unsupported` rows, with no target details. Deadline, cancellation,
+resource and authority failures abort the reply instead of becoming neutral rows.
+
+The resolver admits each target and traversal step inside the explicit allowed
+union before following it. It retains source entries, participating roots,
+traversed ancestry needed by `..`, and independently admitted final objects.
+Absolute path prefixes select candidate roots, never grant authority. Upward
+steps require qualified ancestry; moving into an enclosing allowed root needs
+an independently checked relationship. No ambient canonicalize-and-reopen route
+is used. Native metadata helpers alone do not authorize a target.
+Virtual request paths keep their portable name restrictions. Unix link targets
+retain their original native component bytes, with case-insensitive refusal of
+the host staging prefix even before absolute-root selection. Trailing slash or
+`/.` spellings are conservatively unsupported; they never normalize into a
+regular-file read. Windows targets retain the native parser's recognized forms. A listed link is
+resolved only after checking its original leaf form in the exact opened parent;
+observed parent or leaf replacement aborts the page.
+
+A resolution permits at most eight link hops, 4096 bytes per target/active path
+and 32 KiB cumulative target text. One request shares 8192 native-work debits
+and 2048 component visits across resolution, child rows and revalidation, within
+its original 30-second job deadline and cancellation scope. Live request cost is capped at 48 native descriptors, as is retained stream
+cost. Charge conservative helper scratch to the live request, and count popped
+witnesses and both Unix iterator descriptors. Repeated equal
+popped witnesses coalesce; changed identities refuse. Ordinary Unix traversal
+does not retain a descriptor for every depth. Complex graphs can reach the
+resource ceiling before eight hops. Each short page retains at most one resolved
+alias, then continues on the same cursor. The existing Desktop 1024-page bound
+can refuse alias-heavy folders before their entry limit. Actual budget/fence
+failure still discards the whole reply. Existing chunk, handle and channel
+limits remain. Fences verify retained root, source
+parent, entry payload/name and target ancestry before disclosure and both sides
+of pages/chunks. Observed change or failed checks refuse. This is a sequence of
+retained-object checks, not an atomic whole-path snapshot.
+
+Alias-derived paths and their descendants are read-only. Desktop and mobile
+reuse their existing file managers and permissions to disable upload, mkdir and
+Delete through those paths. Jobs retain their original alias spelling. Direct
+access to an allowed target keeps the existing grant and strict mutation rules.
+All new readable file handles are ineligible for expected replacement proof,
+including after the original name changes into a direct name for the same inode.
+Replacement review continues to use strict `open_read`. Failed read/cursor fences
+release their resources and leave only their existing bounded handle slot
+closeable through unchanged `close`/`closed`.
+
+Owner Start preflight and fresh runtime Start validation use the same bounded
+resolver. A missing or denied Start still refuses default navigation; old clients
+may refuse an alias through strict first listing. Native Desktop/mobile workflow
+qualification remains a separate gate under DTFILES-02 / DT-07 and MOB-11.
