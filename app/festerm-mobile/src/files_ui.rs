@@ -11,10 +11,10 @@ use super::widgets::{
     sheet_title, ButtonKind,
 };
 use eframe::egui::{self, Align2, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui};
-use festerm_sftp::{ConflictPolicy, Direction, Entry, SortKey, SortOrder};
+use festerm_sftp::{ConflictPolicy, Direction, Entry, EntryKind, SortKey};
 
 const ROW_HEIGHT: f32 = 50.0;
-const PANE_CHROME: f32 = 44.0 + 34.0 + 28.0 + 40.0;
+const PANE_CHROME: f32 = 44.0 + 44.0 + 32.0;
 
 #[derive(Default)]
 pub(crate) struct FilesOutcome {
@@ -111,7 +111,7 @@ fn icon_button(
     active: bool,
     paint: impl FnOnce(&egui::Painter, Pos2, egui::Color32),
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::CLICK);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::CLICK);
     paint(
         ui.painter(),
         rect.center(),
@@ -121,12 +121,14 @@ fn icon_button(
             color::TEXT_MUTED
         },
     );
-    labelled(response, label, true)
+    labelled(response, label, ui.is_enabled()).on_hover_text(label)
 }
 
 fn tint_for(entry: &Entry) -> egui::Color32 {
     let lower = entry.display_name.to_lowercase();
-    if entry.is_dir() {
+    if entry.kind == EntryKind::Other {
+        color::TEXT_MUTED
+    } else if entry.is_dir() {
         color::ACCENT_TEXT
     } else if is_markdown(&lower) {
         color::SUCCESS
@@ -142,8 +144,15 @@ fn tint_for(entry: &Entry) -> egui::Color32 {
 
 /// Returns `(tapped, checked_zone)` for one directory row.
 fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::CLICK);
+    let available = entry.kind != EntryKind::Other;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        if available {
+            Sense::CLICK
+        } else {
+            Sense::hover()
+        },
+    );
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     if selected {
         painter.rect_filled(rect, 0.0, color::SELECTED);
@@ -160,7 +169,9 @@ fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) ->
         egui::vec2(22.0, 22.0),
     );
     let tint = tint_for(entry);
-    if entry.is_dir() {
+    if !available {
+        festerm_ui_egui::icon::paint(&painter, festerm_ui_egui::icon::Icon::Error, glyph, tint);
+    } else if entry.is_dir() {
         folder_glyph(&painter, glyph, tint);
     } else {
         file_glyph(&painter, glyph, tint);
@@ -178,7 +189,7 @@ fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) ->
         painter.circle_filled(disc, 10.0, color::PRIMARY);
         super::widgets::check_mark(&painter, disc, color::ON_PRIMARY);
         right -= 28.0;
-    } else {
+    } else if available {
         painter.circle_stroke(
             egui::pos2(right - 10.0, rect.center().y),
             10.0,
@@ -204,7 +215,9 @@ fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) ->
         right - rect.left() - 60.0,
     );
     let mut detail = Vec::new();
-    if entry.is_dir() {
+    if !available {
+        detail.push("Unavailable".to_owned());
+    } else if entry.is_dir() {
         detail.push("Folder".to_owned());
     } else if let Some(size) = entry.size {
         detail.push(format_size(size));
@@ -224,7 +237,15 @@ fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool, select_folder: bool) ->
         color::TEXT_MUTED,
         right - rect.left() - 60.0,
     );
-    labelled(response, name, true)
+    if available {
+        labelled(response, name, true)
+    } else {
+        labelled(
+            response.on_hover_text("Unavailable"),
+            &format!("{name} — Unavailable"),
+            false,
+        )
+    }
 }
 
 fn crumb_row(ui: &mut Ui, pane: &mut Pane, root_label: &str, ctx: &egui::Context) {
@@ -241,9 +262,22 @@ fn crumb_row(ui: &mut Ui, pane: &mut Pane, root_label: &str, ctx: &egui::Context
                 for (index, (label, path)) in crumbs.iter().enumerate() {
                     if index > 0 {
                         ui.label(
-                            egui::RichText::new("›")
-                                .size(type_scale::CAPTION)
-                                .color(color::TEXT_FAINT),
+                            egui::RichText::new(
+                                if pane.fs.kind() == festerm_sftp::PaneKind::Remote
+                                    && root_label != "/"
+                                    && root_label != "Shared folder"
+                                {
+                                    if root_label.contains('\\') {
+                                        "\\"
+                                    } else {
+                                        "/"
+                                    }
+                                } else {
+                                    "›"
+                                },
+                            )
+                            .size(type_scale::CAPTION)
+                            .color(color::TEXT_FAINT),
                         );
                     }
                     let text = egui::RichText::new(label)
@@ -263,84 +297,6 @@ fn crumb_row(ui: &mut Ui, pane: &mut Pane, root_label: &str, ctx: &egui::Context
     if let Some(path) = goto {
         pane.go_to(&path, ctx);
     }
-}
-
-fn sort_header(ui: &mut Ui, pane: &mut Pane, ctx: &egui::Context) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::hover());
-    let cells = [
-        (
-            SortKey::Name,
-            "Name",
-            Align2::LEFT_CENTER,
-            rect.left() + 12.0,
-        ),
-        (
-            SortKey::Modified,
-            "Date",
-            Align2::CENTER_CENTER,
-            rect.center().x + 30.0,
-        ),
-        (
-            SortKey::Size,
-            "Size",
-            Align2::RIGHT_CENTER,
-            rect.right() - 12.0,
-        ),
-    ];
-    for (key, label, anchor, x) in cells {
-        let used = paint_fit(
-            ui.painter(),
-            egui::pos2(x, rect.center().y),
-            anchor,
-            label,
-            type_scale::font(type_scale::MICRO + 0.5),
-            if pane.sort == key {
-                color::ACCENT_TEXT
-            } else {
-                color::TEXT_FAINT
-            },
-            90.0,
-        );
-        let used = if pane.sort == key {
-            let tip = egui::pos2(used.right() + 8.0, used.center().y);
-            let direction = if pane.order == SortOrder::Ascending {
-                -1.0
-            } else {
-                1.0
-            };
-            let stroke = Stroke::new(1.4, color::ACCENT_TEXT);
-            ui.painter().line_segment(
-                [
-                    tip + egui::vec2(-3.5, -1.5 * direction),
-                    tip + egui::vec2(0.0, 2.0 * direction),
-                ],
-                stroke,
-            );
-            ui.painter().line_segment(
-                [
-                    tip + egui::vec2(0.0, 2.0 * direction),
-                    tip + egui::vec2(3.5, -1.5 * direction),
-                ],
-                stroke,
-            );
-            used.union(egui::Rect::from_center_size(tip, egui::vec2(8.0, 8.0)))
-        } else {
-            used
-        };
-        let hit = ui.interact(
-            used.expand2(egui::vec2(10.0, 8.0)),
-            ui.id().with(("sort", label, rect.min.y as i32)),
-            Sense::CLICK,
-        );
-        if labelled(hit, &format!("Sort by {label}"), true).clicked() {
-            pane.set_sort(key, ctx);
-        }
-    }
-    ui.painter().hline(
-        rect.x_range(),
-        rect.bottom(),
-        Stroke::new(1.0, color::DIVIDER),
-    );
 }
 
 fn footer_text(pane: &Pane) -> String {
@@ -369,6 +325,20 @@ fn footer_text(pane: &Pane) -> String {
 }
 
 /// One pane card. Returns whether "Open" (Markdown) was tapped.
+#[derive(Clone, Copy, Default)]
+struct PaneControls {
+    create: bool,
+    select_folders: bool,
+    delete: Option<bool>,
+}
+
+#[derive(Default)]
+struct PaneOutcome {
+    open: bool,
+    create: bool,
+    delete: bool,
+}
+
 fn pane_card(
     ui: &mut Ui,
     pane: &mut Pane,
@@ -376,9 +346,10 @@ fn pane_card(
     root_label: &str,
     height: f32,
     ctx: &egui::Context,
-    select_folders: bool,
-) -> bool {
-    let mut open = false;
+    controls: PaneControls,
+) -> PaneOutcome {
+    let mut outcome = PaneOutcome::default();
+    let select_folders = controls.select_folders;
     let size = egui::vec2(ui.available_width(), height);
     let layout = egui::Layout::top_down(egui::Align::Min);
     ui.scope_builder(
@@ -416,6 +387,20 @@ fn pane_card(
                                 }
                             });
                         egui::Popup::menu(&menu).show(|ui| {
+                            if let Some(enabled) = controls.delete {
+                                if ui
+                                    .add_enabled(
+                                        enabled,
+                                        egui::Button::new("Delete selected")
+                                            .min_size(egui::vec2(0.0, 44.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    outcome.delete = true;
+                                    ui.close();
+                                }
+                                ui.separator();
+                            }
                             for (key, label) in [
                                 (SortKey::Name, "Sort by name"),
                                 (SortKey::Size, "Sort by size"),
@@ -444,6 +429,24 @@ fn pane_card(
                                 pane.filter.clear();
                             }
                         }
+                        let label = if pane.fs.kind() == festerm_sftp::PaneKind::Remote {
+                            "New remote folder"
+                        } else {
+                            "New local folder"
+                        };
+                        let create = ui
+                            .add_enabled_ui(controls.create, |ui| {
+                                icon_button(ui, label, false, |painter, c, tint| {
+                                    festerm_ui_egui::icon::paint(
+                                        painter,
+                                        festerm_ui_egui::icon::Icon::NewFolder,
+                                        Rect::from_center_size(c, egui::vec2(20.0, 20.0)),
+                                        tint,
+                                    );
+                                })
+                            })
+                            .inner;
+                        outcome.create = create.clicked();
                         let refresh = icon_button(ui, "Refresh", false, |painter, c, tint| {
                             festerm_ui_egui::icon::paint(
                                 painter,
@@ -460,13 +463,15 @@ fn pane_card(
                 ui.horizontal(|ui| {
                     ui.set_height(30.0);
                     ui.add_space(space::MD);
-                    if pane.can_go_up() {
-                        let up = icon_button(ui, "Parent folder", false, |painter, c, tint| {
-                            arrow_glyph(painter, c, true, tint);
-                        });
-                        if up.clicked() {
-                            pane.go_up(ctx);
-                        }
+                    let up = ui
+                        .add_enabled_ui(pane.can_go_up(), |ui| {
+                            icon_button(ui, "Parent folder", false, |painter, c, tint| {
+                                arrow_glyph(painter, c, true, tint);
+                            })
+                        })
+                        .inner;
+                    if up.clicked() {
+                        pane.go_up(ctx);
                     }
                     crumb_row(ui, pane, root_label, ctx);
                 });
@@ -486,7 +491,6 @@ fn pane_card(
                     ui.cursor().top(),
                     Stroke::new(1.0, color::DIVIDER),
                 );
-                sort_header(ui, pane, ctx);
                 let list_height =
                     (height - PANE_CHROME - if pane.filter_open { 36.0 } else { 0.0 })
                         .max(ROW_HEIGHT);
@@ -580,7 +584,7 @@ fn pane_card(
                                 )
                                 .clicked()
                             {
-                                open = true;
+                                outcome.open = true;
                             }
                         });
                     }
@@ -588,7 +592,7 @@ fn pane_card(
             });
         },
     );
-    open
+    outcome
 }
 
 fn transfer_summary(session: &FilesSession) -> (String, bool) {
@@ -664,6 +668,7 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     // Pane minimum heights may expand max_rect; sheets belong to the original
     // visible viewport, including its existing native-keyboard clip.
     let modal_bounds = ui.max_rect().intersect(ui.clip_rect());
+    let remote_root_label = session.remote_root_label();
     #[cfg(feature = "host-clients")]
     let select_folders = session.deletion_available();
     #[cfg(not(feature = "host-clients"))]
@@ -675,147 +680,167 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
     ui.spacing_mut().item_spacing.y = space::SM;
     let width = ui.available_width();
     let wide = width >= WIDE_FILES_WIDTH;
-    let side = ((width - FILES_MAX_WIDTH) / 2.0).clamp(12.0, 200.0) as i8;
+    let side = ((width - FILES_MAX_WIDTH) / 2.0).clamp(16.0, 200.0) as i8;
     let margin = egui::Margin::symmetric(side, 0);
-    egui::Frame::new().inner_margin(margin).show(ui, |ui| {
-        if let Some(notice) = session.notice.clone() {
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&notice)
-                            .size(type_scale::CAPTION)
-                            .color(color::WARNING),
-                    )
-                    .wrap(),
-                );
-            });
-        }
-        ui.horizontal_wrapped(|ui| {
-            if button(
-                ui,
-                ButtonKind::Secondary,
-                "New remote folder",
-                session.remote_write,
-            )
-            .clicked()
-            {
-                session.new_folder(true);
-            }
-            if button(ui, ButtonKind::Secondary, "New local folder", true).clicked() {
-                session.new_folder(false);
-            }
-            #[cfg(feature = "host-clients")]
-            if select_folders
-                && button(
-                    ui,
-                    ButtonKind::Secondary,
-                    "Delete selected",
-                    session.can_review_delete(),
-                )
-                .clicked()
-            {
-                session.review_delete();
-            }
-        });
-        let (mut open_remote, mut open_local) = (false, false);
-        if wide {
-            let fixed = 48.0 + 60.0 + 4.0 * space::SM + 48.0 + 52.0;
-            let pane_height = (ui.available_height() - fixed).clamp(260.0, 720.0);
-            let gap = space::MD;
-            let half = (ui.available_width() - gap) / 2.0;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                ui.vertical(|ui| {
-                    ui.set_width(half);
+    egui::ScrollArea::vertical()
+        .id_salt("files-short-viewport")
+        .max_height(modal_bounds.height())
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::new().inner_margin(margin).show(ui, |ui| {
+                if let Some(notice) = session.notice.clone() {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&notice)
+                                    .size(type_scale::CAPTION)
+                                    .color(color::WARNING),
+                            )
+                            .wrap(),
+                        );
+                    });
+                }
+                #[cfg(feature = "host-clients")]
+                let delete = select_folders.then(|| session.can_review_delete());
+                #[cfg(not(feature = "host-clients"))]
+                let delete = None;
+                let remote_controls = PaneControls {
+                    create: session.remote_write,
+                    select_folders,
+                    delete,
+                };
+                let local_controls = PaneControls {
+                    create: true,
+                    ..Default::default()
+                };
+                let (mut remote, mut local) = (PaneOutcome::default(), PaneOutcome::default());
+                // Keep the lists in the actual visible body. On a very short screen the
+                // outer scroll area retains usable rows and 44-point controls.
+                let remaining = (modal_bounds.bottom() - ui.cursor().top()).max(0.0);
+                if wide {
+                    let pane_height = (remaining - 48.0 - 52.0 - 2.0 * space::SM)
+                        .clamp(PANE_CHROME + ROW_HEIGHT + 2.0, 720.0);
+                    let gap = space::MD;
+                    let half = (ui.available_width() - gap) / 2.0;
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = gap;
+                        ui.vertical(|ui| {
+                            ui.set_width(half);
+                            if let Some(pane) = session.remote.as_mut() {
+                                remote = pane_card(
+                                    ui,
+                                    pane,
+                                    "Remote",
+                                    &remote_root_label,
+                                    pane_height,
+                                    &ctx,
+                                    remote_controls,
+                                );
+                            }
+                        });
+                        ui.vertical(|ui| {
+                            ui.set_width(half);
+                            if let Some(pane) = session.local.as_mut() {
+                                local = pane_card(
+                                    ui,
+                                    pane,
+                                    "This device",
+                                    "Documents",
+                                    pane_height,
+                                    &ctx,
+                                    local_controls,
+                                );
+                            }
+                        });
+                    });
+                    transfer_buttons(ui, session);
+                } else {
+                    let pane_height = ((remaining - 48.0 - 52.0 - 3.0 * space::SM) / 2.0)
+                        .clamp(PANE_CHROME + ROW_HEIGHT + 2.0, 520.0);
                     if let Some(pane) = session.remote.as_mut() {
-                        open_remote =
-                            pane_card(ui, pane, "Remote", "/", pane_height, &ctx, select_folders);
-                    }
-                });
-                ui.vertical(|ui| {
-                    ui.set_width(half);
-                    if let Some(pane) = session.local.as_mut() {
-                        open_local = pane_card(
+                        remote = pane_card(
                             ui,
                             pane,
-                            "This device",
+                            "Remote",
+                            &remote_root_label,
+                            pane_height,
+                            &ctx,
+                            remote_controls,
+                        );
+                    }
+                    transfer_buttons(ui, session);
+                    if let Some(pane) = session.local.as_mut() {
+                        local = pane_card(
+                            ui,
+                            pane,
+                            super::platform_text("This iPhone", "This device"),
                             "Documents",
                             pane_height,
                             &ctx,
-                            false,
+                            local_controls,
                         );
                     }
-                });
-            });
-            transfer_buttons(ui, session);
-        } else {
-            let fixed = 48.0 + 60.0 + 3.0 * space::SM + 44.0;
-            let pane_height = ((ui.available_height() - fixed) / 2.0).clamp(190.0, 520.0);
-            if let Some(pane) = session.remote.as_mut() {
-                open_remote = pane_card(ui, pane, "Remote", "/", pane_height, &ctx, select_folders);
-            }
-            transfer_buttons(ui, session);
-            if let Some(pane) = session.local.as_mut() {
-                open_local = pane_card(
-                    ui,
-                    pane,
-                    super::platform_text("This iPhone", "This device"),
-                    "Documents",
-                    pane_height,
-                    &ctx,
-                    false,
+                }
+                if remote.create {
+                    session.new_folder(true);
+                }
+                if local.create {
+                    session.new_folder(false);
+                }
+                #[cfg(feature = "host-clients")]
+                if remote.delete {
+                    session.review_delete();
+                }
+                if remote.open {
+                    outcome.events.extend(session.open_markdown(true));
+                }
+                if local.open {
+                    outcome.events.extend(session.open_markdown(false));
+                }
+                let (summary, active) = transfer_summary(session);
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), Sense::CLICK);
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::same(radius::CARD), color::SURFACE);
+                ui.painter().rect_stroke(
+                    rect,
+                    CornerRadius::same(radius::CARD),
+                    Stroke::new(1.0, color::DIVIDER),
+                    StrokeKind::Inside,
                 );
-            }
-        }
-        if open_remote {
-            outcome.events.extend(session.open_markdown(true));
-        }
-        if open_local {
-            outcome.events.extend(session.open_markdown(false));
-        }
-        let (summary, active) = transfer_summary(session);
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), Sense::CLICK);
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(radius::CARD), color::SURFACE);
-        ui.painter().rect_stroke(
-            rect,
-            CornerRadius::same(radius::CARD),
-            Stroke::new(1.0, color::DIVIDER),
-            StrokeKind::Inside,
-        );
-        paint_fit(
-            ui.painter(),
-            egui::pos2(rect.left() + 14.0, rect.center().y - 8.0),
-            Align2::LEFT_CENTER,
-            "Transfers",
-            type_scale::font(type_scale::BODY),
-            color::TEXT,
-            rect.width() - 60.0,
-        );
-        paint_fit(
-            ui.painter(),
-            egui::pos2(rect.left() + 14.0, rect.center().y + 10.0),
-            Align2::LEFT_CENTER,
-            &summary,
-            type_scale::font(type_scale::CAPTION),
-            if active {
-                color::ACCENT_TEXT
-            } else {
-                color::TEXT_MUTED
-            },
-            rect.width() - 60.0,
-        );
-        paint_chevron(
-            ui.painter(),
-            egui::pos2(rect.right() - 20.0, rect.center().y),
-            5.0,
-            color::TEXT_MUTED,
-        );
-        if labelled(response, "Transfers", true).clicked() {
-            session.transfers_sheet = true;
-        }
-    });
+                paint_fit(
+                    ui.painter(),
+                    egui::pos2(rect.left() + 14.0, rect.center().y - 8.0),
+                    Align2::LEFT_CENTER,
+                    "Transfers",
+                    type_scale::font(type_scale::BODY),
+                    color::TEXT,
+                    rect.width() - 60.0,
+                );
+                paint_fit(
+                    ui.painter(),
+                    egui::pos2(rect.left() + 14.0, rect.center().y + 10.0),
+                    Align2::LEFT_CENTER,
+                    &summary,
+                    type_scale::font(type_scale::CAPTION),
+                    if active {
+                        color::ACCENT_TEXT
+                    } else {
+                        color::TEXT_MUTED
+                    },
+                    rect.width() - 60.0,
+                );
+                paint_chevron(
+                    ui.painter(),
+                    egui::pos2(rect.right() - 20.0, rect.center().y),
+                    5.0,
+                    color::TEXT_MUTED,
+                );
+                if labelled(response, "Transfers", true).clicked() {
+                    session.transfers_sheet = true;
+                }
+            });
+        });
     if session.folder.is_some() {
         let mut create = false;
         let mut cancel = false;

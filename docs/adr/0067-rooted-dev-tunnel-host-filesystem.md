@@ -579,3 +579,46 @@ reviewed operations remain unchanged.
 Validation impact: GUI:MOB-11, GUI:MOB-12, GUI:MOB-13, ADR-0067. Rendered tests
 cover 360/375-point controls, keyboard-visible folder typing/cancellation and
 idle geometry. Corrected native iOS/Android appearance remains pending.
+
+### Mobile compact controls and display-only root metadata
+
+The mobile Files lists retain the viewport after compact pane toolbars and one
+Upload/Download row. Save/Edit uses the existing More menu; folder creation,
+capability checks, review and mutation commands are unchanged. Unsupported
+entries are visibly unavailable rather than presented as regular files.
+
+The reviewed opening advertises optional `display_root` in its existing bounded
+operation-name list. Only a client observing that name requests the new typed
+read-only result after authenticated opening of the native root. Historical
+Ready/ReadyV3 shapes remain unchanged: their strict decoders reject unsolicited
+fields. Old clients ignore the optional name; new clients do not query old
+servers and show Shared folder instead. Display roots are portable POSIX or
+Windows absolute labels, at most 4096 UTF-8 bytes without control characters,
+redacted in Debug, and retained only by the current connection. They never
+become filesystem request paths, grants, saved destinations or log contents.
+Painting reuses the existing filename display sanitizer for bidi/invisible
+formatters, preserving normal RTL letters and the raw typed metadata. Desktop
+composition directly reuses the existing UI-free `festerm-sftp` display helper;
+this adds one workspace dependency edge, with no transfer-engine or third-party
+dependency change. Local
+cancellation/current-scope checks mask cached labels before polling, including
+inactive unlocked frames; these checks perform no filesystem or network I/O.
+The virtual `/` root, parent fence, account/policy admission and no-follow
+filesystem operations remain unchanged. Desktop carries the typed label in
+its existing ephemeral FilesSource and changes only the remote root breadcrumb
+label, clearing it on retirement. Clickable destinations and the inline editor
+remain virtual; Up is disabled at that root. No label enters profile or source
+identity.
+
+Validation impact: GUI:MOB-11, GUI:MOB-12, GUI:MOB-13, GUI:DTFILES-01,
+GUI:DTFILES-03, GUI:SFTPG-01, ADR-0067. Cover real
+360/375-point list geometry and existing overlays, optional-operation interop,
+portable bounded/redacted labels, and physical root presentation with virtual
+Up refusal. Native corrected appearance remains a separate qualification.
+
+The user-approved follow-on model separates **Allowed locations** from **Start
+in**. It is not implemented here. Multiple allowed roots, mounted-volume
+access, and following links only to allowed final targets require a separate
+architecture review and deterministic native containment tests using retained
+objects; canonicalize-then-open is insufficient. Configured root grants and complete symlink refusal remain unchanged. This precedes optional mobile
+background work.

@@ -27,6 +27,7 @@ const RESERVED: &str = ".festerm-transfer-";
 
 pub struct Filesystem {
     root: Dir,
+    display_root: Option<rpc::DisplayRoot>,
     write: bool,
     delete: bool,
     slots: Arc<Semaphore>,
@@ -79,6 +80,10 @@ impl Filesystem {
         trusted(&directory)?;
         Ok(Arc::new(Self {
             root: directory,
+            display_root: policy
+                .root
+                .to_str()
+                .and_then(|path| path.to_owned().try_into().ok()),
             write: policy.write,
             delete: policy.delete,
             slots: Arc::new(Semaphore::new(2)),
@@ -100,10 +105,15 @@ impl Filesystem {
         rpc::OperationCapabilities {
             version: rpc::HOST_REVIEWED_VERSION,
             write: base.write,
-            operations: if self.write && self.delete {
-                vec!["delete".into()]
-            } else {
-                Vec::new()
+            operations: {
+                let mut operations = Vec::new();
+                if self.write && self.delete {
+                    operations.push("delete".into());
+                }
+                if self.display_root.is_some() {
+                    operations.push("display_root".into());
+                }
+                operations
             },
             chunk_limit: base.chunk_limit,
             page_limit: base.page_limit,
@@ -428,6 +438,19 @@ impl Session {
             return Err(ErrorCode::Denied.into());
         }
         let reply = match operation {
+            Operation::DisplayRoot {} => {
+                if !self.reviewed_operations {
+                    return Err(ErrorCode::Denied.into());
+                }
+                Reply::DisplayRoot {
+                    root: self
+                        .filesystem
+                        .display_root
+                        .clone()
+                        .ok_or(ErrorCode::Denied)?,
+                }
+            }
+
             Operation::ReviewEntry {
                 path,
                 purpose: rpc::ReviewPurpose::Delete,
@@ -1011,6 +1034,26 @@ mod tests {
             .execute(operation, Vec::new(), &CancellationToken::new())
             .unwrap_or_else(|error| panic!("{:?}", error.code))
             .0
+    }
+
+    #[test]
+    fn display_root_is_reviewed_authenticated_metadata_not_a_path_grant() {
+        let (path, mut session) = session(false);
+        assert!(
+            matches!(session.execute(Operation::DisplayRoot {}, Vec::new(), &CancellationToken::new()), Err(error) if error.code == ErrorCode::Denied)
+        );
+        session.reviewed_operations = true;
+        let Reply::DisplayRoot { root } = run(&mut session, Operation::DisplayRoot {}) else {
+            panic!("missing display metadata")
+        };
+        assert_eq!(root.as_str(), path.to_str().unwrap());
+        assert!(session
+            .filesystem
+            .operation_capabilities()
+            .allows_display_root());
+        assert!(session.filesystem.directory("/../outside").is_err());
+        drop(session);
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -1655,6 +1698,52 @@ mod tests {
             drop(filesystem);
             std::fs::remove_dir_all(path).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn display_root_disclosure_is_fenced_by_current_files_authority() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (path, fixture) = session(false);
+        let filesystem = fixture.filesystem.clone();
+        drop(fixture);
+        let revoked = Arc::new(AtomicBool::new(false));
+        let changed = revoked.clone();
+        let admission: Admission = Arc::new(move |stage| {
+            if stage == AdmissionStage::Request {
+                changed.store(true, Ordering::SeqCst);
+            }
+            if stage == AdmissionStage::Disclosure && changed.load(Ordering::SeqCst) {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            Ok(())
+        });
+        let (mut client, server) = tokio::io::duplex(8192);
+        let worker = tokio::spawn(serve_authorized_reviewed(
+            server,
+            filesystem,
+            admission,
+            CancellationToken::new(),
+        ));
+        let (_, greeting) = crate::wire::read_frame(&mut client).await.unwrap();
+        let greeting: rpc::Response = serde_json::from_slice(&greeting).unwrap();
+        assert!(
+            matches!(greeting.result, Some(Reply::ReadyV3 { capabilities }) if capabilities.allows_display_root())
+        );
+        write_frame(
+            &mut client,
+            rpc::REQUEST,
+            &serde_json::to_vec(&rpc::Request {
+                id: 1,
+                operation: Operation::DisplayRoot {},
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(crate::wire::read_frame(&mut client).await.is_err());
+        assert!(worker.await.unwrap().is_err());
+        assert!(revoked.load(Ordering::SeqCst));
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[tokio::test]

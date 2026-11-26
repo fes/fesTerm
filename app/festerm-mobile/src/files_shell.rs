@@ -169,8 +169,6 @@ impl MobileApp {
     }
 
     pub(super) fn show_files_body(&mut self, ui: &mut egui::Ui) {
-        #[cfg(feature = "host-clients")]
-        self.show_host_files_profile_control(ui);
         let Some(session) = self.files.as_mut() else {
             ui.add_space(theme::space::XL);
             ui.vertical_centered(|ui| ui.weak("No file session is open"));

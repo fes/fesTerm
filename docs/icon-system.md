@@ -86,6 +86,7 @@ The intended first enum surface is:
 | `RemoteTunnel` | `remote-tunnel.svg` | Optional tunnel-only accent overlay already composited into `DevTunnel` |
 | `Proceed` | `proceed.svg` | Proceed into the flow a launch card represents |
 | `NewProfile` | `new-profile.svg` | Create a new saved profile |
+| `NewFolder` | `new-folder.svg` | Create a directory in the current Files pane |
 | `SortOrder` | `sort-order.svg` | Change a list's ordering |
 | `Reattach` | `reattach.svg` | Attach an already-running session to a tab |
 | `SectionExpanded`, `SectionCollapsed` | matching filename | Disclosure group state |

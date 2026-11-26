@@ -533,6 +533,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
             .is_some_and(|ops| ops.allows_delete())
     }
 
+    /// Queries only advertised presentation metadata on the authenticated stream.
+    /// Legacy peers receive no new request. The value is never a request path.
+    pub async fn display_root(&mut self) -> Result<Option<rpc::DisplayRoot>> {
+        self.ready()?;
+        if !self
+            .operations
+            .as_ref()
+            .is_some_and(|ops| ops.allows_display_root())
+        {
+            return Ok(None);
+        }
+        match self.exchange(Operation::DisplayRoot {}, None).await? {
+            (Reply::DisplayRoot { root }, None) => Ok(Some(root)),
+            _ => self.protocol(),
+        }
+    }
+
     pub fn available(&self) -> bool {
         self.stream.is_some() && !self.cancel.is_cancelled()
     }
@@ -3163,6 +3180,7 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(!client.delete_advertised());
+        assert!(client.display_root().await.unwrap().is_none());
         assert!(matches!(
             client.review_entry("/file").await,
             Err(Error::Invalid)
@@ -3174,6 +3192,40 @@ mod tests {
             .unwrap()
             .unwrap();
     }
+    #[tokio::test]
+    async fn reviewed_client_queries_display_root_only_after_advertised_open() {
+        let scope = reviewed_scope();
+        let expected = scope.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            reviewed_open(&mut peer, &expected, vec!["display_root".into()]).await;
+            let call = request(&mut peer).await;
+            assert!(matches!(call.operation, Operation::DisplayRoot {}));
+            reply(
+                &mut peer,
+                call.id,
+                Reply::DisplayRoot {
+                    root: "C:\\Users\\example".to_owned().try_into().unwrap(),
+                },
+            )
+            .await;
+        });
+        let (mut client, _) = Client::open_host_reviewed(
+            stream,
+            &scope.host,
+            &scope.installation,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            client.display_root().await.unwrap().unwrap().as_str(),
+            "C:\\Users\\example"
+        );
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn reviewed_client_refuses_duplicate_known_and_unbounded_capabilities_before_operations()
     {

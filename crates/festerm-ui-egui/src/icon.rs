@@ -93,6 +93,8 @@ pub enum Icon {
     Proceed,
     /// Create a new saved profile.
     NewProfile,
+    /// Create a directory in the current Files pane.
+    NewFolder,
     /// Change the ordering of a list.
     SortOrder,
     /// Attach an already-running session to a tab.
@@ -260,6 +262,7 @@ mod tests {
             Icon::HomeDirectory,
             Icon::FileTransfer,
             Icon::NewProfile,
+            Icon::NewFolder,
             Icon::OverflowVertical,
             Icon::PaneHandle,
             Icon::Proceed,
@@ -273,7 +276,7 @@ mod tests {
             Icon::SortOrder,
             Icon::OpenSubpage,
         ];
-        assert_eq!(icons.len(), 64);
+        assert_eq!(icons.len(), 65);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

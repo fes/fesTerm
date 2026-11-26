@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "fbd67db3e935b9cc429abc6dea20a0665b889b03e61c467118a97c0c50e12d03"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "codex-source-verified", "sources": "63d213f033924b9add1942a899a3f95d96ed9a462de7e3fbdb158ecafd0f9a5a"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -102,7 +102,7 @@ Caveats:
 
 Use for: Returned local I/O errors and a Files connection that should remain usable after cancellation.
 
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Closes the exact transfer handle once within the original local I/O deadline.
+- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Bounded transfers; `display_root` queries advertised view-only metadata.
 - [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared optional client adapter; preserves publication, cleanup and authority fences.
 
 Evidence:

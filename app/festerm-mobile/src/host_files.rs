@@ -57,6 +57,7 @@ struct Lease {
     delete: std::sync::atomic::AtomicBool,
     uploads: Mutex<Option<Arc<uploads::Uploads>>>,
     root: Mutex<Option<Arc<local_root::Root>>>,
+    display_root: Mutex<Option<festerm_tunnel_bridge::file_protocol::DisplayRoot>>,
 }
 impl Drop for Lease {
     fn drop(&mut self) {
@@ -257,6 +258,18 @@ async fn listing<S: AsyncRead + AsyncWrite + Unpin>(
 }
 struct HostTransfers(Arc<Lease>);
 impl Transfers for HostTransfers {
+    fn remote_root_label(&self) -> String {
+        // Paint may run while lifecycle polling is paused. This is a local
+        // authority check only: no Documents stat or remote liveness request.
+        if self.0.cancel.is_cancelled() || (self.0.current)().is_err() {
+            return "Shared folder".into();
+        }
+        self.0.display_root.lock().unwrap().as_ref().map_or_else(
+            || "Shared folder".into(),
+            |root| festerm_sftp::path::display_name(root.as_str()),
+        )
+    }
+
     fn retains_preview_copies(&self) -> bool {
         true
     }
@@ -631,6 +644,7 @@ impl HostConnector {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
+            display_root: Mutex::new(None),
         });
         let weak = Arc::downgrade(&lease);
         let wake = wake.clone();
@@ -661,11 +675,15 @@ impl HostConnector {
                     let local = root
                         .local_fs()
                         .map_err(|_| "App Documents unavailable or changed")?;
+                    let display_root = rt
+                        .block_on(client.display_root())
+                        .map_err(|_| "Files folder information unavailable")?;
                     let write = client.capabilities().write;
                     let delete = client.delete_advertised();
                     let Some(lease) = weak.upgrade() else {
                         return Ok(());
                     };
+                    *lease.display_root.lock().unwrap() = display_root;
                     *lease.root.lock().unwrap() = Some(root.clone());
                     lease
                         .delete
@@ -1512,6 +1530,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
+            display_root: Mutex::new(None),
             current: Arc::new(move || {
                 if check.load(Ordering::SeqCst) {
                     Ok(())
@@ -1562,6 +1581,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root)),
+            display_root: Mutex::new(None),
         });
         let (send, events) = mpsc::sync_channel(1);
         send.send(LinkEvent::Status("prepared".into())).unwrap();
@@ -1599,6 +1619,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(Some(root.clone())),
+            display_root: Mutex::new(None),
         });
         let mut session = super::super::files::FilesSession::ready(
             "Files".into(),
@@ -1647,6 +1668,108 @@ mod tests {
         assert_eq!(std::fs::read(marker).unwrap(), b"replacement public marker");
     }
     #[test]
+    fn host_files_root_presentation_sanitizes_formatters_and_masks_retired_inactive_view() {
+        use super::super::{
+            files::FilesSession, files_fixture::FixtureFs, workspaces::Workspace, Lifecycle,
+            MobileApp, Surface,
+        };
+        use egui_kittest::{kittest::Queryable, Harness};
+        use std::{
+            cell::Cell,
+            rc::Rc,
+            sync::atomic::{AtomicBool, Ordering},
+        };
+        for raw in ["/Users/عربي", "/Users/\u{202e}example\u{2066}"] {
+            for retired in [None, Some(true), Some(false)] {
+                let current = Arc::new(AtomicBool::new(true));
+                let check = current.clone();
+                let (commands, _rx) = tokio::sync::mpsc::channel(QUEUE);
+                let lease = Arc::new(Lease {
+                    commands,
+                    cancel: CancellationToken::new(),
+                    state: Arc::new(Mutex::new(State::default())),
+                    wake: egui::Context::default(),
+                    current: Arc::new(move || {
+                        if check.load(Ordering::SeqCst) {
+                            Ok(())
+                        } else {
+                            Err(SftpError::Cancelled)
+                        }
+                    }),
+                    write: std::sync::atomic::AtomicBool::new(false),
+                    delete: std::sync::atomic::AtomicBool::new(false),
+                    uploads: Mutex::new(None),
+                    root: Mutex::new(None),
+                    display_root: Mutex::new(Some(raw.to_owned().try_into().unwrap())),
+                });
+                let fs = |kind| {
+                    Arc::new(FixtureFs {
+                        kind,
+                        home: "/",
+                        entries: vec![],
+                    })
+                };
+                let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+                    active: false,
+                    ..Default::default()
+                })));
+                app.files = Some(Box::new(FilesSession::ready(
+                    "Files".into(),
+                    "Host".into(),
+                    Ready {
+                        remote: fs(festerm_sftp::PaneKind::Remote),
+                        local: fs(festerm_sftp::PaneKind::Local),
+                        local_root: "/nonexistent-public-fixture".into(),
+                        transfers: Arc::new(HostTransfers(lease.clone())),
+                        start_dir: Some("/".into()),
+                        remote_write: false,
+                    },
+                    &egui::Context::default(),
+                )));
+                app.workspace = Workspace::Files;
+                app.surface = Surface::Terminal;
+                app.files_ctx.only = true;
+                match retired {
+                    Some(true) => lease.cancel.cancel(),
+                    Some(false) => current.store(false, Ordering::SeqCst),
+                    None => (),
+                }
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(375.0, 853.0))
+                    .build_ui_state(
+                        |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                        app,
+                    );
+                harness.run_steps(3);
+                let label = if retired.is_some() {
+                    "Shared folder".into()
+                } else {
+                    festerm_sftp::path::display_name(raw)
+                };
+                harness.get_by_label(&label);
+                if label != raw {
+                    assert!(harness.query_by_label(raw).is_none());
+                }
+                assert!(
+                    harness.state().files.as_ref().unwrap().is_ready(),
+                    "inactive paint did not poll retirement"
+                );
+                assert_eq!(
+                    lease
+                        .display_root
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .as_str(),
+                    raw
+                );
+                assert!(!format!("{:?}", lease.display_root.lock().unwrap()).contains(raw));
+            }
+        }
+    }
+
+    #[test]
     fn host_files_mutations_and_invalid_paths_never_reach_worker() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(QUEUE);
         let lease = Arc::new(Lease {
@@ -1658,6 +1781,7 @@ mod tests {
             delete: std::sync::atomic::AtomicBool::new(false),
             uploads: Mutex::new(None),
             root: Mutex::new(None),
+            display_root: Mutex::new(None),
             current: Arc::new(|| Ok(())),
         });
         let remote = Remote(lease.clone());

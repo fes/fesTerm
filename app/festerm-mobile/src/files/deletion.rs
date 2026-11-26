@@ -510,6 +510,12 @@ mod tests {
         );
         assert!(pane.selected.contains("empty"));
         harness.get_by_label("2 items · 2 selected");
+        harness
+            .get_all_by_label("Sort and view options")
+            .next()
+            .unwrap()
+            .click();
+        harness.run_steps(3);
         harness.get_by_label("Delete selected").click();
         harness.run_steps(3);
         assert_eq!(*script.paths.lock().unwrap(), ["/empty", "/public.txt"]);

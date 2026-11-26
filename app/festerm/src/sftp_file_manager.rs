@@ -2927,6 +2927,32 @@ impl SftpFileManagerTab {
     }
 
     fn show_pane(&mut self, ui: &mut Ui, focus: PaneFocus) {
+        // A physical label never becomes pane state, an editable request path,
+        // or a breadcrumb destination. Ordinary SFTP keeps its existing labels.
+        let display_root = if focus == PaneFocus::Remote
+            && matches!(self.launch_target, FileManagerLaunchTarget::HostFiles(_))
+        {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            let root = (matches!(self.connection_state, SftpConnectionState::Ready)
+                && self.file_operations.current_connection()
+                && !self.host_files_retired
+                && self
+                    .host_files_cancel
+                    .as_ref()
+                    .is_none_or(|cancel| !cancel.is_cancelled()))
+            .then(|| {
+                self.files_source
+                    .as_ref()
+                    .and_then(|source| source.display_root.as_ref())
+            })
+            .flatten()
+            .map(|root| festerm_sftp::path::display_name(root.as_str()));
+            #[cfg(not(feature = "experimental-dev-tunnels"))]
+            let root: Option<String> = None;
+            Some(root.unwrap_or_else(|| "Shared folder".into()))
+        } else {
+            None
+        };
         let mut request_back = false;
         let mut request_up = false;
         let mut request_home = false;
@@ -3130,12 +3156,10 @@ impl SftpFileManagerTab {
                                     {
                                         request_back = true;
                                     }
-                                    if toolbar_icon_button(
-                                        ui,
-                                        SftpGlyph::Up,
-                                        &format!("Up {} folder", focus.label()),
-                                    )
-                                    .clicked()
+                                    if ui.add_enabled_ui(
+                                        display_root.is_none() || pane.current_path != SftpPath::remote("/"),
+                                        |ui| toolbar_icon_button(ui, SftpGlyph::Up, &format!("Up {} folder", focus.label())),
+                                    ).inner.clicked()
                                     {
                                         request_up = true;
                                     }
@@ -3239,7 +3263,7 @@ impl SftpFileManagerTab {
                                                         ui.horizontal_centered(|ui| {
                                                             let mut previous_label_was_root_slash = false;
                                                             for (index, segment) in
-                                                                breadcrumb_segments(&pane.current_path)
+                                                                display_breadcrumb_segments(&pane.current_path, display_root.as_deref())
                                                                     .into_iter()
                                                                     .enumerate()
                                                             {
@@ -7040,6 +7064,17 @@ pub(crate) struct BreadcrumbSegment {
     pub(crate) current: bool,
 }
 
+/// Changes only the visible root label. Every navigation target remains virtual.
+fn display_breadcrumb_segments(path: &SftpPath, root: Option<&str>) -> Vec<BreadcrumbSegment> {
+    let mut segments = breadcrumb_segments(path);
+    if matches!(path, SftpPath::Remote(_)) {
+        if let (Some(root), Some(first)) = (root, segments.first_mut()) {
+            first.label = root.to_owned();
+        }
+    }
+    segments
+}
+
 pub(crate) fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
     match path {
         SftpPath::Remote(path) => {
@@ -10183,6 +10218,171 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn display_root_breadcrumbs_keep_virtual_paths_and_legacy_sftp_labels() {
+        let path = SftpPath::remote("/notes/public");
+        for label in ["/Users/example", "C:\\Users\\example", "Shared folder"] {
+            let segments = display_breadcrumb_segments(&path, Some(label));
+            assert_eq!(segments[0].label, label);
+            assert_eq!(
+                segments
+                    .iter()
+                    .map(|segment| segment.path.clone())
+                    .collect::<Vec<_>>(),
+                vec![
+                    SftpPath::remote("/"),
+                    SftpPath::remote("/notes"),
+                    path.clone()
+                ]
+            );
+            assert_eq!(segments[1].label, "notes");
+        }
+        assert_eq!(display_breadcrumb_segments(&path, None)[0].label, "/");
+        let local = SftpPath::local("public-folder");
+        let unchanged = breadcrumb_segments(&local);
+        let display = display_breadcrumb_segments(&local, Some("ignored"));
+        assert_eq!(
+            display
+                .iter()
+                .map(|segment| (&segment.label, &segment.path))
+                .collect::<Vec<_>>(),
+            unchanged
+                .iter()
+                .map(|segment| (&segment.label, &segment.path))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_physical_breadcrumb_uses_virtual_callback_and_disables_root_up() {
+        use egui_kittest::kittest::By;
+        for root in [
+            Some("/Users/example"),
+            Some("C:\\Users\\example"),
+            Some("/Users/عربي"),
+            Some("/Users/\u{202e}example\u{2066}"),
+            None,
+        ] {
+            let context = egui::Context::default();
+            let mut tab = paint_fixture(&context, 0);
+            tab.launch_target = FileManagerLaunchTarget::HostFiles(HostFilesLaunchTarget {
+                label: "public Files".into(),
+                profile_id: None,
+                account: Some("public-account".into()),
+                locator: "owned.use".into(),
+            });
+            let mut source = host_files::FilesSource::reviewed_delete_fixture(false);
+            let identity = source.markdown(None, "/notes.md");
+            assert!(identity.is_some());
+            source.display_root = root.map(|root| root.to_owned().try_into().unwrap());
+            assert_eq!(
+                source.markdown(None, "/notes.md"),
+                identity,
+                "display metadata cannot change source identity"
+            );
+            if let Some(root) = root {
+                assert!(!format!("{source:?}").contains(root));
+            }
+            tab.files_source = Some(source);
+            tab.remote_pane.current_path = SftpPath::remote("/");
+            tab.remote_pane.path_text = "/".into();
+            let (sender, mut commands) = tokio::sync::mpsc::channel(GUI_SFTP_COMMAND_CAPACITY);
+            tab.command_sender = sender;
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(460.0, 500.0))
+                .build_ui_state(
+                    |ui, tab: &mut SftpFileManagerTab| tab.show_pane(ui, PaneFocus::Remote),
+                    tab,
+                );
+            harness.run();
+            let label = root
+                .map(festerm_sftp::path::display_name)
+                .unwrap_or_else(|| "Shared folder".into());
+            harness.get_by_label(&label);
+            if let Some(raw) = root {
+                assert_eq!(
+                    harness
+                        .state()
+                        .files_source
+                        .as_ref()
+                        .unwrap()
+                        .display_root
+                        .as_ref()
+                        .unwrap()
+                        .as_str(),
+                    raw
+                );
+                if label != raw {
+                    assert!(harness.query_by_label(raw).is_none());
+                }
+            }
+            harness.get(
+                By::new()
+                    .label("Up Remote folder")
+                    .predicate(|node| node.is_disabled()),
+            );
+            assert!(commands.try_recv().is_err());
+            harness.state_mut().remote_pane.current_path = SftpPath::remote("/notes");
+            harness.state_mut().remote_pane.path_text = "/notes".into();
+            harness.run();
+            harness.get_by_label(&label).click();
+            harness.run();
+            assert!(
+                matches!(commands.try_recv().unwrap(), WorkerCommand::LoadRemote {path} if path == "/")
+            );
+            assert_eq!(
+                harness.state().remote_pane.current_path,
+                SftpPath::remote("/")
+            );
+            assert_eq!(
+                harness.state().remote_pane.path_text,
+                "/",
+                "inline editor stays virtual"
+            );
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn desktop_files_cached_root_is_masked_before_poll_when_authority_retires() {
+        for cancel in [true, false] {
+            let context = egui::Context::default();
+            let mut tab = paint_fixture(&context, 0);
+            tab.launch_target = FileManagerLaunchTarget::HostFiles(HostFilesLaunchTarget {
+                label: "public Files".into(),
+                profile_id: None,
+                account: Some("public-account".into()),
+                locator: "owned.use".into(),
+            });
+            let mut source = host_files::FilesSource::reviewed_delete_fixture(false);
+            source.display_root =
+                Some("/Users/public-private-label".to_owned().try_into().unwrap());
+            tab.files_source = Some(source);
+            tab.remote_pane.current_path = SftpPath::remote("/");
+            let token = tokio_util::sync::CancellationToken::new();
+            tab.host_files_cancel = Some(token.clone());
+            if cancel {
+                token.cancel();
+            } else {
+                tab.file_operations.connection.retire();
+            }
+            // Render directly, before poll can clear the cached source.
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(460.0, 500.0))
+                .build_ui_state(
+                    |ui, tab: &mut SftpFileManagerTab| tab.show_pane(ui, PaneFocus::Remote),
+                    tab,
+                );
+            harness.run();
+            harness.get_by_label("Shared folder");
+            assert!(harness
+                .query_by_label("/Users/public-private-label")
+                .is_none());
+            assert!(harness.state().files_source.is_some());
+        }
+    }
+
+    #[test]
     fn breadcrumb_segments_expose_clickable_ancestors() {
         let remote = breadcrumb_segments(&SftpPath::remote("/srv/releases/2026.09"));
         assert_eq!(
@@ -11766,6 +11966,9 @@ pub(crate) mod tests {
             remote_metadata: Some(metadata.clone()),
             verified_host_key_fingerprint: String::new(),
         });
+        let mut source = host_files::FilesSource::reviewed_delete_fixture(true);
+        source.display_root = Some("/Users/example".to_owned().try_into().unwrap());
+        tab.files_source = Some(source);
         tab.review_file_operation(PaneFocus::Remote, false);
         assert!(tab.file_operation_open());
         tab.pending_markdown_request = Some(PendingMarkdownRequest {

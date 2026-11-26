@@ -2010,9 +2010,21 @@ a new shortcut, and Cancel leaves the old association intact.
 At 360- and 375-point widths, the profile-type selector uses **Files**
 so the file workflow remains distinguishable from a terminal profile. The saved
 kind remains **Dev Tunnels Files**. A Files header uses the typed profile name
-or selected host name, never a shared-shell recipe label; its Save/Edit action
-keeps the standard 16-point body inset. Unknown selected-file sizes omit the
+or selected host name, never a shared-shell recipe label. Save/Edit belongs to
+the existing top More menu and opens the same name editor. Each pane has one
+44-point New folder icon beside Refresh. Upload and Download share one compact
+row; both lists receive the remaining viewport height within 16-point body
+insets, with ordinary outer scrolling on short screens. Unknown selected-file sizes omit the
 byte total rather than displaying a false zero.
+
+Ordinary Files shows the authenticated server's bounded physical display root,
+when advertised, with Up disabled at that root. This is presentation metadata:
+request paths stay in the same virtual namespace, and the label is neither a
+grant nor saved profile data. Older servers show **Shared folder**. Desktop uses the same metadata in its remote root breadcrumb, keeping child destinations and the inline path editor virtual; ordinary SFTP labels are unchanged. Entries the
+server marks unsupported use a neutral distinct icon and **Unavailable**, with
+no file selection/preview/transfer action; the client does not guess whether
+such an entry is a symlink or a special file. Existing SFTP path semantics are unchanged.
+
 
 A focused Files form uses the existing native-keyboard safe viewport. New Folder
 and Delete sheets are bounded by the visible viewport captured before pane

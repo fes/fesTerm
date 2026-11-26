@@ -26,7 +26,7 @@ EXPECTED = {
     "home-directory",
     "host-key-verification",
     "edit", "keyboard-shortcuts", "local-terminal", "maximize", "microphone", "minimize",
-    "external-link", "markdown-document", "new-profile", "new-session", "next-match", "outline",
+    "external-link", "markdown-document", "new-profile", "new-folder", "new-session", "next-match", "outline",
     "overflow", "overflow-vertical", "pane-handle", "parent-directory", "paste", "previous-match", "proceed",
     "profile", "reattach", "reconnect", "refresh", "remote-globe", "remote-tunnel", "rendered-view", "restore",
     "running-sessions", "saved-profiles", "search", "secret-storage", "save", "undo", "redo",
