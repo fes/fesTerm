@@ -418,6 +418,9 @@ mod tests {
         transfer.cancel();
         drain_location_channel(server1).await;
         drain_location_channel(server2).await;
+        drop(browse);
+        drop(transfer);
+        drop(prepared);
         std::fs::remove_dir_all(base).unwrap();
     }
     #[tokio::test]

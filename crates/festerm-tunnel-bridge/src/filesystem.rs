@@ -1962,6 +1962,7 @@ mod tests {
         assert_eq!(std::fs::read(second.join("same.txt")).unwrap(), b"second");
         assert_eq!(std::fs::read_dir(&first).unwrap().count(), 1);
         assert_eq!(std::fs::read_dir(&second).unwrap().count(), 1);
+        drop(session);
         std::fs::remove_dir_all(base).unwrap();
     }
     #[test]
