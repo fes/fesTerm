@@ -1326,15 +1326,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct CountingNotifier(AtomicUsize);
-
-    impl SessionEventNotifier for CountingNotifier {
-        fn notify(&self) {
-            self.0.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
     struct TestFence {
         generation: u64,
         cancelled: Arc<AtomicBool>,
@@ -2327,17 +2318,67 @@ mod tests {
 
     #[test]
     fn notifier_fires_only_after_events_are_enqueued() {
-        let notifier = Arc::new(CountingNotifier::default());
+        struct BlockingThirdNotifier {
+            count: AtomicUsize,
+            third: mpsc::SyncSender<()>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl SessionEventNotifier for BlockingThirdNotifier {
+            fn notify(&self) {
+                if self.count.fetch_add(1, Ordering::Relaxed) == 2 {
+                    self.third.send(()).unwrap();
+                    self.release
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(2))
+                        .expect("third notification was not released");
+                }
+            }
+        }
+        struct ReleaseThirdNotification(mpsc::SyncSender<()>);
+        impl Drop for ReleaseThirdNotification {
+            fn drop(&mut self) {
+                let _ = self.0.try_send(());
+            }
+        }
+        let (third_send, third_receive) = mpsc::sync_channel(1);
+        let (release_send, release_receive) = mpsc::sync_channel(1);
         let session = JavaScriptSession::start_with_notifier(
             EchoJavaScriptRuntime,
             size(),
-            Arc::clone(&notifier) as Arc<dyn SessionEventNotifier>,
+            Arc::new(BlockingThirdNotifier {
+                count: AtomicUsize::new(0),
+                third: third_send,
+                release: Mutex::new(release_receive),
+            }),
         )
         .unwrap();
+        // Declared after the session so unwinding releases the worker before
+        // dropping the session, including when a queue assertion fails.
+        let release = ReleaseThirdNotification(release_send);
         wait_for(|| session.lifecycle() == SessionLifecycle::Running);
         session.try_send_input(b"echo").unwrap();
-        wait_for(|| session.metrics().event_queue_depth >= 1);
-        assert!(notifier.0.load(Ordering::Relaxed) >= 3);
+        third_receive.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            session
+                .control_receiver
+                .lock()
+                .unwrap()
+                .try_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                SessionEvent::Lifecycle(SessionLifecycle::Starting),
+                SessionEvent::Lifecycle(SessionLifecycle::Running),
+            ]
+        );
+        // The worker holds output_space while notifying. Inspect the actual
+        // queue directly rather than reentering the public receiver's lock.
+        assert_eq!(
+            session.event_receiver.lock().unwrap().try_recv(),
+            Ok(SessionEvent::Output(b"echo".to_vec()))
+        );
+        drop(release);
+        session.shared.event_received();
         assert_eq!(
             session.shutdown(Duration::from_secs(1)),
             Ok(ShutdownResult::Stopped)

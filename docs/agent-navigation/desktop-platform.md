@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "2a648ff2017b11b9bd8f9351f1c87a710a32de055fef40e3047fec7293f6885b"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5811a09e091b0c02ca2f2f55b4792cd1fa6aeed07cc8df02f7403587f48bd77b"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns packaged updater gating, native smoke validation, platform wake/privacy signals, and macOS app bridges that route OS events into the app.
+Desktop platform integration and packaging owns native app bridges, packaged updater gating, and OS wake/privacy event handling.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -17,7 +17,7 @@ Use for: How does a packaged build decide whether self-update is available and w
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Packaged releases refuse update checks without a verification key.
-- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only the supported packaged self-update markers are installable.
+- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only supported packaged self-update markers are installable.
 
 Caveats:
 - Install markers gate updater availability, not code signing.

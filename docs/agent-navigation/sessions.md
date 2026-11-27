@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a955bf49b343fa66b7b35a158b06e1389a7d89d16d99c8e4ec7020338b45a692"} -->
+<!-- agent-navigation: {"domain": "sessions", "generator": "2", "model": "mai-code-1.1-flash", "sources": "900f1a54c364ee033fc64906f878af3f9feeb9e7de605a78911ee380db64e7c0"} -->
 # Sessions, PTY, serial, and persistence daemon
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns runtime session lifecycle, PTY startup, daemon persistence and recovery, and app-side event pumping for terminal sessions.
+Owns runtime session lifecycle, PTY startup, daemon persistence, and terminal event pumping across local and persistent backends.
 
 Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 
@@ -13,7 +13,8 @@ Canonical docs: [ARCHITECTURE.md](../../ARCHITECTURE.md)
 Use for: Which lifecycle, queue, and reply rules apply to every session backend?
 
 - [`Session`](../../crates/festerm-session/src/lib.rs) — Runtime-neutral backend API and reply ownership contract
-- [`terminal_replies_owned_by_backend`](../../crates/festerm-session/src/lib.rs) — Backend owns terminal replies when the recovery mirror handles them
+- [`SessionEvent`](../../crates/festerm-session/src/lib.rs) — Lifecycle, output, resize, and recovery events in app order
+- [`terminal_replies_owned_by_backend`](../../crates/festerm-session/src/lib.rs) — Backend owns terminal replies when recovery mirror handles them
 
 Evidence:
 - [`automation_epoch_transitions_serialize_with_admission`](../../crates/festerm-session/src/lib.rs) — Proves lifecycle and admission epochs stay ordered across transitions
@@ -67,3 +68,19 @@ Caveats:
 - terminal_replies_owned_by_backend blocks duplicate forwarding.
 - pump_session_events respects MAX_INGEST_BYTES_PER_SESSION_SLICE.
 - Output and resize events are applied in session wire order.
+
+## JavaScript runtime
+
+Use for: Which boundary adds a JavaScript worker behind the common session API?
+
+- [`JavaScriptRuntime`](../../crates/festerm-javascript-session/src/lib.rs) — Injected runtime contract for start, input, resize, and shutdown
+- [`JavaScriptSession`](../../crates/festerm-javascript-session/src/lib.rs) — Bounded session adapter with queueing, fencing, and lifecycle tracking
+
+Evidence:
+- [`stale_launch_is_refused_before_runtime_start`](../../crates/festerm-javascript-session/src/lib.rs) — Ensures stale launch fences are rejected before runtime start
+- [`privacy_revocation_suppresses_output_already_queued_for_delivery`](../../crates/festerm-javascript-session/src/lib.rs) — Proves revocation suppresses queued output before delivery
+
+Caveats:
+- No automation epoch or backend-owned terminal replies.
+- Control delivery fences stop stale workers from leaking output.
+- Runtime shutdown and queue limits must remain cooperative.

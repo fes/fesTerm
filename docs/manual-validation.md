@@ -2516,6 +2516,33 @@ zero debt. This qualifies deletion, not product folder creation, typing,
 physical-device/TestFlight or combined-release acceptance.
 [iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
+MOB-11–13 iOS Simulator/Windows96 separately passed two scoped cases on private
+SDK `30890c49` with native HOST30. Remote empty-folder Delete Cancel preserved an
+operator-created folder; fresh review and Confirm removed only that folder.
+An owned 16 MiB Upload showed 1.2/16.8 MB before Cancel and retained a Cancelled row,
+with no remote publication or extra root entry. A fresh 31-byte Upload then
+reached Done with an exact hash on the same queue and connection, without reconnect.
+Reviewed remote Delete removed only that target. Separate normal Local Delete
+cleanup restored all nine original Documents entries, metadata, zero Files profiles
+and five recipes. Both owners retained exit 1: first for known cleanup deferred at
+the caller cutoff, then for a Mac Starting check. Separate resource closure and a
+later same-identity full Mac comparison established final preservation and zero debt.
+These are not folder-creation, physical/TestFlight, current-source or release passes.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
+MOB-13 iOS Simulator Local reviewed-parent Delete passed on pinned SDK `30890c49`
+with Linux HOST30/113. A fresh review showed an owned 29-byte canary; the retained
+sheet survived an operator replacement of its parent with a separate owned parent
+and a different 32-byte canary at the same name. One Confirm stopped with zero of
+one removals confirmed and no Unknown; exact identities and hashes preserved both
+objects. Operator cleanup restored the nine original Documents entries and metadata,
+zero Files profiles and five recipes. Thirteen bounded XCTest calls, owner/boot
+exit 0, full host comparisons and positive resource closure established zero debt.
+The separate Remote swap was unobserved after its confirmation window expired;
+Cancel and exact cleanup followed without Confirm or replay. This does not qualify
+current main, folder creation, physical devices, TestFlight or a whole pair.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
 MOB-13 Android/Linux111 separately verified read-only controls on APK `60657878`
 (source `30890c49`): Upload and remote New folder disabled, remote Delete absent,
 and one 83-byte download with an exact hash. Fresh local Delete removed only that
