@@ -493,11 +493,95 @@
         "entries": 716,
         "sha256": "0eb5b602057268eee498a4dad83e7513cdb284e2afed13a5efbd38af0ca8def2"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "runtime_epoch": 115,
+        "native_epoch": 96,
+        "write": true,
+        "delete": true,
+        "temporary_policy": "Two allowed locations; original location A remained Start."
+      },
+      "accepted_components": [
+        "A fresh Remote File 29B Delete review remained open through operator replacement of its owned parent. One Confirm reported 0 of 1 confirmed/stopped, with no Unknown; exact original 29B and replacement 32B objects were preserved.",
+        "One Upload2 attempt captured the 31B second row Queued while the 16 MiB first row was active. After choosing B, both rows retained their admitted A destinations and finished Done; exact hashes were present in A, B remained empty and both Local sources were unchanged."
+      ],
+      "preservation": "25 bounded XCTest calls passed. Original owner exit 1 and the cleanup-reserve refusal remain recorded; normal product cleanup was not observed. Separate reviewed operator cleanup removed only the four exact scratch files. A later normal GUI restoration returned the exact original singleton settings and full native record at Linux epoch 117, retired the temporary empty B, and passed all three strict guest checks. Original Documents 9 and metadata are preserved; policy, fixture and resource debts are zero.",
+      "limits": [
+        "Normal product cleanup of these four scratch files was not qualified.",
+        "Functional observations remain attributed to frozen iOS SDK 30890 and Linux runtime 115/native 96; restoration is separately attributed to runtime 117.",
+        "No current-main mobile/release, product mkdir, typing, wire or background qualification."
+      ],
+      "private_receipt_sha256": "001a85f2fca770c888e01b6d85e0a543a3d42d4559b47db1f23b9200f2c81f40",
+      "private_final_seal_sha256": "a9a13a3bcf9e61a0b91f094c2f8bb38b7159f50ce8909b4e97084bcc3974a701",
+      "private_closed_map": {
+        "entries": 1254,
+        "sha256": "4de30004514a64a35b35467813453e0a9dea904cb820a2667e08d946f7914946"
+      },
+      "separate_closeout_sha256": "141379c316499c60f850127575f0b65ba93c7aac2caee7298115e3d37b9d251b",
+      "separate_restoration": {
+        "runtime_epoch": 117,
+        "native_epoch": 96,
+        "original_settings_and_full_native_record_restored": true,
+        "temporary_folder_retired": true,
+        "policy_fixture_resource_debt": 0,
+        "private_receipt_sha256": "ceea2b09ec49c7b6b49260d710449d99b280f7996273ff636b21a9ba6a9bdd39",
+        "private_closed_map": {
+          "entries": 149,
+          "sha256": "8662e431ada20a611f345ca3853cdc1d6761d824e4def8c7b3d93c193637aab1"
+        }
+      }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "runtime_epoch": 117,
+        "native_epoch": 96,
+        "original_singleton_policy": true
+      },
+      "accepted_components": [
+        "The ordinary Remote New folder form displayed a software keyboard after one field tap. Four taps on the visible lowercase f, t, q and x keys entered exactly ftqx; Cancel dismissed the form.",
+        "The independent Local New folder form accepted exactly ftqx using the same visible-key tap route and dismissed with Cancel. Neither case submitted Create or Return."
+      ],
+      "input_mechanism": "Existing frozen runner and caller; ordinary normalized taps only. No typing API, focus adapter, keyboard toggle, OS setting, rebuild or product change.",
+      "preservation": "All thirteen bounded calls passed. Owner and boot exited zero; original Documents9, metadata, zero Files profiles and five recipes were preserved. All three host checks, owned-process closure, Simulator shutdown and restored VM states passed, with no fixture, policy, resource or preservation debt.",
+      "limits": [
+        "Name-entry and cancellation prerequisites only; directory creation is not qualified.",
+        "Historical NoKeyboardFocus typing-API failures remain recorded; this demonstrates a separate existing software-keyboard tap route.",
+        "Pinned SDK30890 iOS Simulator only; no physical-device, current-main mobile, release or background qualification."
+      ],
+      "private_receipt_sha256": "b8437e6ce7485d49693c246f702bee2eab466f8c8c112e7ed2452b0602781b62",
+      "private_final_seal_sha256": "0de83317ab7ce9da6dd5a6671b9a6e87ed848e9aa89cbd619220a824de5e016e",
+      "private_closed_map": {
+        "entries": 628,
+        "sha256": "1ab39bc271e332a7a2ebebb628ed5eb4fb732955a8ad5159425857e8a1033d36"
+      }
     }
   ],
   "pending": [
     "Full iOS pairs and the combined mobile Files campaign.",
-    "Native folder typing and creation, physical-device validation, and wider Local and remote Delete crosscuts.",
+    "Product folder creation, physical-device validation, and wider Local and remote Delete crosscuts. Pinned on-screen name entry is qualified separately.",
     "Wider in-flight transfer, same-queue continuation and background-completion coverage beyond the scoped macOS retirement and reconnect runs below.",
     "Native testing of current main and production-release qualification."
   ]

@@ -2543,6 +2543,32 @@ Cancel and exact cleanup followed without Confirm or replay. This does not quali
 current main, folder creation, physical devices, TestFlight or a whole pair.
 [iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
+MOB-13 iOS Simulator/Linux115 separately passed Remote reviewed-parent deletion
+refusal and queued destination retention on pinned SDK `30890c49`/HOST30 native96.
+A fresh 29-byte File review remained open while its owned parent was replaced;
+one Confirm stopped at zero of one removals with no Unknown, preserving both
+original and replacement. One Upload2 then showed the 31-byte row Queued behind
+an active 16 MiB upload while the browser displayed allowed location B. Both
+retained their admitted A destinations and finished Done with exact hashes in A;
+B stayed empty. The original owner exit1 and cleanup-reserve refusal remain
+recorded. Separately reviewed operator cleanup removed only the four known
+scratch files; this does not qualify product cleanup. Normal GUI restoration117
+returned the exact original settings/full native record, retired B and passed all
+three host checks. Original Documents9 and metadata are preserved; all debts are
+closed. Folder creation, typing, physical/current-release and background gates
+remain separate.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
+MOB-13 iOS Simulator folder-name entry separately passed on the same pinned SDK
+with restored Linux117. One field tap in each Remote and Local New folder form
+showed the software keyboard; four visible-key taps entered exactly `ftqx`.
+Both forms closed with Cancel, with no Create, Return or filesystem effects.
+Thirteen bounded calls and owner/boot exit0 passed, preserving original Documents9,
+metadata and all three hosts with zero debt. This qualifies the tap-only input
+route, not directory creation or the previously failing typing API. Physical,
+current-main mobile and release qualification remain separate.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
 MOB-13 Android/Linux111 separately verified read-only controls on APK `60657878`
 (source `30890c49`): Upload and remote New folder disabled, remote Delete absent,
 and one 83-byte download with an exact hash. Fresh local Delete removed only that
