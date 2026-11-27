@@ -169,9 +169,8 @@ fn host_persistent_client_disconnected(generation: u64) {
 fn lifecycle_failure(stage: FailureStage, error: &(dyn std::error::Error + 'static)) {
     lifecycle_event(LifecycleEvent::Failure {
         stage,
-        os_code: error
-            .downcast_ref::<io::Error>()
-            .and_then(io::Error::raw_os_error),
+        // Operation context must not hide the original OS code from diagnostics.
+        os_code: startup_io_cause(error).1,
         recovery: None,
         registration: None,
     });
@@ -3702,14 +3701,18 @@ fn kill_registered_session(
         }
         return Err(format!("session '{name}' is not registered").into());
     };
-    if !generation_has_exited(root, &record)?
-        && festerm_sessiond::daemon_generation_is_live(
+    if !native_stage(
+        "kill generation inspection",
+        generation_has_exited(root, &record),
+    )? && native_stage(
+        "kill liveness inspection",
+        festerm_sessiond::daemon_generation_is_live(
             root,
             record.pid,
             record.created_at_unix_ms,
             &record.socket,
-        )?
-    {
+        ),
+    )? {
         // Best effort: without this record recovery refuses to restart, which
         // is the safe direction, so a diagnostics failure must not block kill.
         if let Err(error) = lifecycle::record(
@@ -3724,12 +3727,19 @@ fn kill_registered_session(
         ) {
             eprintln!("festerm-sessiond: could not record stop request for '{name}': {error}");
         }
-        terminate(record.pid).map_err(|error| {
-            format!("could not terminate session '{name}': {error}; record retained; retry kill")
-        })?;
+        native_stage(
+            "kill terminate (record retained; retry kill)",
+            terminate(record.pid),
+        )?;
     }
-    wait_for_dead_generation(root, &record, timeout)?;
-    cleanup_dead_generation(root, &record, true)?;
+    native_stage(
+        "kill wait for generation exit",
+        wait_for_dead_generation(root, &record, timeout),
+    )?;
+    native_stage(
+        "kill cleanup dead generation",
+        cleanup_dead_generation(root, &record, true),
+    )?;
     remove_registry_record_if_generation_matches(registry, &record);
     Ok(())
 }
@@ -4836,6 +4846,37 @@ fn open_registry_lock_file_in(root: &Path) -> Result<RegistryAccess, Box<dyn std
     })
 }
 
+/// Adds only a fixed operation stage; the original boxed cause remains intact.
+#[derive(Debug)]
+struct NativeOperationError {
+    stage: &'static str,
+    cause: Box<dyn std::error::Error>,
+}
+
+impl std::fmt::Display for NativeOperationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.stage, self.cause)
+    }
+}
+
+impl std::error::Error for NativeOperationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+
+fn native_stage<T, E: Into<Box<dyn std::error::Error>>>(
+    stage: &'static str,
+    result: Result<T, E>,
+) -> Result<T, Box<dyn std::error::Error>> {
+    result.map_err(|cause| {
+        Box::new(NativeOperationError {
+            stage,
+            cause: cause.into(),
+        }) as Box<dyn std::error::Error>
+    })
+}
+
 fn with_registry_lock<T>(
     operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
 ) -> Result<T, Box<dyn std::error::Error>> {
@@ -4847,22 +4888,22 @@ fn with_registry_lock_in<T>(
     mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
     mut before_prepare: impl FnMut(),
 ) -> Result<T, Box<dyn std::error::Error>> {
-    let access = open_registry_lock_file_in(root)?;
+    let access = native_stage("registry open", open_registry_lock_file_in(root))?;
     let lock_file = &*access.lock_file;
     let started = Instant::now();
     sessiond_trace(format_args!("registry acquire pid={}", process::id()));
-    bounded_registry_lock(lock_file, true)?;
+    native_stage("registry acquire", bounded_registry_lock(lock_file, true))?;
     let acquired = Instant::now();
     sessiond_trace(format_args!(
         "registry acquired pid={} after={:?}",
         process::id(),
         started.elapsed()
     ));
-    let before = access.read()?;
+    let before = native_stage("registry load", access.read())?;
     let mut registry = before.clone();
-    let result = operation(&mut registry);
+    let result = native_stage("registry operation", operation(&mut registry));
     if result.is_err() || registry == before {
-        FileExt::unlock(lock_file)?;
+        native_stage("registry unlock", FileExt::unlock(lock_file))?;
         sessiond_trace(format_args!(
             "registry unchanged pid={} held={:?}",
             process::id(),
@@ -4871,8 +4912,11 @@ fn with_registry_lock_in<T>(
         return result;
     }
     let Some(directory) = &access.directory else {
-        write_registry_at(&access.path, &registry)?;
-        FileExt::unlock(lock_file)?;
+        native_stage(
+            "registry legacy publish",
+            write_registry_at(&access.path, &registry),
+        )?;
+        native_stage("registry unlock", FileExt::unlock(lock_file))?;
         sessiond_trace(format_args!(
             "registry effect released pid={} held={:?}",
             process::id(),
@@ -4880,7 +4924,7 @@ fn with_registry_lock_in<T>(
         ));
         return result;
     };
-    FileExt::unlock(lock_file)?;
+    native_stage("registry unlock", FileExt::unlock(lock_file))?;
     // Slow durability barriers must not hold the discovery/admission lock.
     // Rebase disjoint updates and check same-name lineage under that lock
     // immediately before the atomic rename; legacy writers remain serialized.
@@ -4888,27 +4932,33 @@ fn with_registry_lock_in<T>(
     let mut base = before.clone();
     for _ in 0..4 {
         before_prepare();
-        let bytes = serde_json::to_vec_pretty(&registry)?;
+        let bytes = native_stage("registry serialize", serde_json::to_vec_pretty(&registry))?;
         if bytes.len() > 4 * 1024 * 1024 {
             return Err("native registry exceeds metadata bound".into());
         }
-        let mut prepared = festerm_sessiond::private_storage::PreparedCheckpoint::prepare(
-            directory,
-            Path::new("registry.json"),
-            &bytes,
+        let mut prepared = native_stage(
+            "registry checkpoint prepare",
+            festerm_sessiond::private_storage::PreparedCheckpoint::prepare(
+                directory,
+                Path::new("registry.json"),
+                &bytes,
+            ),
         )?;
-        bounded_registry_lock(lock_file, true)?;
+        native_stage(
+            "registry reacquire before publish",
+            bounded_registry_lock(lock_file, true),
+        )?;
         let publishing = Instant::now();
-        let current = access.read()?;
+        let current = native_stage("registry reload before publish", access.read())?;
         if current == base {
-            prepared.publish()?;
-            FileExt::unlock(lock_file)?;
+            native_stage("registry checkpoint publish", prepared.publish())?;
+            native_stage("registry unlock", FileExt::unlock(lock_file))?;
             sessiond_trace(format_args!(
                 "registry publication released pid={} held={:?}",
                 process::id(),
                 publishing.elapsed()
             ));
-            prepared.sync()?;
+            native_stage("registry checkpoint sync", prepared.sync())?;
             sessiond_trace(format_args!(
                 "registry published pid={} total={:?}",
                 process::id(),
@@ -4917,8 +4967,8 @@ fn with_registry_lock_in<T>(
             return result;
         }
         let rebased = rebase_registry_change(&before, &desired, &current);
-        FileExt::unlock(lock_file)?;
-        registry = rebased?;
+        native_stage("registry unlock", FileExt::unlock(lock_file))?;
+        registry = native_stage("registry rebase", rebased)?;
         if registry == current {
             return result;
         }
@@ -8133,6 +8183,131 @@ mod tests {
             published.unwrap();
             assert!(observed.unwrap().foreign.contains_key("published"));
         });
+    }
+
+    #[test]
+    fn registry_acquire_diagnostic_preserves_io_cause_and_owned_generation() {
+        let fixture = GenerationFixture::new();
+        let record = fixture.record("diagnostic-held", 1);
+        let _lifetime = fixture.artifacts(&record, true);
+        let registry = SessionRegistry {
+            sessions: BTreeMap::from([(record.name.clone(), record.clone())]),
+            ..Default::default()
+        };
+        with_registry_lock_in(
+            &fixture.0,
+            |current| {
+                *current = registry.clone();
+                Ok(())
+            },
+            || {},
+        )
+        .unwrap();
+        let before = fs::read(fixture.0.join("registry.json")).unwrap();
+        let held = open_registry_lock_file_in(&fixture.0).unwrap();
+        FileExt::lock_exclusive(&*held.lock_file).unwrap();
+        let mut operation_called = false;
+        let result = with_registry_lock_in(
+            &fixture.0,
+            |current| {
+                operation_called = true;
+                kill_registered_session(
+                    &fixture.0,
+                    current,
+                    &record.name,
+                    |_| panic!("contended registry admission must not signal a generation"),
+                    Duration::ZERO,
+                )
+            },
+            || {},
+        );
+        let error = result.unwrap_err();
+        assert!(!operation_called);
+        assert!(error.to_string().starts_with("registry acquire:"));
+        let original = error.source().unwrap().downcast_ref::<io::Error>().unwrap();
+        assert!(festerm_sessiond::lock_is_contended(original));
+        let expected = fs2::lock_contended_error();
+        assert_eq!(original.kind(), expected.kind());
+        assert_eq!(original.raw_os_error(), expected.raw_os_error());
+        assert_eq!(
+            startup_io_cause(error.as_ref()),
+            (Some(original.kind()), original.raw_os_error())
+        );
+        assert_eq!(fs::read(fixture.0.join("registry.json")).unwrap(), before);
+        assert!(generation_lease_path(&fixture.0, &record).exists());
+        #[cfg(unix)]
+        assert!(Path::new(&record.socket).exists());
+        FileExt::unlock(&*held.lock_file).unwrap();
+    }
+
+    #[test]
+    fn registry_operation_diagnostic_preserves_nested_io_cause_without_publication() {
+        let fixture = GenerationFixture::new();
+        with_registry_lock_in(
+            &fixture.0,
+            |registry| {
+                registry
+                    .foreign
+                    .insert("untouched".into(), serde_json::json!({"future":1}));
+                Ok(())
+            },
+            || {},
+        )
+        .unwrap();
+        let before = fs::read(fixture.0.join("registry.json")).unwrap();
+        let original = fs2::lock_contended_error();
+        let expected = (Some(original.kind()), original.raw_os_error());
+        let error = with_registry_lock_in(
+            &fixture.0,
+            |registry| {
+                registry.foreign.clear();
+                native_stage(
+                    "kill cleanup dead generation",
+                    Err::<(), _>(fs2::lock_contended_error()),
+                )
+            },
+            || {},
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .starts_with("registry operation: kill cleanup dead generation:"));
+        assert_eq!(startup_io_cause(error.as_ref()), expected);
+        assert_eq!(fs::read(fixture.0.join("registry.json")).unwrap(), before);
+        assert!(error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<io::Error>()
+            .is_some());
+    }
+
+    #[test]
+    fn registry_load_diagnostic_preserves_parse_cause_and_invalid_metadata() {
+        let fixture = GenerationFixture::new();
+        let access = open_registry_lock_file_in(&fixture.0).unwrap();
+        drop(access);
+        fs::write(fixture.0.join("registry.json"), b"not valid registry JSON").unwrap();
+        set_file_mode(&fixture.0.join("registry.json"), 0o600).unwrap();
+        let error = with_registry_lock_in(
+            &fixture.0,
+            |_| -> Result<(), Box<dyn std::error::Error>> {
+                panic!("unreadable registry must not reach a mutation")
+            },
+            || {},
+        )
+        .unwrap_err();
+        assert!(error.to_string().starts_with("registry load:"));
+        assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .is_some());
+        assert_eq!(
+            fs::read(fixture.0.join("registry.json")).unwrap(),
+            b"not valid registry JSON"
+        );
     }
 
     #[test]

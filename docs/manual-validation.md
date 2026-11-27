@@ -2254,8 +2254,9 @@ uses 20c7142; Mac uses d136872e, with HOST24/26 producers separately attributed.
 separate Linux active 16 MiB-upload Cancel and same-queue download passed; Mac API37
 system KEYCODE_BACK hid Gboard without losing the form, and idle Back/launcher return
 retained the same process and responsive navigation. See the scoped follow-ups below
-for Android active Download, Upload choices and Files-profile restart. Legacy Back,
-terminal Escape count, wider conflict cases and live retirement stay open. Three iOS Files pairs and
+for Android Download retirement, Download and Upload choices, and Files-profile
+restart. Legacy Back, terminal Escape count, wider conflict cases and live
+retirement stay open. Three iOS Files pairs and
 combined-release qualification remain pending. Earlier emulator unresponsiveness/splash
 causes remain unknown. Keep the remaining scenario checks above.
 
@@ -2268,13 +2269,24 @@ emulator and resource drain after the immediate check failed. Wider
 background behavior remains pending.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
+MOB-11 Android Linux105 Download choices passed on the `30890c49` development
+APK with Write and Delete on. **Skip file** preserved the 13-byte local
+original. **Keep both** published a distinct 31-byte copy. A fresh
+**Replace local file** review and confirmation published the exact source
+at the original name and preserved the copy. The comparison showed
+**ON THIS DEVICE**. Independent hashes and cleanup covered both owned
+local outputs and the remote source. Native read-only host, iOS, TestFlight,
+and other providers remain pending.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
 MOB-12 Android Linux105 Upload choices passed on the `f4b45db6` development
 APK. **Skip file** preserved the 13-byte original. **Keep both** added one
 distinct 31-byte copy. A fresh **Replace remote file** review and confirmation
 published the exact 31-byte source at the original name while preserving the
 kept copy. Independent hashes, cleanup and resource drain were verified.
-The Android comparison still displayed **ON THIS iPHONE**. Download choices,
-the Android comparison label and iOS remain separate validation cases.
+That APK displayed **ON THIS iPHONE** in the Android comparison. The later
+Android Download result above records the corrected label. Native iOS
+Upload choices remain pending.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
 MOB-13 Android Linux105 follow-ups used two development APKs. With

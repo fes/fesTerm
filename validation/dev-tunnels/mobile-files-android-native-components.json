@@ -478,6 +478,32 @@
       "fixture_disposition": "The first fixture setup failed because the child process could not see an inherited descriptor. The empty fixture was populated once through the same inode after independent identity verification.",
       "drain_disposition": "The owner exited 1 after an immediate drain assertion without a diagnostic. The emulator exited 0, and independent observation verified that the owned emulator process group, ports and transport were absent, with all resource debt closed.",
       "private_receipt_sha256": "23cb175ee137fa799f096a31a66935bc2facf5bcc7b9143b0bc94cab02625100"
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "apk_bytes": 44028758,
+        "apk_sha256": "60657878aedf8a8699287d323e744f2a5395f3633fef25aed6b8dab7998bb427"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Skip file preserved the existing 13-byte local file. Keep both preserved it and published one distinct 31-byte local copy.",
+        "After a verified backup of the original, a fresh Replace local file review and confirmation published the 31-byte source at the original name with a new inode and preserved the kept copy. Independent hashes matched both outputs to the remote source. Android showed ON THIS DEVICE in the comparison.",
+        "Reviewed Local Delete removed only the two owned outputs, and exact remote cleanup removed only the owned source. The original app data and retained previews, remote preview and journals, and all three host baselines were preserved."
+      ],
+      "limits": "Qualification covers these three Download choices on this Android APK and Linux host with Write and Delete on. Native read-only host, iOS, TestFlight, other providers, background and race cases, and normal Activity finish remain outside this result. Back left the Activity STOPPED with finishing false.",
+      "drain_disposition": "The owner exited 1 after an immediate drain assertion without a diagnostic. The emulator exited 0, and independent settled observations verified that the owned emulator group, ports and transport were absent and all resource debt was closed.",
+      "private_receipt_sha256": "b4acb046cf47e84999f7ffc42782612a5e7a16ac211aa01cfdf94ec7ec2aae9b"
     }
   ],
   "limits": [
