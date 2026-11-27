@@ -2237,7 +2237,10 @@ mod tests {
 
     #[test]
     fn ordinary_readiness_reasons_and_inplace_renewal_roundtrip_runtime_history_privately() {
-        use crate::ordinary::ReadinessEvent;
+        use crate::{
+            diagnostics::{self, Category},
+            ordinary::{ReadinessEvent, RenewalStage},
+        };
         let (root, store) = fixture();
         provision(&store);
         let (_lease, _, record) = reserve(&store).unwrap();
@@ -2251,25 +2254,82 @@ mod tests {
             ReadinessEvent::IdentityNotReadyBefore,
             ReadinessEvent::IdentityNotReadyAfter,
             ReadinessEvent::RenewalOk,
-            ReadinessEvent::RenewalError,
         ] {
             log.readiness(event, Some(&error));
         }
+        let provider = diagnostics::attach(
+            io::Error::other("PRIVATE provider details"),
+            diagnostics::HostSetupDiagnostic {
+                stage: diagnostics::Stage::Authentication,
+                http_status: Some(429),
+                category: Category::RateLimited,
+                recovery: diagnostics::Recovery::Wait,
+            },
+        );
+        for (stage, error) in [
+            (
+                RenewalStage::Context,
+                crate::cloud::cancelled_account_work(),
+            ),
+            (
+                RenewalStage::Preflight,
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "PRIVATE native contention details",
+                ),
+            ),
+            (RenewalStage::Observer, provider),
+            (RenewalStage::Publication, error),
+        ] {
+            log.readiness(ReadinessEvent::RenewalError(stage), Some(&error));
+        }
         let rows = runtime_diagnostics::read(&store, &state);
-        assert_eq!(rows.len(), 6);
         assert_eq!(
-            rows.iter().map(|row| row.phase).collect::<Vec<_>>(),
-            vec![
+            rows[..5].iter().map(|row| row.phase).collect::<Vec<_>>(),
+            [
                 DiagnosticPhase::OrdinaryOwnerDigest,
                 DiagnosticPhase::OrdinaryCloudDigest,
                 DiagnosticPhase::OrdinaryIdentityBefore,
                 DiagnosticPhase::OrdinaryIdentityAfter,
                 DiagnosticPhase::OrdinaryRenewal,
-                DiagnosticPhase::OrdinaryRenewal
             ]
         );
+        assert!(rows[..4]
+            .iter()
+            .all(|row| row.outcome == DiagnosticOutcome::Error));
         assert_eq!(rows[4].outcome, DiagnosticOutcome::Ok);
-        assert_eq!(rows[5].outcome, DiagnosticOutcome::Error);
+        let expected_failures = [
+            (
+                DiagnosticPhase::OrdinaryRenewalContext,
+                Some(Category::Cancelled),
+                None,
+            ),
+            (
+                DiagnosticPhase::OrdinaryRenewalPreflight,
+                Some(Category::Busy),
+                None,
+            ),
+            (
+                DiagnosticPhase::OrdinaryRenewalObserver,
+                Some(Category::RateLimited),
+                Some(429),
+            ),
+            (DiagnosticPhase::OrdinaryRenewalPublication, None, None),
+        ];
+        assert_eq!(rows.len(), 5 + 2 * expected_failures.len());
+        let (pairs, remainder) = rows[5..].as_chunks::<2>();
+        assert!(remainder.is_empty());
+        for ([generic, boundary], (phase, category, status)) in pairs.iter().zip(expected_failures)
+        {
+            assert_eq!(generic.phase, DiagnosticPhase::OrdinaryRenewal);
+            assert_eq!(boundary.phase, phase);
+            assert_eq!(generic.outcome, DiagnosticOutcome::Error);
+            assert_eq!(boundary.outcome, DiagnosticOutcome::Error);
+            assert_eq!(generic.category, status.and(category));
+            assert_eq!(boundary.category, category);
+            assert_eq!(generic.http_status, status);
+            assert_eq!(boundary.http_status, status);
+        }
         assert!(rows
             .iter()
             .all(|row| row.run_id.to_string() == record.run_id && row.epoch == record.epoch));

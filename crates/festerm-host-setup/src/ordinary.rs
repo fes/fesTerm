@@ -24,7 +24,14 @@ pub(crate) enum ReadinessEvent {
     IdentityNotReadyBefore,
     IdentityNotReadyAfter,
     RenewalOk,
-    RenewalError,
+    RenewalError(RenewalStage),
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RenewalStage {
+    Context,
+    Preflight,
+    Observer,
+    Publication,
 }
 type ReadinessDiagnostic = Arc<dyn Fn(ReadinessEvent, Option<&io::Error>) + Send + Sync>;
 
@@ -60,7 +67,7 @@ fn report_readiness_once(
         ReadinessEvent::CloudDigestChanged => 2,
         ReadinessEvent::IdentityNotReadyBefore => 4,
         ReadinessEvent::IdentityNotReadyAfter => 8,
-        ReadinessEvent::RenewalOk | ReadinessEvent::RenewalError => return,
+        ReadinessEvent::RenewalOk | ReadinessEvent::RenewalError(_) => return,
     };
     if reported.fetch_or(bit, std::sync::atomic::Ordering::Relaxed) & bit == 0 {
         // Caller has already released its protected policy guard. At most
@@ -150,25 +157,37 @@ impl CurrentHostPolicySource {
         expected: &Snapshot,
         cancel: &CancellationToken,
     ) -> io::Result<()> {
+        self.refresh_with_stage(expected, cancel)
+            .await
+            .map_err(|(_, error)| error)
+    }
+
+    async fn refresh_with_stage(
+        self: &Arc<Self>,
+        expected: &Snapshot,
+        cancel: &CancellationToken,
+    ) -> Result<(), (RenewalStage, io::Error)> {
+        let context = |error| (RenewalStage::Context, error);
+        let scope_changed = || context(io::Error::other("host.ordinary_scope_changed"));
         let previous = self
             .ordinary
             .read()
-            .map_err(|_| io::Error::other("host.ordinary_context_unavailable"))?
+            .map_err(|_| context(io::Error::other("host.ordinary_context_unavailable")))?
             .clone();
         let Some(previous) = previous else {
-            if self.store.snapshot()? != *expected
+            if self.store.snapshot().map_err(context)? != *expected
                 || cancel.is_cancelled()
                 || expected.settings.ordinary_access == OrdinaryAccess::ProviderOwner
             {
-                return Err(io::Error::other("host.ordinary_scope_changed"));
+                return Err(scope_changed());
             }
             return Ok(());
         };
         if cancel.is_cancelled() {
-            return Err(crate::cloud::cancelled_account_work());
+            return Err(context(crate::cloud::cancelled_account_work()));
         }
         if previous.expected != *expected {
-            return Err(io::Error::other("host.ordinary_scope_changed"));
+            return Err(scope_changed());
         }
         // Reject changed native owner policy without blocking the relay loop.
         let source = self.clone();
@@ -184,7 +203,8 @@ impl CurrentHostPolicySource {
             )?);
             Ok(())
         })
-        .await?;
+        .await
+        .map_err(|error| (RenewalStage::Preflight, error))?;
         let observer = CloudHostAdapter::prepare_ordinary_observer(
             self.store.clone(),
             expected.clone(),
@@ -192,7 +212,8 @@ impl CurrentHostPolicySource {
             Some(previous.owner_digest),
             cancel,
         )
-        .await?;
+        .await
+        .map_err(|error| (RenewalStage::Observer, error))?;
         let source = self.clone();
         let current = expected.clone();
         let publication_cancel = cancel.clone();
@@ -220,6 +241,7 @@ impl CurrentHostPolicySource {
             publish_same_arc(&source.ordinary, &previous, next, &publication_cancel)
         })
         .await
+        .map_err(|error| (RenewalStage::Publication, error))
     }
 
     /// Controller-owned maintenance; admission performs no credential refresh.
@@ -247,18 +269,16 @@ impl CurrentHostPolicySource {
             if expired {
                 // Never drop a renewal with an owned native task in flight.
                 // The controller cancels and drains this maintenance future.
-                let refreshed = self.refresh(expected, cancel).await;
+                let refreshed = self.refresh_with_stage(expected, cancel).await;
                 if let Some(diagnostic) = &self.diagnostic {
-                    diagnostic(
-                        if refreshed.is_ok() {
-                            ReadinessEvent::RenewalOk
-                        } else {
-                            ReadinessEvent::RenewalError
-                        },
-                        refreshed.as_ref().err(),
-                    );
+                    match &refreshed {
+                        Ok(()) => diagnostic(ReadinessEvent::RenewalOk, None),
+                        Err((stage, error)) => {
+                            diagnostic(ReadinessEvent::RenewalError(*stage), Some(error));
+                        }
+                    }
                 }
-                refreshed.map_err(crate::cloud::terminal_ordinary_renewal)?;
+                refreshed.map_err(|(_, error)| crate::cloud::terminal_ordinary_renewal(error))?;
             }
         }
     }
@@ -681,6 +701,68 @@ mod anchor_tests {
             create_protocol: CreateProtocol::default(),
             create_access: CreateAccess::OwnerDefault,
         }
+    }
+
+    #[tokio::test]
+    async fn ordinary_renewal_contention_reports_preflight_and_never_prepares_observer() {
+        let (_root, store, vault) = setup_origin(Origin::Desktop);
+        let owner = fixture_owners(&store, vault);
+        owner
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .unwrap();
+        enable_provider(&store);
+        let expected = store.snapshot().unwrap();
+        let prepared = CurrentHostPolicySource::prepared(
+            &store,
+            expected.clone(),
+            owner.snapshot().unwrap(),
+            PreparedOrdinaryObserver::expired_fixture(resource()),
+        )
+        .unwrap();
+        drop(owner);
+        assert!(!prepared.observer.is_ready());
+        let previous = Arc::new(prepared);
+        let store = Arc::new(store);
+        let storage = OwnerStorage::NativeVault;
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = events.clone();
+        let source = Arc::new(
+            CurrentHostPolicySource {
+                store: store.clone(),
+                owner: CurrentOwnerPolicySource::new(store.clone(), storage),
+                storage,
+                ordinary: std::sync::RwLock::new(Some(previous.clone())),
+                diagnostic: None,
+            }
+            .with_diagnostic(Arc::new(move |event, error| {
+                let error = error.unwrap();
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push((event, error.kind(), error.raw_os_error()));
+            })),
+        );
+        let held = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+        let error = source
+            .maintain(&expected, &CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            *events.lock().unwrap(),
+            [(
+                ReadinessEvent::RenewalError(RenewalStage::Preflight),
+                io::ErrorKind::WouldBlock,
+                None
+            )]
+        );
+        assert_eq!(error.to_string(), "host.ordinary_account_renewal_failed");
+        assert!(!crate::cloud::is_transient_relay(&error));
+        assert!(Arc::ptr_eq(
+            &previous,
+            source.ordinary.read().unwrap().as_ref().unwrap()
+        ));
+        drop(held);
+        assert_eq!(store.snapshot().unwrap(), expected);
     }
 
     #[test]
