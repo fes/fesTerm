@@ -229,6 +229,72 @@
         "renewal_root_cause_fixed": false
       },
       "root_combined_acceptance_sha256": "be3aa85aaee8cacd56776da73485272692b761ba74ad469c8b8e132721012a9c"
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Saved the suggested Files profile through the normal UI and closed Files with no open work. A read-only checkpoint held the new profile identity, complete public destination and original profile-store semantics.",
+        "One deliberate owned-app process restart preserved the saved store exactly. The saved row remained visible after restart; selecting it opened a fresh authenticated listing of the expected Linux host folder with ten items. Reopening preserved the same profile identity, name, kind, creation time and destination; only the normal typed last-used timestamp changed.",
+        "Closed Files again and used normal offline Edit/Delete profile with fresh confirmation to remove only the held test profile. The original zero typed Files profiles, five host recipes, account, metadata and Documents were restored. No transfer or remote fixture mutation occurred.",
+        "All thirteen existing bounded XCTest calls passed. The controller exited zero, the unchanged product and frozen runner drained, all Simulators shut down, original VM power states and all three current host guard comparisons passed. Profile, fixture, resume and resource debt are zero."
+      ],
+      "limits": "Pinned iOS Simulator/Linux saved Files-profile process-restart and fresh reopening only. This does not qualify OS restart, persisted rename, sign-out, changed account/host/key/installation/principal refusal, physical devices, TestFlight, background completion, current-source concise error copy or whole-mobile/release behavior. The existing product was reused without reinstall or rebuild; XCTest staged its unchanged frozen runner normally.",
+      "controller_history": "An expired-frame gate refused before restart intent or product mutation. A materially fresh capture and separate Root-written approval then admitted the one actual restart without changing freshness or execution limits. Earlier obsolete-pin and report-field errors remain preserved as controller events. They are not product failures or additional app restarts.",
+      "private_receipt_sha256": "ea6cb96d1db21427388902bfc934a94fb640cdfc23710b741ade9e0dd571f8ff",
+      "private_final_seal_sha256": "edfa07c9376daf579c241da6fe381ac9102dee1b1d16da18e2916db7d85a1ba0",
+      "private_closed_map": {
+        "entries": 703,
+        "sha256": "fce4e548a48047e7fdc62108433c0194d230ffa725c020ce7d3b8127c3563e19"
+      }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Normal Files readiness and no open work preceded creation of one exclusive owned Local folder. A fresh Local Delete review identified only that folder as Empty folder on This iPhone.",
+        "After review, an operator inserted exactly one known 31-byte child through the held directory. The same review remained open without refresh. One Confirm reported 0 of 1 removals confirmed, stopped deletion and no unknown outcome.",
+        "Independent Local readback preserved the folder and child identities and content hash, all original Documents entries, metadata, account and the original zero typed Files profiles/five host recipes. No successful product deletion or remote filesystem mutation is claimed.",
+        "All eleven existing bounded XCTest calls passed. Normal Files close left no open work. The owner and boot supervisor exited zero; all three host guard comparisons passed, all Simulators shut down, all original VM states were restored and owned actors/groups were absent in all process states. Exact operator cleanup removed only the held child and now-empty test folder after positive drain, restoring the original Documents map. Fixture and resource debt are zero."
+      ],
+      "controller_history": "The first seed invocation refused before its intent or any fixture creation because the owned host approval receipt had mode 0644 instead of the required 0600. A checked descriptor changed only that same receipt mode, preserving identity and content. One materially corrected seed then succeeded under the unchanged helper and clock limits. The original refusal and mode-repair record remain preserved.",
+      "limits": "Pinned iOS Simulator/Linux Local Delete stale-review refusal only. No Remote Delete, native remote-permission-OFF independence, successful product deletion, user-facing folder creation or name typing, transfers, profile changes, physical devices, TestFlight, current-source concise-copy or whole-mobile/release qualification. The existing product was reused without reinstall or rebuild; XCTest staged the unchanged frozen runner normally.",
+      "private_receipt_sha256": "ac73d730c3e4848bfefcb280110ba935e93d4e20bf0cacbb17618b680ac09119",
+      "private_final_seal_sha256": "58f074ba789917d6a788ea996987da893e59b16686e9d1244a12f57a29bea68c",
+      "private_closed_map": {
+        "entries": 556,
+        "sha256": "17ad95301563419c06f6a1209c00c1aa34e1cd8f93d8d46f53c14e4d1d06cd57"
+      }
     }
   ],
   "pending": [

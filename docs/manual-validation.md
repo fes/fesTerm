@@ -2397,6 +2397,70 @@ Android/Linux component, not recursive deletion, iOS, physical devices,
 TestFlight, the new source-change copy or whole-mobile/release acceptance.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
+MOB-13 Android Windows92 separately passed unavailable-start recovery on
+APK `60657878`, source `30890c49`/tree `f5b77f40`, against signed HOST 0.17.30
+native83. Fresh opening listed the configured starting folder. After normal
+Files close and no open work, an operator moved only the held starting folder
+aside without overwrite. Fresh opening reported **Files starting folder
+unavailable**, with **Reconnect** and **Choose location**, without a fallback
+listing. Explicit location selection showed exactly two locations on the same
+host; choosing the second displayed its full native path and listed its expected
+folder and Markdown file. Normal close preceded exact restoration of the same
+starting-directory identity and all nine fixture entries. All 32 original
+private paths/content and zero Files profiles/five recipes were preserved.
+Owner exit 1 and the immediate empty cleanup assertion remain recorded beside
+emulator exit 0 and a separate positive settled whole-group/all-states,
+ports/serial/Simulator/VM check. All three guest guards passed; physical and
+resource debt is zero. A prior attempt stopped before suspension or emulator
+launch because a one-object Mac expectation needed a one-row wrapper; the
+unchanged comparator then passed all three actual projections and rejected
+altered protected values. The normal Windows UI later restored the original
+single-folder boundary and permissions at runtime94. It saved an explicit
+root-default Start instead of the prior unset Start. The deployed build treats
+these identically for this singleton; strict readback pinned the actual encoding.
+This is not raw settings equality or equivalence after adding another root.
+Physical devices, iOS inheritance, late first-listing races, wider identity and
+authority changes, current-source concise-copy and whole-mobile/release
+qualification remain pending.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+MOB-13 iOS Simulator Linux105 separately passed saved Files-profile process
+restart on private SDK `3d25f8c6`, source `30890c49`/tree `f5b77f40`,
+executable `4923bb0a`. Saving the suggested profile and closing Files left no
+open work. One deliberate app restart preserved the store exactly; the saved
+row then opened a fresh authenticated listing of the expected host folder.
+The same profile identity and complete destination were preserved, with only
+the normal last-used timestamp changing after reopening. Normal offline
+Edit/Delete and fresh confirmation removed only the owned shortcut, restoring
+zero typed Files profiles, five original host recipes, account, metadata and
+Documents. No transfer or remote fixture was created. All thirteen bounded
+XCTest calls and the controller passed; all three current host guards and
+owned-resource drain passed with zero debt. The expired-frame gate refused
+before any restart; a fresh capture/approval admitted the single actual restart.
+OS restart, rename, sign-out/identity refusal, physical devices, TestFlight,
+background completion and whole-mobile/release qualification remain pending.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
+MOB-13 iOS Simulator Linux105 separately passed Local Delete refusal after
+an empty-folder review on SDK `3d25f8c6`, source `30890c49`/tree `f5b77f40`.
+After normal readiness and no open work, an operator created one owned Local
+folder. Fresh **This iPhone** review showed only that **Empty folder**. One
+31-byte child was inserted after review; without refreshing the sheet, one
+Confirm reported **0 of 1 removals confirmed** and stopped, with no unknown
+outcome. Independent readback preserved the folder, child and original entries.
+All eleven existing bounded XCTest calls, owner and boot supervisor passed.
+After normal Files close, positive whole-group/all-states drain, Simulator
+shutdown, restored VM states and all three host guard comparisons, exact
+operator cleanup removed only the child and now-empty test folder. Original
+Documents, account, metadata and zero Files profiles/five recipes were restored
+with zero fixture/resource debt. A first host-receipt-mode refusal preceded
+any fixture intent; only that owned receipt mode was corrected before one
+materially corrected seed. The original failure remains preserved; helper and
+clock limits did not change. No successful product deletion, remote mutation,
+remote-permission-OFF independence, folder typing, physical/TestFlight,
+current-source concise-copy or whole-mobile/release acceptance is claimed.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
 A separately accepted iOS Simulator component used development source `20c7142`
 and signed Linux HOST 0.17.24. Ordinary discovery reached Files Ready, saved the
 suggested profile, reopened it with fresh foreground authority and removed the

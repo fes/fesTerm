@@ -592,6 +592,55 @@
         "entries": 235,
         "sha256": "ebb9cce8139874edb48e18afd8c04ef74167a6090e757bb6f7b5ec62fbe74383"
       }
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "apk_sha256": "60657878aedf8a8699287d323e744f2a5395f3633fef25aed6b8dab7998bb427"
+      },
+      "server": {
+        "os": "Windows",
+        "version": "0.17.30",
+        "commit": "2ecf0cd7433de151d533506b15bf55d3aad41c0c",
+        "native_epoch": 83,
+        "runtime_epoch": 92,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Fresh Files opening used the configured starting folder in the first allowed location. Normal Files close left no open work before an operator moved only the held test starting directory aside without overwriting anything.",
+        "A fresh opening reported Files starting folder unavailable with Reconnect and Choose location, without a fallback listing. Choose location listed exactly the two allowed locations on the same host. Explicit selection of the second location displayed its full native path and listed the expected child folder and Markdown file.",
+        "Normal Files close again left no open work. Exact operator restoration preserved the original starting-directory identity and all nine fixture entries. The installed app, all 32 original private paths/content, zero typed Files profiles and five host recipes were preserved; no transfer, new profile, shell or alias was created.",
+        "The normal Windows guard and all three final guest comparisons passed. Independent settled checks found the owner, launcher, emulator and entire owned groups absent in all process states, no emulator ports or serial, all Simulators shut down and all original VM power states restored. Physical and resource debt are zero."
+      ],
+      "drain_disposition": "Owner exit 1 and its empty immediate cleanup assertion remain preserved. The emulator exited zero; a separate settled whole-group/ports/serial/Simulator/VM observation proves cleanup. It does not identify the immediate predicate or retrospectively change the owner result.",
+      "controller_history": "A preceding attempt stopped before VM suspension or emulator launch because the Mac expectation was one object while the unchanged comparator requires rows. Wrapping that exact object in one row preserved every expected value; all three captured comparisons passed and altered protected values were rejected. The first refusal and original admission remain preserved.",
+      "limits": "Pinned Android emulator/Windows unavailable-start recovery only. No physical device, TestFlight, iOS inheritance, folder-name input, account or grant retirement, late first-listing race, current-source concise-copy or whole-mobile/release qualification. The existing installed app was reused without reinstall; no deliberate in-case app restart occurred.",
+      "private_receipt_sha256": "43a815d324b52e4fe6b212a86ff00db0d73f56f25844c8c701429178851b06e2",
+      "private_final_seal_sha256": "9e2edf4d262178261f7db5719d6926e58c3347f335eb41ed560836c72c532dd0",
+      "private_closed_map": {
+        "entries": 162,
+        "sha256": "952ff944c7fe6de35dc3845298577b8a917a2e1c08cdbd5795b6c12967e0a058"
+      },
+      "original_windows_policy_restoration_pending": false,
+      "windows_policy_restoration": {
+        "runtime_epoch": 94,
+        "native_epoch": 83,
+        "disposition": "The normal Windows UI restored the original sole allowed root and the existing access settings. Start now explicitly selects that root at `/`; the prior Start was unset. The deployed build resolves both forms to the same starting folder, Up boundary and access checks for this singleton. A strict readback verified the explicit encoding and all three host preservation checks. The restore GUI and owner exited normally, and the test-started service returned to its original state.",
+        "scope": "Effective singleton restoration only. The written settings differ from the original representation. The result does not extend to adding a second root.",
+        "private_strict_guard_receipt_sha256": "0c3a57ef6b5e6fea231e8be32f8781e7de44380769045511a35416af04b85ed1",
+        "original_start_encoding_restored": false,
+        "accepted_semantic_restoration": true,
+        "private_result_sha256": "f68275fe3991a548cc94e6c21078b104112be9b5aeafb2e39b585a7d89bc83cb",
+        "private_final_seal_sha256": "7966f6c942bf841f802fe8eb82397a7cc81b6d97458b0c7703a809cd3e13d068",
+        "private_closed_map": {
+          "entries": 182,
+          "sha256": "05cf9669475a83bc412c4cb66cecf21bda4f5165d69804258a57ac610a6afc43"
+        }
+      }
     }
   ],
   "limits": [
