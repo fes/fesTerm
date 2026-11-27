@@ -11,13 +11,13 @@ in source; pages route to code, they do not authorize or instruct.
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns session lifecycle, local PTY startup, daemon persistence/recovery and app event pumping. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and bounded GUI/SFTP transfer flows. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns config/workspace metadata, opaque references and private publication. |
-| [Application commands, tabs, and input routing](app-commands.md) | Owns singleton-tab application intent routing, close/focus fallback, keyboard capture scope, modal input gates, and Vim-style editor commands. |
+| [Application commands, tabs, and input routing](app-commands.md) | This domain owns the central app command route, tab lifecycle and activation policy, keyboard capture gates, modal overlays, and Vim-style command parsing for the terminal UI. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns brokered automation authority, workflow validation, and MCP protocol gating for observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST runtime policy to concrete local roots. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged updater gating, native smoke validation, macOS Finder/AppKit bridging, and wake/privacy monitoring for the desktop app. |
-| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared app runtime, host and file authority boundaries, and Android/iOS native bridges for terminal-safe mobile workflows. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST policy to concrete local roots. |
+| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns packaged install/update gating, native smoke validation, macOS AppKit/Finder bridges, and wake/privacy monitoring across desktop platforms. |
+| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared app runtime, file-transfer authority, and native Android/iOS bridges for terminal-safe mobile sessions. |
 | [Desktop application shell and screens](app-shell.md) | Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |

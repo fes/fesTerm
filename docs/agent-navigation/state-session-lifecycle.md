@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"cited": ["crates/festerm-ssh/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "codex-source-verified", "sources": "f8a0e405be4d1819d600733961ea1b6a0456f52b52aa3500017114990766fe15", "state_version": "2"} -->
+<!-- agent-navigation: {"cited": ["crates/festerm-pty/src/lib.rs", "crates/festerm-sessiond/src/lib.rs"], "domain": "state-session-lifecycle", "generator": "2", "model": "mai-code-1.1-flash", "sources": "020c5bedc2006dbafd7505a80397acf2a3b3eb7fb2b09943e5257d079adaf29a", "state_version": "2"} -->
 # State model: Session lifecycle
 
 > Generated candidate model of `crates/festerm-session/src/lib.rs::SessionLifecycle`. States and the
@@ -10,19 +10,25 @@ Domain: [Sessions, PTY, serial, and persistence daemon](sessions.md). States: St
 
 | From | To | Trigger | Evidence |
 | --- | --- | --- | --- |
-| Running | Stopping | shutdown requested | `crates/festerm-ssh/src/lib.rs::sftp_worker` |
-| Running | Failed | session failed with a terminal error | `crates/festerm-ssh/src/lib.rs::ssh_failure_with_kind` |
-| Stopping | Stopped | shutdown finished | `crates/festerm-ssh/src/lib.rs::sftp_worker` |
+| Starting | Running | backend connected and the live read loop started | `crates/festerm-sessiond/src/lib.rs::client_worker` |
+| Starting | Disconnected | initial recovery stream ended unexpectedly | `crates/festerm-sessiond/src/lib.rs::client_worker` |
+| Running | Stopping | shutdown requested before terminal exits | `crates/festerm-pty/src/lib.rs::request_stop` |
+| Running | Disconnected | daemon closed or transport broke while active | `crates/festerm-sessiond/src/lib.rs::client_worker` |
+| Running | Exited | remote server reported process exit | `crates/festerm-sessiond/src/lib.rs::client_worker` |
+| Running | Failed | runtime write or child observation failed | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Running | Stopped | shutdown command was received | `crates/festerm-sessiond/src/lib.rs::client_worker` |
+| Stopping | Stopped | reader finished during shutdown | `crates/festerm-pty/src/lib.rs::control_worker` |
+| Disconnected | Starting | reconnect begins after transport loss | `crates/festerm-sessiond/src/lib.rs::try_reconnect` |
 
 ## Property checks
 
-- FAIL: every state is reachable from Starting (Running, Stopping, Disconnected, Exited, Failed, Stopped).
+- PASS: every state is reachable from Starting (all reachable).
 - PASS: terminal states have no outgoing transitions (none).
-- FAIL: every non-terminal state has an exit (Starting, Disconnected).
-- FAIL: every reachable state can reach a terminal state (Starting).
+- PASS: every non-terminal state has an exit (none).
+- PASS: every reachable state can reach a terminal state (all can).
 
 ## Coverage
 
-Transitions cite 1 of 18 production files that name a variant. A FAIL
+Transitions cite 2 of 18 production files that name a variant. A FAIL
 or an uncited file means the model may be incomplete, not that the code is wrong.
-Uncited: `app/festerm-mobile/src/live_ssh.rs`, `app/festerm/src/app/gallery.rs`, `app/festerm/src/automation/controller.rs`, `app/festerm/src/automation/mod.rs`, `app/festerm/src/multiplexer_churn.rs`, `app/festerm/src/session_controller.rs`, `app/festerm/src/tabs.rs`, `app/festerm/src/tunnel_reconnect.rs`, `crates/festerm-javascript-session/src/lib.rs`, `crates/festerm-pty/src/lib.rs`, `crates/festerm-serial/src/lib.rs`, `crates/festerm-session/src/lib.rs`, +5 more.
+Uncited: `app/festerm-mobile/src/live_ssh.rs`, `app/festerm/src/app/gallery.rs`, `app/festerm/src/automation/controller.rs`, `app/festerm/src/automation/mod.rs`, `app/festerm/src/multiplexer_churn.rs`, `app/festerm/src/session_controller.rs`, `app/festerm/src/tabs.rs`, `app/festerm/src/tunnel_reconnect.rs`, `crates/festerm-javascript-session/src/lib.rs`, `crates/festerm-serial/src/lib.rs`, `crates/festerm-session/src/lib.rs`, `crates/festerm-ssh/src/lib.rs`, +4 more.
