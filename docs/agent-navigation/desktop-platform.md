@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5811a09e091b0c02ca2f2f55b4792cd1fa6aeed07cc8df02f7403587f48bd77b"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "5f7905abb740572dd6bdaf2ba2430d53da06e34b383654dffdbdae6876a86cb6"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration and packaging owns native app bridges, packaged updater gating, and OS wake/privacy event handling.
+Desktop platform integration owns native app bridges, packaged self-update gating, and OS wake/privacy event handling for the desktop app.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
