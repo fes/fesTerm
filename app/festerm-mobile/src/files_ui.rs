@@ -1048,22 +1048,21 @@ fn delete_sheet(ctx: &egui::Context, bounds: Rect, session: &mut FilesSession) {
                 .show(ui, |ui| {
                     for (index, name) in review.names.iter().enumerate() {
                         ui.label(name);
-                        if draft.local() {
-                            if let Some(detail) = review
-                                .local_details
-                                .as_ref()
-                                .and_then(|items| items.get(index))
-                            {
-                                let label = match detail {
-                                    crate::files::deletion::LocalDetail::File(size) => {
-                                        format!("File · {}", format_size(*size))
-                                    }
-                                    crate::files::deletion::LocalDetail::EmptyFolder => {
-                                        "Empty folder".to_owned()
-                                    }
-                                };
-                                footnote(ui, &label);
-                            }
+                        if let Some(detail) =
+                            review.details.as_ref().and_then(|items| items.get(index))
+                        {
+                            let label = match detail {
+                                crate::files::deletion::ReviewDetail::File(Some(size)) => {
+                                    format!("File · {}", format_size(*size))
+                                }
+                                crate::files::deletion::ReviewDetail::File(None) => {
+                                    "File · Size unavailable".to_owned()
+                                }
+                                crate::files::deletion::ReviewDetail::EmptyFolder => {
+                                    "Empty folder".to_owned()
+                                }
+                            };
+                            footnote(ui, &label);
                         }
                     }
                 });

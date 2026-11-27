@@ -1,7 +1,7 @@
 //! Mobile review transport over the shared retained-handle deletion owner.
 use super::*;
-use crate::files::deletion::{Outcome, Review};
-use festerm_ssh::RemoteTransferEndpoint;
+use crate::files::deletion::{Outcome, Review, ReviewDetail};
+use festerm_ssh::{RemoteTransferEndpoint, SftpEntryType};
 use festerm_tunnel_bridge::files_endpoint::{DeleteObservation, FilesEndpoint};
 
 type Sender<T> = mpsc::SyncSender<Result<T, String>>;
@@ -28,7 +28,14 @@ pub(super) async fn execute<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 Ok(Ok((id, items))) => {
                     let review = Review {
                         id,
-                        local_details: None,
+                        details: items
+                            .iter()
+                            .map(|item| match item.file_type {
+                                SftpEntryType::File => Some(ReviewDetail::File(item.size)),
+                                SftpEntryType::Directory => Some(ReviewDetail::EmptyFolder),
+                                _ => None,
+                            })
+                            .collect(),
                         names: items.into_iter().map(|item| item.name).collect(),
                     };
                     if reply.send(Ok(review)).is_err() || stop.is_cancelled() {
@@ -187,6 +194,9 @@ mod tests {
         )
     }
     async fn review(peer: &mut DuplexStream, handle: u32) {
+        review_metadata(peer, handle, rpc::Kind::File, "13").await;
+    }
+    async fn review_metadata(peer: &mut DuplexStream, handle: u32, kind: rpc::Kind, size: &str) {
         let call = request(peer).await;
         assert!(matches!(
             call.operation,
@@ -201,13 +211,56 @@ mod tests {
             rpc::Result::EntryReview {
                 handle,
                 metadata: rpc::Metadata {
-                    kind: rpc::Kind::File,
-                    size: "13".into(),
+                    kind,
+                    size: size.into(),
                     modified_ms: Some("1".into()),
                 },
             },
         )
         .await;
+    }
+    #[tokio::test]
+    async fn host_files_delete_review_preserves_fresh_kind_and_size_without_mutation() {
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            handshake(&mut peer).await;
+            review_metadata(&mut peer, 18, rpc::Kind::Directory, "0").await;
+            review_metadata(&mut peer, 19, rpc::Kind::File, "31").await;
+            for handle in [18, 19] {
+                let close = request(&mut peer).await;
+                assert!(
+                    matches!(close.operation, rpc::Operation::Close { handle: actual } if actual == handle)
+                );
+                send(&mut peer, close.id, rpc::Result::Closed).await;
+            }
+        });
+        let mut endpoint = endpoint(stream).await;
+        let (send, receive) = mpsc::sync_channel(1);
+        assert!(
+            execute(
+                &mut endpoint,
+                Command::Prepare(
+                    vec!["/changed.txt".into(), "/public.txt".into()],
+                    CancellationToken::new(),
+                    send,
+                ),
+            )
+            .await
+        );
+        let reviewed = receive.recv().unwrap().unwrap();
+        assert_eq!(reviewed.names, ["changed.txt", "public.txt"]);
+        assert_eq!(
+            reviewed.details,
+            Some(vec![
+                ReviewDetail::EmptyFolder,
+                ReviewDetail::File(Some(31))
+            ])
+        );
+        assert!(execute(&mut endpoint, Command::Cancel).await);
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
     }
     #[tokio::test]
     async fn host_files_delete_cancel_and_stale_review_preserve_stream_without_mutation() {
