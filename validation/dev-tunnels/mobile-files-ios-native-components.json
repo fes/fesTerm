@@ -295,6 +295,71 @@
         "entries": 556,
         "sha256": "17ad95301563419c06f6a1209c00c1aa34e1cd8f93d8d46f53c14e4d1d06cd57"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "One Upload 2 admitted two owned 31-byte Local sources. The first source met a controlled 13-byte remote collision. While that prompt held the queue, a separately checked descriptor changed only the second source to 32 bytes at the same inode, preserving the first source and all originals.",
+        "One Skip file left the first job Skipped and the changed second job Failed with the pinned SDK source-or-authority-change error. Strict independent remote observations preserved the original first target and preview, with no second target or partial observed. This is not a native wire-level proof that no BeginUpload request was sent.",
+        "A fresh ordinary Local Delete review showed only the owned 31-byte and 32-byte files. One confirmation removed those two entries and restored the original Documents map. Normal Files close left no open work; the existing caller closed the product normally.",
+        "All sixteen bounded XCTest calls passed. The boot supervisor exited zero. Separate checks verified absence of owned actors and groups in all process states, absence of listeners on the checked ports, Simulator shutdown and restoration of the VM states. After an actual unchanged Mac tuple and a distinct full three-host comparison passed, exact operator cleanup removed only the controlled remote 13-byte target; a final Linux guard passed after handle closure. Original app data, account, metadata, zero typed Files profiles, five host recipes, preview and journals were preserved, with zero fixture/resource debt."
+      ],
+      "failure_disposition": "The resource owner exited 1 because its first post-resume Mac lifecycle/runtime tuple assertion failed. The failed tuple was not captured, so the cause is unknown. A separate actual observation matched the original Mac process, run, policy and listening state without repair, followed by one distinct full three-host pass. The original owner result and first guard failure remain immutable; the later observations leave the first failure unexplained and the owner exit unchanged.",
+      "operator_navigation": "A scroll moved the nested Local pane; tapping the existing Transfers header opened the terminal queue sheet. An existing Name-sort action exposed the owned files for normal cleanup. No transfer was reenqueued or retried.",
+      "limits": "Pinned iOS Simulator/Linux queued-source-change refusal only. No current-source concise-copy, no-BeginUpload-RPC, physical-device, TestFlight, account/grant retirement, background-completion or combined mobile/release qualification. The installed product and frozen runner were reused; XCTest used normal staging of the unchanged runner.",
+      "private_receipt_sha256": "b8b3baf0b893a18b1c1eca97d13239027a7e2db5a72fc4129d0ce8f1fe3fac25",
+      "private_final_seal_sha256": "4d8b39277ee46459111f5432e699ddf339e50f0edbbf64ed417e86ec1aa547ad",
+      "private_closed_map": {
+        "entries": 904,
+        "sha256": "09d0f8c1abf8118d00a0d07e32a99bc675c3892dc4a4bca360851a617bc01dd7"
+      }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "The existing iOS Simulator SDK selected one exclusively owned 31-byte Local file. With that cached selection retained, a checked operator descriptor retired only the new test file and created an exclusive empty directory at the same name before opening Delete review. No listing refresh occurred between replacement and review.",
+        "The fresh This iPhone review identified the sole owned entry as Empty folder. One Cancel, with no confirmation, preserved that same held empty directory. Independent readback preserved all original Documents entries, account, metadata, zero typed Files profiles and five host recipes. No successful product deletion or remote filesystem mutation is claimed.",
+        "All nine existing bounded XCTest calls passed. Normal Files close left no open work and the product closed normally. The owner and boot supervisor exited zero; all three original host comparisons passed, all Simulators shut down, all original VM states were restored, and owned actors/groups were absent in all process states. Exact operator cleanup removed only the held empty test directory after positive drain, restoring the original Documents map with zero fixture/resource debt."
+      ],
+      "limits": "Pinned iOS Simulator Local Delete fresh-kind review and Cancel only. No native remote-permission-OFF independence, Remote Delete, transfers, user-facing folder creation or name typing, profile changes, physical devices, TestFlight, current-source concise-copy or whole-mobile/release qualification. The installed product and frozen runner were reused without rebuild or reinstall; XCTest used normal staging of the unchanged runner.",
+      "private_receipt_sha256": "b4cd3e945e3d648afb0568d80d6d8bc2596d23ce7ba2112c3c0d7862225f7410",
+      "private_final_seal_sha256": "ae2b7313bdff3001cc4a3f036b032def6f81c9faf79f69d20b78ae2912d9277a",
+      "private_closed_map": {
+        "entries": 529,
+        "sha256": "4e7a12e58b61b03ac9102379d7926c686e7ecfd47defc389e3157500193da634"
+      }
     }
   ],
   "pending": [

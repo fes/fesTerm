@@ -2353,6 +2353,35 @@ automatically only and still needs fresh native qualification; no whole-mobile
 or release inheritance follows.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
+MOB-12 iOS Simulator Linux105 separately passed queued-source refusal on
+private SDK `3d25f8c6`, source `30890c49`/tree `f5b77f40`. **Upload 2**
+admitted two owned 31-byte sources. The first source’s remote collision held
+the queue while an operator changed the second source to 32 bytes at the same
+inode. One **Skip file** left the first row **Skipped** and the changed second
+row **Failed** with the SDK’s source-or-authority-change error. Independent
+readback preserved the existing remote target and preview and found no second
+output or partial. Normal Local Delete removed only the two owned sources,
+and exact operator cleanup later removed the controlled remote target.
+All sixteen bounded XCTest calls passed. The original resource owner exited
+1 after a post-resume Mac assertion. The failing tuple was unavailable, so its
+cause remains unknown. Separate settled process, port, Simulator, VM and
+three-host checks verified resource drain and preservation, with zero fixture
+or resource debt. The newer concise copy and wire-level absence of BeginUpload
+remain outside this component, as do physical devices and release qualification.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
+MOB-13 iOS Simulator Linux105 separately passed Local Delete fresh-kind review
+on private SDK `3d25f8c6`, source `30890c49`/tree `f5b77f40`. With an owned
+31-byte file still selected, an operator replaced it with an empty directory
+at the same name without refreshing the listing. The fresh **This iPhone**
+review showed **Empty folder**. One **Cancel** preserved the same directory,
+and Confirm was never used. All nine bounded XCTest calls passed. Normal Files
+close left no open work, both supervisors exited zero, and all three host
+checks and resource drain passed. Exact operator cleanup restored the original
+Documents map with zero fixture or resource debt. This qualifies Local review
+and Cancel on the pinned Simulator build.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
 MOB-13 Android Linux105 follow-ups used two development APKs. With
 `f4b45db6`, Remote Delete showed **Empty folder** after a cached file had
 been replaced before review, and Cancel preserved the directory. A separate
