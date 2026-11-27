@@ -1,7 +1,7 @@
 //! One Documents-only retained review; no remote RPC or durable recovery scan.
 use super::*;
 #[cfg(unix)]
-use crate::files::deletion::{LocalDetail, Outcome, Review};
+use crate::files::deletion::{Outcome, Review, ReviewDetail};
 
 #[cfg(unix)]
 mod platform {
@@ -343,15 +343,15 @@ mod platform {
                         .map(|batch| {
                             let review = Review {
                                 id: batch.id,
-                                local_details: Some(
+                                details: Some(
                                     batch
                                         .leaves
                                         .iter()
                                         .map(|leaf| {
                                             if leaf.stamp.directory {
-                                                LocalDetail::EmptyFolder
+                                                ReviewDetail::EmptyFolder
                                             } else {
-                                                LocalDetail::File(leaf.stamp.size)
+                                                ReviewDetail::File(Some(leaf.stamp.size))
                                             }
                                         })
                                         .collect(),
@@ -484,8 +484,8 @@ mod tests {
         let review = prepare(&mut owner, &["a.txt", "empty"], CancellationToken::new()).unwrap();
         assert_eq!(review.names, vec!["a.txt", "empty"]);
         assert_eq!(
-            review.local_details,
-            Some(vec![LocalDetail::File(8), LocalDetail::EmptyFolder])
+            review.details,
+            Some(vec![ReviewDetail::File(Some(8)), ReviewDetail::EmptyFolder])
         );
         let out = commit(&mut owner, review.id).unwrap();
         assert_eq!(out.confirmed, 2);

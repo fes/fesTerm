@@ -620,8 +620,11 @@ new authority from the updated global epoch.
 
 Remote Delete uses the existing additional negotiated capability and the shared
 FilesEndpoint on the browsing stream. A bounded review retains up to eight
-exact file/empty-folder handles; only its ID and public entry names reach the
-confirmation sheet. Cancel or a stale selection/location/listing/authority
+exact file/empty-folder handles; only its ID, public entry names and freshly
+reviewed kind/size reach the confirmation sheet. Both Local and Remote show
+File with the reviewed size (or an explicit unavailable size), or Empty folder.
+Cached listing kinds and sizes never substitute for this review. Incomplete
+details cannot enable confirmation. Cancel or a stale selection/location/listing/authority
 prevents commit. Browsing and downloads close any old review before accessing
 the serialized client; keepalive may preserve a current review. Uploads remain
 on their separately admitted same-scope stream. No host grant or protocol is

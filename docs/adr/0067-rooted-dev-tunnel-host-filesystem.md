@@ -534,7 +534,10 @@ owner; no second deletion/publication engine is introduced. Its narrow raw-clien
 accessor requires current authority and refuses retained directory/replacement/
 deletion reviews. Non-delete browsing/download operations close an old deletion
 review first; normal endpoint keepalive can retain it. UI receives only a review
-ID and names, never protocol handles. At most eight files/empty folders require
+ID, names and display-only current kind/size, never protocol handles. Both
+sides render the freshly reviewed type and size before confirmation; cached
+listing metadata cannot substitute, missing sizes remain unknown, and incomplete
+details cannot enable confirmation. At most eight files/empty folders require
 separate confirmation and negotiated Delete consent. Selection, location,
 listing and authority changes cancel the review. Confirmed prefix/total remain
 observable across cleanup timeout, while only an outstanding mutation is labeled
@@ -564,7 +567,8 @@ Local Delete qualification remain pending independently of earlier remote result
 
 Validation impact: GUI:MOB-13, ADR-0067, ADR-0059. Preserve shared endpoint and
 ordinary SFTP behavior; test profile migration/downgrade, exact account/identity
-routing, visible review/confirm controls, stale/cancel refusal, confirmed/unknown
+routing, visible review/confirm controls, remote fresh-kind/size rendering against
+a conflicting cached row, incomplete-detail refusal, stale/cancel refusal, confirmed/unknown
 outcomes and the known-reply cleanup-timeout distinction. Native mobile saved
 profiles and reviewed Delete remain pending separate device qualification.
 

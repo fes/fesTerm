@@ -8067,7 +8067,10 @@
         "files_delete_review_widget_sanitizes_folder_labels_without_changing_raw_paths",
         "files_delete_local_owner_lifetime_canceled_during_final_validation_refuses_or_restores",
         "host_files_delete_local_pre_review_file_to_folder_shows_current_kind_before_confirm",
-        "host_files_delete_local_availability_rechecks_lifetime_after_callback"
+        "host_files_delete_local_availability_rechecks_lifetime_after_callback",
+        "host_files_delete_review_preserves_fresh_kind_and_size_without_mutation",
+        "files_delete_remote_review_renders_fresh_kind_and_size_before_confirm",
+        "files_delete_remote_incomplete_details_never_enable_confirmation"
       ],
       "manual_scenarios": [
         "MOB-13"

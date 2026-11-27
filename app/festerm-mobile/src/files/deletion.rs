@@ -3,16 +3,17 @@ use super::*;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) type Reply<T> = mpsc::Receiver<Result<T, String>>;
+/// Display facts from the current review, never a source of deletion authority.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum LocalDetail {
-    File(u64),
+pub(crate) enum ReviewDetail {
+    File(Option<u64>),
     EmptyFolder,
 }
 #[derive(Debug)]
 pub(crate) struct Review {
     pub id: u64,
     pub names: Vec<String>,
-    pub local_details: Option<Vec<LocalDetail>>,
+    pub details: Option<Vec<ReviewDetail>>,
 }
 #[derive(Debug)]
 pub(crate) struct Outcome {
@@ -49,10 +50,9 @@ impl Draft {
         self.pending.is_none()
             && !self.stop.is_cancelled()
             && self.review.as_ref().is_some_and(|review| {
-                !self.local
-                    || review.local_details.as_ref().is_some_and(|details| {
-                        details.len() == review.names.len() && !details.is_empty()
-                    })
+                review.details.as_ref().is_some_and(|details| {
+                    details.len() == review.names.len() && !details.is_empty()
+                })
             })
     }
 }
@@ -443,7 +443,7 @@ mod tests {
             .send(Ok(Review {
                 id: 51,
                 names: vec!["public.txt".into()],
-                local_details: Some(vec![LocalDetail::File(13)]),
+                details: Some(vec![ReviewDetail::File(Some(13))]),
             }))
             .unwrap();
         session.poll_delete(ctx);
@@ -527,7 +527,7 @@ mod tests {
             .send(Ok(Review {
                 id: 51,
                 names: vec![],
-                local_details: None,
+                details: None,
             }))
             .is_err());
         prepared(&mut session, &script, &ctx);
@@ -596,6 +596,79 @@ mod tests {
         harness.run();
         harness.get_by_label("Last deletion: 1 of 3 removals confirmed. A result is unknown. Inspect and refresh; do not retry automatically.");
         assert_eq!(script.commits.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn files_delete_remote_review_renders_fresh_kind_and_size_before_confirm() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        for (detail, label) in [
+            (ReviewDetail::EmptyFolder, "Empty folder"),
+            (ReviewDetail::File(Some(31)), "File · 31 B"),
+            (ReviewDetail::File(None), "File · Size unavailable"),
+        ] {
+            let (mut session, script, ctx) = fixture();
+            // The cached row remains a 13-byte file. The fresh worker review
+            // must determine what the confirmation sheet actually displays.
+            session.review_delete();
+            script
+                .review_reply
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .send(Ok(Review {
+                    id: 51,
+                    names: vec!["public.txt".into()],
+                    details: Some(vec![detail]),
+                }))
+                .unwrap();
+            session.poll_delete(&ctx);
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(390.0, 844.0))
+                .build_ui_state(
+                    |ui, session: &mut FilesSession| {
+                        crate::files_ui::show(ui, session);
+                    },
+                    session,
+                );
+            harness.run_steps(3);
+            assert!(!harness.state().deletion.as_ref().unwrap().local());
+            harness.get_by_label(label);
+            assert!(harness.state().deletion.as_ref().unwrap().ready());
+            assert_eq!(script.commits.load(Ordering::SeqCst), 0);
+            harness.get_by_label("Cancel").click();
+            harness.run_steps(3);
+            assert!(harness.state().deletion.is_none());
+            assert_eq!(script.commits.load(Ordering::SeqCst), 0);
+        }
+    }
+    #[test]
+    fn files_delete_remote_incomplete_details_never_enable_confirmation() {
+        for details in [
+            None,
+            Some(vec![]),
+            Some(vec![ReviewDetail::EmptyFolder, ReviewDetail::EmptyFolder]),
+        ] {
+            let (mut session, script, ctx) = fixture();
+            session.review_delete();
+            script
+                .review_reply
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap()
+                .send(Ok(Review {
+                    id: 51,
+                    names: vec!["public.txt".into()],
+                    details,
+                }))
+                .unwrap();
+            session.poll_delete(&ctx);
+            assert!(!session.deletion.as_ref().unwrap().ready());
+            session.commit_delete();
+            assert_eq!(script.commits.load(Ordering::SeqCst), 0);
+            session.cancel_delete();
+            assert!(script.stop.lock().unwrap().as_ref().unwrap().is_cancelled());
+        }
     }
     #[test]
     fn files_delete_rendered_folder_selection_review_and_confirm_are_separate_actions() {
@@ -717,7 +790,10 @@ mod tests {
             .send(Ok(Review {
                 id: 51,
                 names: vec!["empty".into(), "public.txt".into()],
-                local_details: Some(vec![LocalDetail::File(13), LocalDetail::File(13)]),
+                details: Some(vec![
+                    ReviewDetail::File(Some(13)),
+                    ReviewDetail::File(Some(13)),
+                ]),
             }))
             .unwrap();
         harness.run_steps(3);
@@ -754,7 +830,7 @@ mod tests {
             .send(Ok(Review {
                 id: 51,
                 names: vec!["public.txt".into()],
-                local_details: Some(vec![LocalDetail::File(13)]),
+                details: Some(vec![ReviewDetail::File(Some(13))]),
             }))
             .unwrap();
         session.poll_delete(&ctx);
@@ -772,7 +848,7 @@ mod tests {
             .send(Ok(Review {
                 id: 51,
                 names: vec!["public.txt".into()],
-                local_details: Some(vec![LocalDetail::File(13)]),
+                details: Some(vec![ReviewDetail::File(Some(13))]),
             }))
             .unwrap();
         session.poll_delete(&ctx);
@@ -867,7 +943,10 @@ mod tests {
             .send(Ok(Review {
                 id: 51,
                 names: vec!["empty".into(), "public.txt".into()],
-                local_details: Some(vec![LocalDetail::EmptyFolder, LocalDetail::File(13)]),
+                details: Some(vec![
+                    ReviewDetail::EmptyFolder,
+                    ReviewDetail::File(Some(13)),
+                ]),
             }))
             .unwrap();
         harness.run_steps(3);
@@ -899,7 +978,7 @@ mod tests {
                 .send(Ok(Review {
                     id: 51,
                     names: vec!["public.txt".into()],
-                    local_details: Some(vec![LocalDetail::File(13)]),
+                    details: Some(vec![ReviewDetail::File(Some(13))]),
                 }))
                 .unwrap();
             session.poll_delete(&ctx);
@@ -943,7 +1022,7 @@ mod tests {
                 .send(Ok(Review {
                     id: 51,
                     names: vec!["public.txt".into()],
-                    local_details: Some(vec![LocalDetail::File(13)]),
+                    details: Some(vec![ReviewDetail::File(Some(13))]),
                 }))
                 .unwrap();
             session.poll_delete(&ctx);
@@ -972,7 +1051,10 @@ mod tests {
                 .unwrap()
                 .contains(".festerm-delete"));
             assert!(!session.notice.as_ref().unwrap().contains(".festerm-delete"));
-            let label=format!("Recovery copy in {}: owned/.festerm-delete-test. Keep this copy until recovery is complete.",crate::platform_text("This iPhone","This device"));
+            let label = format!(
+                "Recovery copy in {}: owned/.festerm-delete-test. Keep this copy until recovery is complete.",
+                crate::platform_text("This iPhone", "This device")
+            );
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(390.0, 844.0))
                 .build_ui_state(
