@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e775de37fa6f3c96af694caeca8164d10411bb988b3e53d4941bfbb913cecc34"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "63228baa5552dee830e77ae6dccb6141b4e30e5c178fcb8bf92564ce5ee3336e"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST runtime policy to concrete local roots.
+Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST runtime policy to concrete local roots.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -56,3 +56,20 @@ Caveats:
 - A start directory is metadata-checked; path grants are not a substitute for local root trust.
 - Allowed locations and root proofs must be current and consistent with the request scope.
 - Review-only metadata cannot widen a filesystem root or bypass mutation checks.
+
+## Discovery inventory
+
+Use for: Which local sessions are discovered and when does a refresh publish a new inventory?
+
+- [`HostBinding`](../../crates/festerm-tunnel-client/src/service.rs) — Selected tunnel binding identifies the concrete bridge host and public key
+- [`Discovery`](../../app/festerm/src/discovery.rs) — Polls native and hosted session roots and coalesces refreshes
+- [`Inventory`](../../app/festerm/src/discovery.rs) — Reports native, tmux, screen, and hosted inventory with errors
+
+Evidence:
+- [`native_inventory_keeps_same_name_sessions_in_their_exact_roots`](../../app/festerm/src/discovery.rs) — Confirms native inventory preserves exact runtime roots instead of fuzzy matching
+- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Verifies refresh coalescing, publication, and continued polling after a visible change
+
+Caveats:
+- Inventory is observational, not a grant of access or host authority.
+- Refreshes intentionally coalesce stale results; a stale scan is discarded.
+- Hosted roots are tracked separately from default native roots and do not imply identity equivalence.

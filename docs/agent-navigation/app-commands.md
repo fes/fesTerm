@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8c2c9a9499f85206f5eb6fe5043db080b5f9178e0cfda8a9557c7849bc61a91c"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d14e7296b8f1f60795b62b279955985ec54720edf07418de2560d8f755b1b9c1"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns singleton-tab app intent routing, close/focus fallback logic, keyboard capture scope, modal overlay gates, and Vim-style command parsing.
+Owns singleton-tab application intent routing, close/focus fallback, keyboard capture scope, modal input gates, and Vim-style editor commands.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
@@ -13,25 +13,25 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 Use for: A widget or launcher needs to turn a gesture into a state-changing app intent
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents emitted from widgets and menus
-- [`AppState`](../../app/festerm/src/tabs.rs) — single authoritative window state and tab/session policy
+- [`AppState`](../../app/festerm/src/tabs.rs) — authoritative per-window tab and session state
 - [`dispatch`](../../app/festerm/src/tabs.rs) — central mutation path from commands into state
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — fallback goes back to the opener instead of the neighbor
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — fallback returns to the opener instead of the neighbor
 - [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — singleton surfaces are skipped from close fallback
 
 Caveats:
 - Widgets emit commands; they do not own session policy.
-- dispatch is the single mutation path; widget-side tab policy is rejected by design.
+- dispatch is the single mutation path for tab state.
 - Launcher, Settings, and Profiles are singleton surfaces and are not valid close targets.
 
 ## Close flow
 
 Use for: A tab is closing and the fallback focus target must be chosen
 
-- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears new output on the next session
+- [`set_active`](../../app/festerm/src/tabs.rs) — records departure and clears new-output state
 - [`remember_departing_tab`](../../app/festerm/src/tabs.rs) — tracks the last remembered tab to return to
-- [`close`](../../app/festerm/src/tabs.rs) — removes the tab, releases documents, and picks the next active tab
+- [`close`](../../app/festerm/src/tabs.rs) — removes the tab and selects the next active tab
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — open-from fallback beats the adjacent tab

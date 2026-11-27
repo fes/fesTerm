@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "0c89bf3a628da2e98528978e371f92f4cf3a7e9182fa9a807bdd65c180e8103b"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "27d14576053c31927dc46ba98be087caebfb6127525f4da7fedf5f11eaf72f37"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns packaged update gating, native smoke validation, native Finder/AppKit bridging, and wake/privacy monitoring for the desktop app.
+Desktop platform integration owns packaged updater gating, native smoke validation, macOS Finder/AppKit bridging, and wake/privacy monitoring for the desktop app.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -22,7 +22,7 @@ Evidence:
 Caveats:
 - Install markers gate updater availability, not signing.
 - Self-update paths require a public verification key.
-- Package smoke UI is development-only; host policy checks are separate.
+- Package smoke UI is dev-only; host policy checks are separate.
 
 ## Native smoke
 
