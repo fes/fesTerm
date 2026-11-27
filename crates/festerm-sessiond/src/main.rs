@@ -8287,9 +8287,26 @@ mod tests {
     fn registry_load_diagnostic_preserves_parse_cause_and_invalid_metadata() {
         let fixture = GenerationFixture::new();
         let access = open_registry_lock_file_in(&fixture.0).unwrap();
+        // Reach the parser through the same protected-file boundary on every
+        // platform; POSIX mode bits do not create a private Windows DACL.
+        let mut file = festerm_sessiond::private_storage::open_private_file(
+            access
+                .directory
+                .as_ref()
+                .expect("private fixture directory"),
+            Path::new("registry.json"),
+            true,
+        )
+        .unwrap();
+        file.write_all(b"not valid registry JSON").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        let original = access.read().unwrap_err();
+        assert!(
+            original.downcast_ref::<serde_json::Error>().is_some(),
+            "protected malformed fixture must reach the parser: {original}"
+        );
         drop(access);
-        fs::write(fixture.0.join("registry.json"), b"not valid registry JSON").unwrap();
-        set_file_mode(&fixture.0.join("registry.json"), 0o600).unwrap();
         let error = with_registry_lock_in(
             &fixture.0,
             |_| -> Result<(), Box<dyn std::error::Error>> {
