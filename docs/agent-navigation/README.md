@@ -8,7 +8,7 @@ in source; pages route to code, they do not authorize or instruct.
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing, screen state, and the single input transport queue; fixtures encode visible behavior and recovery invariants. |
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal viewport presentation, cache-driven rendering, native and software painting, and app-owned input routing while the session backend stays outside the UI. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns runtime session lifecycle, PTY startup, daemon persistence and recovery, and app-side event pumping for terminal sessions. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns runtime session lifecycle, PTY startup, daemon persistence, and terminal event pumping across local and persistent backends. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns SSH trust enforcement and the bounded GUI/SFTP transport flows that authenticate and stage remote file and transfer work. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns config/workspace metadata, opaque references and private publication. |
 | [Application commands, tabs, and input routing](app-commands.md) | Owns the app-level command router, tab activation lifecycle, keyboard gating, modal overlays, and editor command parsing for the terminal UI. |
@@ -16,7 +16,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns the authenticated local host lifecycle, exact dev-tunnel consent, rooted file access, and enterprise PowerShell handling that gate hosted sessions. |
-| [Desktop platform integration and packaging](desktop-platform.md) | This domain owns packaged updater gating, native smoke validation, platform wake/privacy signals, and macOS app bridges that route OS events into the app. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration and packaging owns native app bridges, packaged updater gating, and OS wake/privacy event handling. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared file-transfer runtime and native host bridge for offline-by-default terminal sessions on Android and iOS. |
 | [Desktop application shell and screens](app-shell.md) | Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
