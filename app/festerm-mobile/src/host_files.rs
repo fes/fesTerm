@@ -816,6 +816,17 @@ fn download<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
+fn run_files_worker(run: impl FnOnce(&Runtime) -> Result<(), String>) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| "Files worker unavailable")?;
+    // The russh channel destructor spawns its close task during synchronous
+    // cleanup, including returns before the Files session becomes ready.
+    let _entered = runtime.enter();
+    run(&runtime)
+}
+
 pub(super) struct HostConnector {
     events: mpsc::Receiver<LinkEvent>,
     lease: Arc<Lease>,
@@ -852,12 +863,8 @@ impl HostConnector {
         let spawn = std::thread::Builder::new()
             .name("mobile-host-files".into())
             .spawn(move || {
-                let run = || -> Result<(), String> {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|_| "Files worker unavailable")?;
-                    let (files, transfer) = prepare(&rt, &cancel)?;
+                let result = run_files_worker(|rt| {
+                    let (files, transfer) = prepare(rt, &cancel)?;
                     files
                         .scope()
                         .validate()
@@ -1055,7 +1062,7 @@ impl HostConnector {
                                     last_repaint: std::time::Instant::now(),
                                 };
                                 let result = download(
-                                    &rt,
+                                    rt,
                                     client,
                                     (&root, &target),
                                     &source,
@@ -1098,8 +1105,7 @@ impl HostConnector {
                         }
                     }
                     Ok(())
-                };
-                let result = run();
+                });
                 if let Err(message) = result {
                     let _ = events_send.send(LinkEvent::Failed(message));
                 }
@@ -1960,6 +1966,83 @@ mod tests {
         session.cleanup();
         assert_eq!(std::fs::read(marker).unwrap(), b"replacement public marker");
     }
+    #[test]
+    fn host_files_worker_drops_ssh_channel_on_close_and_startup_error() {
+        use russh::{
+            client,
+            keys::{key::safe_rng, Algorithm, PrivateKey, PublicKey},
+            server, Channel,
+        };
+
+        struct Host;
+        impl server::Handler for Host {
+            type Error = russh::Error;
+
+            async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
+                Ok(server::Auth::Accept)
+            }
+
+            async fn channel_open_session(
+                &mut self,
+                _: Channel<server::Msg>,
+                reply: server::ChannelOpenHandle,
+                _: &mut server::Session,
+            ) -> Result<(), Self::Error> {
+                reply.accept().await;
+                Ok(())
+            }
+        }
+
+        struct PinnedHost(PublicKey);
+        impl client::Handler for PinnedHost {
+            type Error = russh::Error;
+
+            async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
+                Ok(key == &self.0)
+            }
+        }
+
+        for expected in [Err("Files starting folder unavailable".to_owned()), Ok(())] {
+            let actual = run_files_worker(|runtime| {
+                let (_session, stream) = runtime.block_on(async {
+                    tokio::time::timeout(Duration::from_secs(5), async {
+                        let key = PrivateKey::random(&mut safe_rng(), Algorithm::Ed25519).unwrap();
+                        let pinned_host = PinnedHost(key.public_key().clone());
+                        let config = Arc::new(server::Config {
+                            keys: vec![key],
+                            ..Default::default()
+                        });
+                        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+                        let server = tokio::spawn(async move {
+                            server::run_stream(config, server_io, Host)
+                                .await
+                                .unwrap()
+                                .await
+                        });
+                        let mut client = client::connect_stream(
+                            Arc::new(client::Config::default()),
+                            client_io,
+                            pinned_host,
+                        )
+                        .await
+                        .unwrap();
+                        assert!(client.authenticate_none("fixture").await.unwrap().success());
+                        let channel = client.channel_open_session().await.unwrap();
+                        ((client, server), channel.into_stream())
+                    })
+                    .await
+                    .unwrap()
+                });
+                // Exercise the real russh destructor outside block_on, with
+                // both a live channel returning an error and ordinary close.
+                expected.clone()?;
+                drop(stream);
+                Ok(())
+            });
+            assert_eq!(actual, expected);
+        }
+    }
+
     #[test]
     fn host_files_start_directory_metadata_refuses_unsupported_paths_before_ready() {
         use festerm_tunnel_bridge::wire::{read_frame, write_frame};
