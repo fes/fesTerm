@@ -7785,6 +7785,7 @@
         "allowed_locations_actual_os_home_start_and_private_regular_file_read",
         "allowed_locations_directory_page_rechecks_after_owned_parent_move",
         "allowed_locations_shared_outside_ancestor_never_becomes_mutation_authority",
+        "macos_noowners_allowed_location_reads_and_refuses_mutation",
         "allowed_locations_mutation_leaves_share_qualified_review_and_replacement_route",
         "mutation_leaf_qualifies_before_data_open_and_refuses_special_names",
         "allowed_locations_two_channels_share_selectors_captured_paths_and_one_budget",
@@ -7843,6 +7844,7 @@
         "Native GUI/accessibility and usability validation of top-level launch, profile editing, disconnected restore and transfer outcomes remains pending.",
         "Native metadata preparation only: no Files operation follows links and no target or mutation authority is added. macOS 27.2.1 and Linux isolated retained-extraction prerequisites passed. Windows standalone attempt timed out without output; protected state was preserved but execution stage/extraction is unknown. Actual qualified Windows NTFS Rust tests are required for that primitive. Older macOS unsupported-platform tests are not positive extraction evidence. Full allowlist union resolver, disclosure/root/account fences, original alias paths, strict expected-handle rejection and Desktop/mobile read-only presentation remain pending.",
         "The Mac native private-parent token reuses complete ownership-enforcing owner/mode/ACL ancestry with fresh root and parent binding; it does not grant link target access. Native HOME metadata controls, strict unchanged-file regression and Windows symbolic-link required-CI evidence are separate from the still-pending allowed-union resolver and client read-only presentation. A locally deferred Windows privilege result is not qualification. No service link-read capability is advertised by this slice.",
+        "The pinned macOS27.2.1 component validation/dev-tunnels/macos-noowners-files-native-component.json passed the exact ignored test once on existing local APFS/nodev/noowners: pre-mount ancestors qualified, raw OS mkdir/write/read and Files read passed, Mkdir/upload staging/Delete review were Denied without effects, and exact nonrecursive child plus same-identity empty-parent cleanup left no debt. Tested source bytes and private native proof are pinned. This is in-process mounted Files evidence only; HOST/client/VM workflows, alias races and the remaining mounted/shared matrix stay pending, and no exclusivity of the noowners refusal cause is claimed.",
         "The additive read_links source preserves strict mutations and replacement proof; bounded union traversal and Desktop/mobile read-only path controls require fresh native whole-workflow qualification, including allowed cross-root aliases, outside/intermediate refusal, directory/file target changes, grants-on mutation denial, direct-target controls and original-path retention. Component tests do not qualify deployed clients or mounted-volume workflows."
       ]
     },

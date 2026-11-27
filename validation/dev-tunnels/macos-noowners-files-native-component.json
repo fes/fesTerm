@@ -1,0 +1,85 @@
+{
+  "record_version": 1,
+  "status": "one pinned macOS APFS noowners Files component passed; owned fixture and parent removed",
+  "tracker": "https://github.com/fes/fesTerm/issues/938",
+  "date_utc": "2026-11-27",
+  "scope": "in-process production Files filesystem operations; no HOST listener or client",
+  "whole_938_qualified": false,
+  "combined_release_qualified": false,
+  "source": {
+    "base_commit": "3d8c9676731f69ae185746d92c11dc25549b15c1",
+    "base_tree": "29403dc975ba31222bf3509032b4327fb0b87740",
+    "tested_increment": "uncommitted test-only increment on this base; exact tested file bytes pinned below",
+    "tested_file_sha256": {
+      "Cargo.lock": "5e0a00e2ed9dba098f7a5817cf22400c87a49a6be8160f174f1c52ee1a4b2626",
+      "crates/festerm-tunnel-bridge/Cargo.toml": "6488de7019e0e356feee669daefd7e25539a1abebc2156bc3d398233c476e3c5",
+      "crates/festerm-tunnel-bridge/src/filesystem.rs": "e97641a252515113a57a70f5a4c9663fd847adb13de6e48c12152e5ad24fbd30",
+      "scripts/run-optional-validation.sh": "60483b716b5026fdc4b9c8e31b49465ddd29c34f947a41eec1bab7729a55df6a"
+    },
+    "test_binary_sha256": "6b6e8114d373798f3f7340298794d03ffe2ee9df5e2d41bc7754a72e0da62f98"
+  },
+  "native_environment": {
+    "os": "macOS",
+    "version": "27.2.1",
+    "filesystem": "apfs",
+    "actual_mount_flags": [
+      "MNT_NODEV",
+      "MNT_LOCAL",
+      "MNT_IGNORE_OWNERSHIP",
+      "MNT_JOURNALED",
+      "MNT_MULTILABEL",
+      "MNT_NOSUID"
+    ],
+    "read_only_mount": false,
+    "existing_mount": true,
+    "dedicated_existing_parent": true,
+    "operator_controlled_and_quiescent": true,
+    "pre_mount_mutation_ancestors_qualified": true,
+    "ownership_enforcing_data_filesystem": false,
+    "first_strict_boundary": "noowners mount; additional mode/ACL refusal causes are not excluded"
+  },
+  "execution": {
+    "test": "filesystem::tests::macos_noowners_allowed_location_reads_and_refuses_mutation",
+    "toolchain": "1.99.1",
+    "features": [
+      "files-transfer"
+    ],
+    "ignored_opt_in": true,
+    "exact_test": true,
+    "test_threads": 1,
+    "maximum_seconds": 120,
+    "execution_count": 1,
+    "test_elapsed_seconds": 0.02,
+    "command_elapsed_seconds": 1.539,
+    "exit_code": 0,
+    "tests_passed": 1,
+    "tests_failed": 0,
+    "timed_out": false,
+    "private_native_result_sha256": "1306bd11d70dd5bc3f4239c8c1c3893d52587e9e3947f27b6e32bec41de73544",
+    "private_parent_closure_sha256": "29ba2cea37ef4984bb5c8e1085ce3d2ee24443075204805e65c776f894547e0a"
+  },
+  "results": {
+    "raw_os_control": "exclusive mkdir and marker create/write/read on the same held mount succeeded",
+    "files_grants": {
+      "write": true,
+      "delete": true,
+      "in_process_only": true
+    },
+    "allowed_location": "available, mutations unavailable; owner location validation passed",
+    "files_read": "OpenRead/Read/Close returned exact marker bytes",
+    "Mkdir": "Denied",
+    "BeginUpload": "Denied",
+    "ReviewEntry_Delete": "Denied",
+    "refusals_leave_no_handles_or_recovery_locator": true,
+    "refusals_preserve_marker_identity_bytes_and_exact_directory_contents": true,
+    "exact_nonrecursive_child_cleanup": true,
+    "same_identity_empty_parent_removed_by_owner": true,
+    "remaining_fixture_debt": false
+  },
+  "limits": [
+    "No HOST listener, Desktop/mobile client, server pair, VM or combined-release qualification.",
+    "No mount, OS-permission, production-grant or server-setting changes.",
+    "No alias traversal, raced replacement, mount cutover, account retirement, ownership-enforcing positive mutations or broader mounted/shared matrix credit.",
+    "Noowners UID/mode does not prove inter-user exclusivity; quiescence is an operator prerequisite and check-then-unlink is not atomic against concurrent local replacement."
+  ]
+}
