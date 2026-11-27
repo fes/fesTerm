@@ -7962,9 +7962,9 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "Pinned Android Linux/Windows/Mac ordinary browse/download/Markdown preview and profile reopen components are accepted in validation/dev-tunnels/mobile-files-android-native-components.json. Separate Linux active-upload Cancel/same-queue continuation is accepted. Three iOS pairs, active-transfer background/return/reconnect, conflict/replacement and live account/lock/suspend retirement remain unqualified; no uniform-release claim.",
+        "Pinned Android Linux/Windows/Mac ordinary browse/download/Markdown preview and profile reopen components are accepted in validation/dev-tunnels/mobile-files-android-native-components.json. Separate Linux active-upload Cancel/same-queue continuation is accepted. Later pinned iOS results cover Linux105 explicit Download and separate macOS active Cancel and Home/return retirement with explicit Reconnect. Corrected Android e5142f2b on Linux105 also passed active Download retirement, same-process foreground return and explicit Reconnect at the configured root. Full iOS pairs, background completion, conflict/replacement and live account/lock/suspend retirement remain open.",
         "Mobile upload/mkdir/reviewed Delete/rename/chmod/link parity and destination replacement/Keep Both are outside this read-only tranche.",
-        "Compact controls, physical-root display and neutral unsupported-entry presentation require corrected native mobile qualification. Native iOS/Android allowlist navigation, Start and same-host failed-view recovery remain pending. Physical labels add no allowed roots or symlink-following authority.",
+        "Compact controls, physical-root display and neutral unsupported-entry presentation require corrected native mobile qualification. Pinned iOS and Android on macOS HOST30 passed positive Start, choices and approved read-only aliases. Corrected private iOS SDK e5142f2b passed unavailable-Start same-host Choose location. Android failed-view recovery and wider qualification remain pending. Physical labels add no allowed roots or symlink-following authority.",
         "The additive read_links source preserves strict mutations and replacement proof; bounded union traversal and Desktop/mobile read-only path controls require fresh native whole-workflow qualification, including allowed cross-root aliases, outside/intermediate refusal, directory/file target changes, grants-on mutation denial, direct-target controls and original-path retention. Component tests do not qualify deployed clients or mounted-volume workflows."
       ]
     },
@@ -8075,7 +8075,7 @@
       "status": "partial",
       "prerequisites": [
         "Pinned Android Linux/Windows/Mac named pinned Files profile save/fresh reopening and reviewed regular-file/empty-folder Delete Cancel/fresh Confirm are accepted in validation/dev-tunnels/mobile-files-android-native-components.json, followed by owned profile cleanup and original preservation. Full native iOS pairs, Files-profile process restart, offline edit/sign-out, changed identity/stale-authority and unknown-result presentation remain separate pending checks. No shell-matrix cases or full item25 closure added. Pinned iOS Simulator source 3d6ed76b components are separately attributed in validation/dev-tunnels/mobile-files-ios-native-components.json; they do not qualify the new Local Delete implementation.",
-        "Foreground Files authority and a current successful listing are required. Local Delete uses pinned Documents without remote write/Delete permission or RPC and retains native Save exclusion through capture/settlement. The attributed iOS Simulator e5b582ed record at validation/dev-tunnels/mobile-files-ios-local-delete-native.json accepts file/empty-folder Cancel and fresh Confirm with remote Write/Delete ON. Native remote-OFF independence, Android Local Delete and broader iOS lifecycle cases remain pending. No background continuation, durable mobile recovery ledger, recursive Delete, rename/chmod/links or automatic replay is added."
+        "Foreground Files authority and a current successful listing are required. Local Delete uses pinned Documents without remote write/Delete permission or RPC and retains native Save exclusion through capture/settlement. The attributed iOS Simulator e5b582ed record at validation/dev-tunnels/mobile-files-ios-local-delete-native.json accepts file/empty-folder Cancel and fresh Confirm with remote Write/Delete ON. The Android API37 Linux HOST24 Write/Delete ON component also passed file/empty-folder Cancel and fresh Confirm. Later pinned iOS records cover exact local download cleanup and operator-seeded remote empty-folder Delete. Native remote-OFF independence and wider lifecycle cases remain pending. No background continuation, durable mobile recovery ledger, recursive Delete, rename/chmod/links or automatic replay is added."
       ]
     },
     {
@@ -8101,7 +8101,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "Native Desktop/iOS/Android failed-Start recovery remains pending. Fresh chooser opening must pin the failed opening’s authenticated account/host/key/installation/principal before location metadata. Missing or changed identity requires normal host selection. Source/framed/rendered tests do not establish native acceptance."
+        "The corrected private iOS SDK e5142f2b passed native same-host recovery when Start was unavailable before the first listing. Android recovery and remaining native failed-Start coverage on Desktop remain pending. Fresh chooser opening must pin the failed opening’s authenticated account/host/key/installation/principal before location metadata. Missing or changed identity requires normal host selection. Source/framed/rendered tests do not establish native acceptance."
       ]
     }
   ]
