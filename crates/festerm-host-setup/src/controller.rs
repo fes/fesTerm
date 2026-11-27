@@ -552,7 +552,7 @@ fn disable_scoped_with(
     if stopped.phase == Phase::Reconciling {
         return Err(refused("host.cloud_reconciliation_required"));
     }
-    let Some(binding) = stopped.binding.as_ref() else {
+    let Some(_) = stopped.binding.as_ref() else {
         return Ok(DisableResult {
             lifecycle: stopped,
             native_process: None,
@@ -570,6 +570,7 @@ fn disable_scoped_with(
         return Err(refused("host.service_stop_not_observed"));
     }
     let deadline = Instant::now() + wait;
+    let mut retrying = false;
     loop {
         let absent = store.with_locked(|directory, current| {
             if current != &stopped {
@@ -586,25 +587,51 @@ fn disable_scoped_with(
                 Err(error) => Err(error),
             }
         });
-        match absent {
-            Ok(_lease) => break,
+        let completed = absent.and_then(|_runtime_lease| {
+            // Retain the runtime exclusion through publication. Both locks are
+            // nonblocking; a competing lifecycle reader must not strand a
+            // successfully stopped host at this final transaction boundary.
+            #[cfg(test)]
+            tests::disable_completion_checkpoint(true);
+            if retrying && Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "host.runtime_stop_pending",
+                ));
+            }
+            store.confirm_stopped_if_current(&stopped)
+        });
+        match completed {
+            Ok(lifecycle) => {
+                return Ok(DisableResult {
+                    lifecycle,
+                    native_process: Some(observation),
+                });
+            }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                #[cfg(test)]
+                tests::disable_completion_checkpoint(false);
+                retrying = true;
                 if Instant::now() >= deadline {
                     return Err(io::Error::new(
                         io::ErrorKind::WouldBlock,
                         "host.runtime_stop_pending",
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(25));
+                std::thread::sleep(
+                    Duration::from_millis(25)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "host.runtime_stop_pending",
+                    ));
+                }
             }
             Err(error) => return Err(error),
         }
     }
-    let lifecycle = store.confirm_stopped_snapshot(stopped.epoch, binding)?;
-    Ok(DisableResult {
-        lifecycle,
-        native_process: Some(observation),
-    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -955,7 +982,7 @@ fn reserve(store: &Store) -> io::Result<(Lease, Snapshot, RunRecord)> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 match storage::open_private_file(directory, Path::new(RECORD), false) {
                     Ok(_) => {
-                        return Err(refused("host.runtime_lock_missing_reconciliation_required"))
+                        return Err(refused("host.runtime_lock_missing_reconciliation_required"));
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error),
@@ -3262,6 +3289,203 @@ mod tests {
         assert_eq!(stopped.lifecycle.binding, before.binding);
         store.request_cleanup().unwrap();
         assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
+    }
+
+    type DisableCompletionHook = Box<dyn FnMut(bool)>;
+
+    thread_local! {
+        static DISABLE_COMPLETION_HOOK: std::cell::RefCell<Option<DisableCompletionHook>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn disable_completion_checkpoint(before_confirm: bool) {
+        DISABLE_COMPLETION_HOOK.with(|hook| {
+            if let Some(hook) = hook.borrow_mut().as_mut() {
+                hook(before_confirm);
+            }
+        });
+    }
+
+    struct DisableCompletionHookGuard;
+
+    impl Drop for DisableCompletionHookGuard {
+        fn drop(&mut self) {
+            DISABLE_COMPLETION_HOOK.with(|hook| drop(hook.borrow_mut().take()));
+        }
+    }
+
+    #[test]
+    fn host_runtime_disable_confirmation_retries_real_lifecycle_contention_once_stopped() {
+        for case in [
+            "release",
+            "permanent",
+            "epoch",
+            "binding",
+            "settings",
+            "nonbusy",
+            "deadline",
+        ] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (runtime, before, _) = reserve(&store).unwrap();
+            drop(runtime);
+            let state = root.path().join("host");
+            let calls = std::cell::Cell::new(0);
+            let confirms = std::rc::Rc::new(std::cell::Cell::new(0));
+            let busy = std::rc::Rc::new(std::cell::Cell::new(0));
+            let held = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let hook_confirms = confirms.clone();
+            let hook_busy = busy.clone();
+            let hook_held = held.clone();
+            DISABLE_COMPLETION_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move |before_confirm| {
+                    if before_confirm {
+                        hook_confirms.set(hook_confirms.get() + 1);
+                        if hook_confirms.get() != 1 {
+                            if case == "deadline" {
+                                std::thread::sleep(Duration::from_millis(75));
+                            }
+                            return;
+                        }
+                        let directory = storage::private_directory(&state, false).unwrap();
+                        // Completion owns the real runtime exclusion until the
+                        // Disabled publication, including a contended attempt.
+                        let runtime =
+                            storage::open_private_file(&directory, Path::new(LOCK), false).unwrap();
+                        assert_eq!(
+                            Lease::exclusive(runtime).err().unwrap().kind(),
+                            io::ErrorKind::WouldBlock
+                        );
+                        let current = Store::open(&state, Origin::Headless).unwrap();
+                        let mut snapshot = current.snapshot().unwrap();
+                        if case == "nonbusy" || case == "settings" {
+                            if case == "settings" {
+                                snapshot.settings.friendly_name.push_str("-changed");
+                            } else {
+                                snapshot
+                                    .binding
+                                    .as_mut()
+                                    .unwrap()
+                                    .qualified_tunnel
+                                    .push_str("-changed");
+                            }
+                            current
+                                .with_locked(|directory, _| {
+                                    storage::replace_private(
+                                        directory,
+                                        Path::new("host-lifecycle.json"),
+                                        &serde_json::to_vec(&snapshot).unwrap(),
+                                    )
+                                })
+                                .unwrap();
+                        } else {
+                            *hook_held.borrow_mut() =
+                                Some(current.with_owned_lease(|_, _, lease| Ok(lease)).unwrap());
+                        }
+                    } else {
+                        hook_busy.set(hook_busy.get() + 1);
+                        if case == "epoch" || case == "binding" {
+                            let directory = storage::private_directory(&state, false).unwrap();
+                            let bytes = storage::read_private(
+                                &directory,
+                                Path::new("host-lifecycle.json"),
+                                1024 * 1024,
+                            )
+                            .unwrap();
+                            let mut snapshot: Snapshot = serde_json::from_slice(&bytes).unwrap();
+                            if case == "epoch" {
+                                snapshot.epoch += 1;
+                            } else {
+                                snapshot
+                                    .binding
+                                    .as_mut()
+                                    .unwrap()
+                                    .qualified_tunnel
+                                    .push_str("-changed");
+                            }
+                            storage::replace_private(
+                                &directory,
+                                Path::new("host-lifecycle.json"),
+                                &serde_json::to_vec(&snapshot).unwrap(),
+                            )
+                            .unwrap();
+                        }
+                        if case != "permanent" {
+                            drop(hook_held.borrow_mut().take());
+                        }
+                    }
+                }));
+            });
+            let hook_guard = DisableCompletionHookGuard;
+            let started = Instant::now();
+            let result = disable_with(&store, Duration::from_millis(75), |epoch| {
+                calls.set(calls.get() + 1);
+                Ok(observed_stop(&store, epoch))
+            });
+            drop(hook_guard);
+            drop(held.borrow_mut().take());
+            assert_eq!(calls.get(), 1, "native stop is never replayed: {case}");
+            let after = store.snapshot().unwrap();
+            if case == "settings" {
+                assert_eq!(
+                    after.settings.friendly_name,
+                    format!("{}-changed", before.settings.friendly_name)
+                );
+            } else {
+                assert_eq!(after.settings, before.settings);
+            }
+            assert_eq!(after.pending_ticket(), before.pending_ticket());
+            match case {
+                "release" => {
+                    assert_eq!(result.unwrap().lifecycle, after);
+                    assert_eq!(after.phase, Phase::Disabled);
+                    assert_eq!(after.epoch, before.epoch + 1);
+                    assert_eq!(after.binding, before.binding);
+                    assert_eq!(confirms.get(), 2);
+                    assert_eq!(busy.get(), 1);
+                }
+                "permanent" => {
+                    assert_eq!(
+                        result.err().unwrap().to_string(),
+                        "host.runtime_stop_pending"
+                    );
+                    assert!(started.elapsed() >= Duration::from_millis(75));
+                    assert!(started.elapsed() < Duration::from_secs(2));
+                    assert_eq!(after.phase, Phase::StopRequested);
+                    assert_eq!(after.epoch, before.epoch + 1);
+                    assert_eq!(confirms.get(), 1);
+                    assert!(busy.get() > 0);
+                }
+                "epoch" | "binding" => {
+                    assert_eq!(
+                        result.err().unwrap().to_string(),
+                        "host.runtime_consent_changed"
+                    );
+                    assert_eq!(after.phase, Phase::StopRequested);
+                    assert_eq!(confirms.get(), 1);
+                    assert_eq!(busy.get(), 1);
+                }
+                "nonbusy" | "settings" => {
+                    assert_eq!(
+                        result.err().unwrap().to_string(),
+                        "host.runtime_consent_changed"
+                    );
+                    assert_eq!(after.phase, Phase::StopRequested);
+                    assert_eq!(confirms.get(), 1);
+                    assert_eq!(busy.get(), 0);
+                }
+                "deadline" => {
+                    assert_eq!(
+                        result.err().unwrap().to_string(),
+                        "host.runtime_stop_pending"
+                    );
+                    assert_eq!(after.phase, Phase::StopRequested);
+                    assert_eq!(confirms.get(), 2);
+                    assert_eq!(busy.get(), 2);
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]

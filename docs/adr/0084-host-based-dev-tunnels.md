@@ -3216,6 +3216,21 @@ snapshot retain exactly one manager start and the original credential checks.
 This source regression does not qualify the corrected native first result or
 the controller's separate final report/commit reads.
 
+### Final Disable journal confirmation contention
+
+After an exact native stop observation, runtime-lease observation and the final
+Disabled journal confirmation share the existing completion deadline. A Busy
+confirmation may repeat only after the full captured StopRequested snapshot and
+runtime exclusion are checked again. Runtime exclusion remains held through the
+confirmation. Native stop, revocation and cloud operations stay outside this
+loop. A changed snapshot, other error or exhausted deadline remains a refusal;
+no new timeout or automatic lifecycle action is created.
+
+Validation impact: GUI:HOST-04, GUI:HOST-05 and ADR0084. A real lifecycle-lock
+fixture covers controlled release, deadline exhaustion, changed epoch/binding
+and non-Busy failure, with exactly one native stop. Native validation of the
+corrected build remains separate from the earlier scoped Linux Busy capture.
+
 ### Mobile same-existing-session foreground reconnect
 
 The ordinary mobile follow-up changes the closed viewer's recovery actions to

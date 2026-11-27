@@ -646,7 +646,32 @@ impl Store {
         epoch: u64,
         exact: &Binding,
     ) -> io::Result<Snapshot> {
+        self.confirm_stopped_current(None, epoch, exact)
+    }
+
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn confirm_stopped_if_current(&self, expected: &Snapshot) -> io::Result<Snapshot> {
+        let exact = expected
+            .binding
+            .as_ref()
+            .ok_or_else(|| refused("host.stale_or_foreign_receipt"))?;
+        self.confirm_stopped_current(Some(expected), expected.epoch, exact)
+    }
+
+    fn confirm_stopped_current(
+        &self,
+        expected: Option<&Snapshot>,
+        epoch: u64,
+        exact: &Binding,
+    ) -> io::Result<Snapshot> {
         self.change(|record| {
+            if expected.is_some_and(|expected| expected != record) {
+                return Err(refused("host.runtime_consent_changed"));
+            }
             exact_binding(record, epoch, exact)?;
             if record.phase != Phase::StopRequested {
                 return Err(refused("host.stop_not_requested"));

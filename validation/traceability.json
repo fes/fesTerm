@@ -7081,7 +7081,8 @@
         "docs/adr/0084-host-based-dev-tunnels.md#macos-post-stop-observation-contention",
         "docs/manual-validation.md#macos-disable-after-post-stop-contention",
         "docs/adr/0084-host-based-dev-tunnels.md#macos-post-stop-unqualified-observations",
-        "docs/manual-validation.md#macos-post-stop-unqualified-state-observation"
+        "docs/manual-validation.md#macos-post-stop-unqualified-state-observation",
+        "docs/adr/0084-host-based-dev-tunnels.md#final-disable-journal-confirmation-contention"
       ],
       "decisions": [
         "ADR-0084",
@@ -7507,7 +7508,8 @@
         "host_runtime_public_entry_futures_fit_stack_budget",
         "host_allowed_locations_pending_settings_fit_journal_and_oversize_refuses_before_storage",
         "desktop_files_allowed_locations_start_is_separate_and_legacy_stays_legacy",
-        "desktop_files_allowed_locations_worker_refuses_missing_root_before_acquisition_or_state_effects"
+        "desktop_files_allowed_locations_worker_refuses_missing_root_before_acquisition_or_state_effects",
+        "host_runtime_disable_confirmation_retries_real_lifecycle_contention_once_stopped"
       ],
       "manual_scenarios": [
         "HOSTSETUP-01"
