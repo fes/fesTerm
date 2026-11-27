@@ -7,7 +7,7 @@ use festerm_ssh::{
 use std::path::{Path, PathBuf};
 
 fn refused() -> SftpSessionError {
-    SftpSessionError::LocalOperationFailed {
+    SftpSessionError::LocalUploadSourceUnavailable {
         operation: "read admitted upload source",
         path: "Documents".into(),
         reason: "The source or its authority changed. Select the file again.".into(),
@@ -316,7 +316,15 @@ mod tests {
         assert_eq!(sources.metadata(&path).unwrap().size, Some(13));
         std::fs::rename(&path, local.root().join("retained.txt")).unwrap();
         std::fs::write(&path, b"wrong source!").unwrap();
-        assert!(sources.open(&path).is_err());
+        let error = sources.open(&path).err().unwrap();
+        assert!(matches!(
+            error,
+            SftpSessionError::LocalUploadSourceUnavailable { .. }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "local read admitted upload source failed for Documents: The source or its authority changed. Select the file again."
+        );
         sources.release(&path);
         let path = sources.admit("public.txt").unwrap();
         std::fs::write(&path, b"changed").unwrap();

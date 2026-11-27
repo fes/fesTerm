@@ -7996,6 +7996,8 @@
         "host_files_upload_held_reader_fences_account_and_content_each_chunk",
         "host_files_mobile_upload_maps_skip_keep_both_and_reviewed_replace_through_shared_queue",
         "host_files_upload_queued_source_cutover_never_sends_begin_or_publishes_replacement",
+        "host_files_upload_failure_copy_keeps_unknown_download_and_uncertain_diagnostics",
+        "transfer_source_failure_hint_does_not_hide_cleanup_or_unknown_outcomes",
         "host_files_documents_startup_rejects_existing_alias_before_canonicalization",
         "host_files_local_preview_requires_regular_nofollow_leaf_and_bounded_bytes",
         "host_files_documents_startup_pin_refuses_regular_root_replacement_before_use",

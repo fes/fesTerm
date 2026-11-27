@@ -1151,6 +1151,7 @@ mod tests {
         stream: DuplexStream,
         written: Arc<std::sync::atomic::AtomicUsize>,
         gate: Option<Arc<WriteGate>>,
+        capture: Option<Arc<Mutex<Vec<u8>>>>,
     }
     impl AsyncRead for CountedStream {
         fn poll_read(
@@ -1187,6 +1188,11 @@ mod tests {
             }
             self.written
                 .fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+            if let Some(capture) = &self.capture {
+                let mut capture = capture.lock().unwrap();
+                assert!(capture.len() + n <= rpc::JSON_LIMIT);
+                capture.extend_from_slice(&buf[..n]);
+            }
             Poll::Ready(Ok(n))
         }
         fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -1238,6 +1244,19 @@ mod tests {
         file_client::Client<CountedStream>,
         Arc<std::sync::atomic::AtomicUsize>,
     ) {
+        captured_policy_fixture(write, gate, None)
+    }
+    fn captured_policy_fixture(
+        write: bool,
+        gate: Option<Arc<WriteGate>>,
+        capture: Option<Arc<Mutex<Vec<u8>>>>,
+    ) -> (
+        Runtime,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        file_client::Client<CountedStream>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1273,6 +1292,7 @@ mod tests {
             stream,
             written: written.clone(),
             gate,
+            capture,
         };
         let client = runtime
             .block_on(file_client::Client::open(
@@ -1597,10 +1617,20 @@ mod tests {
     #[test]
     fn host_files_upload_queued_source_cutover_never_sends_begin_or_publishes_replacement() {
         use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
-        let (rt, remote, local_root, client, written) = policy_fixture(true);
-        let before = written.load(std::sync::atomic::Ordering::SeqCst);
+        use std::os::unix::fs::MetadataExt;
+        let capture = Arc::new(Mutex::new(Vec::new()));
+        let (rt, remote, local_root, client, _) =
+            captured_policy_fixture(true, None, Some(capture.clone()));
+        let remote_names = || {
+            std::fs::read_dir(remote.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let original_remote_names = remote_names();
         let local = LocalFs::new(local_root.path()).unwrap();
         std::fs::write(local.root().join("new.txt"), b"public admitted source").unwrap();
+        let original_source = std::fs::metadata(local.root().join("new.txt")).unwrap();
         let sources = Arc::new(local_upload::Sources::new(
             local_root::Root::open(local.root()).unwrap(),
             Arc::new(|| Ok(())),
@@ -1621,8 +1651,17 @@ mod tests {
                 failure.clone(),
                 FilesChannel::Transfer,
             );
-            let uploads =
-                uploads::Uploads::from_endpoint(endpoint, sources, state.clone(), failure);
+            let downloads = local_download_queue::Destinations::new(
+                local_root::Root::open(local.root()).unwrap(),
+                Arc::new(|| Ok(())),
+                CancellationToken::new(),
+            );
+            let manager = festerm_ssh::SftpTransferManager::from_remote_endpoint_with_local_files(
+                endpoint,
+                sources.clone(),
+                downloads,
+            );
+            let uploads = uploads::Uploads::from_manager(manager, sources, state.clone(), failure);
             uploads.enqueue(1, "new.txt", "/").unwrap();
             // No runtime yield: replace the admitted name before the queue runs.
             std::fs::rename(
@@ -1643,10 +1682,67 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(state.lock().unwrap().rows[0].state, RowState::Failed);
-            assert_eq!(written.load(std::sync::atomic::Ordering::SeqCst), before);
+            assert_eq!(
+                state.lock().unwrap().rows[0].error.as_deref(),
+                Some("This file changed or is no longer available. Select it again.")
+            );
+            // Production planning may stat the remote destination before the
+            // retained source is opened. Audit actual typed requests rather
+            // than treating all transport traffic as an upload mutation.
+            let transcript = capture.lock().unwrap().clone();
+            let mut frames = transcript.as_slice();
+            let mut operations = Vec::new();
+            while !frames.is_empty() {
+                let (kind, bytes) = festerm_tunnel_bridge::wire::read_frame(&mut frames)
+                    .await
+                    .unwrap();
+                match kind {
+                    rpc::OPEN => {
+                        let _: rpc::Open = serde_json::from_slice(&bytes).unwrap();
+                    }
+                    rpc::REQUEST => {
+                        let request: rpc::Request = serde_json::from_slice(&bytes).unwrap();
+                        operations.push(request.operation);
+                    }
+                    _ => panic!("unexpected client frame: {kind}"),
+                }
+            }
+            assert!(
+                !operations.is_empty(),
+                "production destination preflight must be exercised"
+            );
+            assert!(
+                operations.iter().all(|operation| matches!(
+                    operation,
+                    rpc::Operation::Stat { path } | rpc::Operation::StatReadable { path }
+                        if path == "/" || path == "/new.txt"
+                )),
+                "only read-only destination metadata is allowed; no BeginUpload: {operations:?}"
+            );
+            assert_eq!(
+                remote_names(),
+                original_remote_names,
+                "no destination or partial may be created"
+            );
             uploads.shutdown().await;
         });
         assert!(!remote.path().join("new.txt").exists());
+        assert_eq!(remote_names(), original_remote_names);
+        assert_eq!(
+            std::fs::read(remote.path().join("public.md")).unwrap(),
+            b"# public canary\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(remote.path().join("folder"))
+                .unwrap()
+                .count(),
+            0
+        );
+        let retained = std::fs::metadata(local.root().join("retained.txt")).unwrap();
+        assert_eq!(
+            (retained.dev(), retained.ino()),
+            (original_source.dev(), original_source.ino())
+        );
         assert_eq!(
             std::fs::read(local.root().join("new.txt")).unwrap(),
             b"unadmitted bytes"

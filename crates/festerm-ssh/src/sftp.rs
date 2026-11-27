@@ -276,6 +276,13 @@ pub enum SftpSessionError {
         operation_error: Box<SftpSessionError>,
         cleanup_error: Box<SftpSessionError>,
     },
+    /// A caller-retained local upload source can no longer be used safely.
+    /// Diagnostic context is preserved independently of transfer presentation.
+    LocalUploadSourceUnavailable {
+        operation: &'static str,
+        path: String,
+        reason: String,
+    },
     LocalOperationFailed {
         operation: &'static str,
         path: String,
@@ -355,6 +362,11 @@ impl fmt::Display for SftpSessionError {
                 )
             }
             Self::LocalOperationFailed {
+                operation,
+                path,
+                reason,
+            }
+            | Self::LocalUploadSourceUnavailable {
                 operation,
                 path,
                 reason,
