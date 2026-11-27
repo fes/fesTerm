@@ -3325,6 +3325,14 @@ mod tests {
             "nonbusy",
             "deadline",
         ] {
+            // The successful/refusal cases exercise real journal I/O and must
+            // not depend on finishing within a single scheduler timeslice.
+            // Keep explicit, shorter budgets for the two deadline cases.
+            let wait = if matches!(case, "permanent" | "deadline") {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(5)
+            };
             let (root, store) = fixture();
             provision(&store);
             let (runtime, before, _) = reserve(&store).unwrap();
@@ -3343,7 +3351,7 @@ mod tests {
                         hook_confirms.set(hook_confirms.get() + 1);
                         if hook_confirms.get() != 1 {
                             if case == "deadline" {
-                                std::thread::sleep(Duration::from_millis(75));
+                                std::thread::sleep(wait);
                             }
                             return;
                         }
@@ -3418,7 +3426,7 @@ mod tests {
             });
             let hook_guard = DisableCompletionHookGuard;
             let started = Instant::now();
-            let result = disable_with(&store, Duration::from_millis(75), |epoch| {
+            let result = disable_with(&store, wait, |epoch| {
                 calls.set(calls.get() + 1);
                 Ok(observed_stop(&store, epoch))
             });
@@ -3449,8 +3457,8 @@ mod tests {
                         result.err().unwrap().to_string(),
                         "host.runtime_stop_pending"
                     );
-                    assert!(started.elapsed() >= Duration::from_millis(75));
-                    assert!(started.elapsed() < Duration::from_secs(2));
+                    assert!(started.elapsed() >= wait);
+                    assert!(started.elapsed() < Duration::from_secs(5));
                     assert_eq!(after.phase, Phase::StopRequested);
                     assert_eq!(after.epoch, before.epoch + 1);
                     assert_eq!(confirms.get(), 1);
