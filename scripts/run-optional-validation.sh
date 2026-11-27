@@ -73,6 +73,21 @@ if { [ "$(uname -s)" = Darwin ] || [ "$(uname -s)" = Linux ]; } &&
 else
     printf 'suite=private-session-sharing-native status=skipped reason=unix-and-explicit-current-source-helper-required\n' >>"$result_path"
 fi
+# No mount creation or permission changes: the operator supplies an existing,
+# dedicated, quiescent APFS noowners parent. Missing native prerequisites fail.
+if [ -n "${FESTERM_MACOS_NOOWNERS_TEST_PARENT:-}" ]; then
+    if [ "$(uname -s)" = Darwin ] &&
+        cargo test --locked -p festerm-tunnel-bridge --features files-transfer --lib \
+            filesystem::tests::macos_noowners_allowed_location_reads_and_refuses_mutation \
+            -- --exact --ignored --test-threads=1 --nocapture; then
+        printf 'suite=macos-noowners-files status=pass scope=mounted-files-component\n' >>"$result_path"
+    else
+        printf 'suite=macos-noowners-files status=fail reason=native-prerequisite-or-test-failure\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=macos-noowners-files status=skipped reason=explicit-existing-noowners-parent-required\n' >>"$result_path"
+fi
 printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"

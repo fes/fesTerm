@@ -7818,6 +7818,28 @@ eligibility. Existing grants and OS
 permissions must not be broadened for a test. The user's `/` plus `~` example is
 not consent to change the production HOME grant. Native allowlist client workflows remain unrun; isolated macOS API and
 in-process components are not whole-product acceptance.
+The opt-in ignored component
+`filesystem::tests::macos_noowners_allowed_location_reads_and_refuses_mutation`
+requires `FESTERM_MACOS_NOOWNERS_TEST_PARENT` to name an existing dedicated,
+quiescent directory controlled by the operator, below an already-mounted local
+APFS/nodev/noowners volume. It checks the production macOS floor and actual held
+mount flags, qualified pre-mount ancestors, raw OS mkdir/write controls, a Files
+read, and denied Mkdir/upload staging/Delete review with grants enabled. It uses
+exclusive tiny names and exact identity/content cleanup; unexpected objects or
+changed identities retain a reported fixture debt. It changes no mounts or OS
+permissions and does not use recursive shared-volume cleanup. Mode/UID on a
+noowners mount do not prove inter-user exclusivity; the operator must exclude
+other writers, and check-then-unlink is not an atomic name-replacement defense.
+The optional shell suite runs it only with the explicit parent; a requested run
+fails unmet native prerequisites. A [pinned macOS 27.2.1 native run](../validation/dev-tunnels/macos-noowners-files-native-component.json)
+passed this exact component once on an existing local APFS/nodev/noowners
+mount: raw OS mkdir/write/read and Files read succeeded; Mkdir, upload staging
+and Delete review were Denied without effects. Exact child and parent cleanup
+left no fixture debt. This supplies only the mounted in-process Files component;
+HOST/client, VM, alias/race and whole-#938 qualification remain pending. Other mode/ACL
+conditions may also refuse strict mutation; the test does not claim exclusivity
+of the noowners cause.
+
 The new macOS scope currently requires the qualified 27.2.1 containment
 boundary. On older macOS versions, verify explicit refusal before setup effects
 and preserve legacy singleton operation; do not substitute a weaker lookup to

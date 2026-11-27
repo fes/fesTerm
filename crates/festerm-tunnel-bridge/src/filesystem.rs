@@ -2495,6 +2495,264 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
+    #[ignore = "requires an explicitly owned existing APFS noowners parent on macOS 27.2.1+"]
+    fn macos_noowners_allowed_location_reads_and_refuses_mutation() {
+        use nix::{
+            dir::Dir as NativeDir,
+            fcntl::{openat, AtFlags, OFlag},
+            mount::MntFlags,
+            sys::{
+                stat::{fstatat, mkdirat, Mode, SFlag},
+                statfs::fstatfs,
+            },
+            unistd::{unlinkat, UnlinkatFlags},
+        };
+        use std::{
+            ffi::OsStr,
+            os::unix::fs::{FileExt, MetadataExt},
+            panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+            path::PathBuf,
+        };
+
+        const MARKER: &str = "original";
+        const BYTES: &[u8] = b"noowners Files read control\n";
+        fn directory(parent: &File, name: &OsStr) -> File {
+            File::from(
+                openat(
+                    parent,
+                    name,
+                    OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+                    Mode::empty(),
+                )
+                .unwrap(),
+            )
+        }
+        fn names(directory: &File) -> Vec<Vec<u8>> {
+            let mut iterator = NativeDir::openat(
+                directory,
+                ".",
+                OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+                Mode::empty(),
+            )
+            .unwrap();
+            let mut names = Vec::new();
+            for entry in iterator.iter() {
+                let entry = entry.unwrap();
+                let name = entry.file_name().to_bytes();
+                if name != b"." && name != b".." {
+                    assert!(names.len() < 8, "unexpected fixture entries; retain debt");
+                    names.push(name.to_vec());
+                }
+            }
+            names.sort();
+            names
+        }
+        fn noowners(file: &File) -> MntFlags {
+            let mount = fstatfs(file).unwrap();
+            assert_eq!(mount.filesystem_type_name(), "apfs");
+            let flags = mount.flags();
+            assert!(flags.contains(
+                MntFlags::MNT_LOCAL | MntFlags::MNT_NODEV | MntFlags::MNT_IGNORE_OWNERSHIP
+            ));
+            assert!(!flags.contains(MntFlags::MNT_RDONLY));
+            // Also enforces the production native containment floor before writes.
+            assert!(!festerm_unix_security::ownership_enforcing_data_filesystem(file).unwrap());
+            flags
+        }
+
+        let parent_path = PathBuf::from(
+            std::env::var_os("FESTERM_MACOS_NOOWNERS_TEST_PARENT")
+                .expect("set an existing dedicated, quiescent parent you control; no default"),
+        );
+        assert!(parent_path.is_absolute());
+        assert!(parent_path
+            .components()
+            .all(|part| matches!(part, Component::RootDir | Component::Normal(_))));
+        let parent = festerm_unix_security::open_absolute_directory_read_nofollow(&parent_path)
+            .expect("existing parent must have no path aliases");
+        let device = parent.metadata().unwrap().dev();
+        let flags = noowners(&parent);
+        let os = std::process::Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output()
+            .unwrap();
+        assert!(os.status.success());
+        let mut path = PathBuf::new();
+        let mut mount_path = None;
+        for part in parent_path.components() {
+            path.push(part.as_os_str());
+            let held = festerm_unix_security::open_absolute_directory_read_nofollow(&path).unwrap();
+            if held.metadata().unwrap().dev() == device {
+                assert_eq!(noowners(&held), flags);
+                assert_eq!(
+                    festerm_unix_security::qualify_data_mutation_ancestor(&held)
+                        .unwrap_err()
+                        .kind(),
+                    io::ErrorKind::PermissionDenied
+                );
+                mount_path.get_or_insert_with(|| path.clone());
+            } else {
+                assert!(mount_path.is_none(), "nested mount is outside this case");
+                festerm_unix_security::qualify_data_mutation_ancestor(&held)
+                    .expect("earlier unsafe ancestor prevents noowners attribution");
+            }
+        }
+        let mount_path = mount_path.expect("parent must be on the qualified noowners mount");
+        assert_ne!(
+            mount_path, parent_path,
+            "do not use the volume root as parent"
+        );
+        eprintln!(
+            "macOS={} APFS mount={} flags={flags:?}; pre-mount ancestors qualify; ownership ignored is the first strict boundary (additional mode/ACL failures are not excluded)",
+            String::from_utf8(os.stdout).unwrap().trim(),
+            mount_path.display()
+        );
+
+        let name = format!(".festerm-noowners-{}", uuid::Uuid::new_v4().simple());
+        let fixture = parent_path.join(&name);
+        mkdirat(&parent, name.as_str(), Mode::S_IRWXU).unwrap();
+        // No TempDir/recursive cleanup: any unpinned or changed object is retained.
+        eprintln!(
+            "owned fixture debt until exact cleanup: {}",
+            fixture.display()
+        );
+        let child = directory(&parent, OsStr::new(&name));
+        let verify = |marker: Option<&File>| {
+            let fresh =
+                festerm_unix_security::open_absolute_directory_read_nofollow(&parent_path).unwrap();
+            assert!(festerm_unix_security::same_data_object(&parent, &fresh).unwrap());
+            assert_eq!(noowners(&fresh), flags);
+            let fresh_child = directory(&parent, OsStr::new(&name));
+            assert!(festerm_unix_security::same_data_object(&child, &fresh_child).unwrap());
+            assert_eq!(fresh_child.metadata().unwrap().dev(), device);
+            assert_eq!(noowners(&fresh_child), flags);
+            if let Some(marker) = marker {
+                assert_eq!(names(&child), vec![MARKER.as_bytes().to_vec()]);
+                let named = fstatat(&child, MARKER, AtFlags::AT_SYMLINK_NOFOLLOW).unwrap();
+                let held = marker.metadata().unwrap();
+                assert_eq!(SFlag::from_bits_truncate(named.st_mode), SFlag::S_IFREG);
+                assert_eq!(
+                    (named.st_dev as u64, named.st_ino),
+                    (held.dev(), held.ino())
+                );
+                assert_eq!(held.nlink(), 1);
+                assert_eq!(held.len(), BYTES.len() as u64);
+                let mut bytes = [0u8; 64];
+                let count = marker.read_at(&mut bytes, 0).unwrap();
+                assert_eq!(&bytes[..count], BYTES);
+            } else {
+                assert!(names(&child).is_empty());
+            }
+        };
+        let mut marker = None;
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            assert_eq!(child.metadata().unwrap().dev(), device);
+            assert_eq!(noowners(&child), flags);
+            marker = Some(File::from(
+                openat(
+                    &child,
+                    MARKER,
+                    OFlag::O_RDWR
+                        | OFlag::O_CREAT
+                        | OFlag::O_EXCL
+                        | OFlag::O_NOFOLLOW
+                        | OFlag::O_CLOEXEC,
+                    Mode::S_IRUSR | Mode::S_IWUSR,
+                )
+                .unwrap(),
+            ));
+            marker.as_mut().unwrap().write_all(BYTES).unwrap();
+            marker.as_ref().unwrap().sync_all().unwrap();
+            verify(marker.as_ref()); // Successful raw OS mkdir/write is the positive control.
+            eprintln!("raw OS exclusive mkdir/write/read control passed; mount flags={flags:?}");
+            let mut session = locations_session(rpc::Policy {
+                root: fixture.clone(),
+                start_in: None,
+                locations: Some(rpc::AllowedLocations {
+                    roots: vec![fixture.clone()],
+                    start: None,
+                }),
+                write: true,
+                delete: true,
+            });
+            session.filesystem.validate_owner_locations().unwrap();
+            let roots = session.filesystem.location_metadata().unwrap();
+            assert_eq!(roots.len(), 1);
+            let root = &roots[0];
+            assert!(root.available && !root.mutations_available);
+            let path = format!("{}/{MARKER}", root.virtual_root());
+            let read = handle(run(
+                &mut session,
+                Operation::OpenRead { path: path.clone() },
+            ));
+            let (_, bytes) = session
+                .execute(
+                    Operation::Read {
+                        handle: read,
+                        offset: "0".into(),
+                        length: 64,
+                    },
+                    vec![],
+                    &CancellationToken::new(),
+                )
+                .unwrap();
+            assert_eq!(bytes.unwrap(), BYTES);
+            run(&mut session, Operation::Close { handle: read });
+            for operation in [
+                Operation::Mkdir {
+                    path: format!("{}/new-directory", root.virtual_root()),
+                },
+                Operation::BeginUpload {
+                    path: format!("{}/new-upload", root.virtual_root()),
+                    size: "3".into(),
+                    expected: None,
+                },
+                Operation::ReviewEntry {
+                    path,
+                    purpose: rpc::ReviewPurpose::Delete,
+                },
+            ] {
+                let error = session
+                    .execute(operation, vec![], &CancellationToken::new())
+                    .unwrap_err();
+                assert_eq!(error.code, ErrorCode::Denied);
+                assert!(error.recovery.is_none());
+                assert!(session.handles.is_empty());
+                verify(marker.as_ref());
+            }
+            eprintln!("Files read passed; Mkdir/upload staging/Delete review denied without handles, recovery or fixture changes");
+            drop(session);
+        }));
+        let cleanup = catch_unwind(AssertUnwindSafe(|| {
+            verify(marker.as_ref());
+            if marker.is_some() {
+                unlinkat(&child, MARKER, UnlinkatFlags::NoRemoveDir).unwrap();
+            }
+            verify(None);
+            unlinkat(&parent, name.as_str(), UnlinkatFlags::RemoveDir).unwrap();
+            assert_eq!(
+                fstatat(&parent, name.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW).unwrap_err(),
+                nix::errno::Errno::ENOENT
+            );
+        }));
+        if let Err(error) = cleanup {
+            eprintln!(
+                "exact cleanup refused/failed; retain fixture debt: {}",
+                fixture.display()
+            );
+            resume_unwind(error);
+        }
+        eprintln!(
+            "exact owned fixture cleanup complete: {}",
+            fixture.display()
+        );
+        if let Err(error) = outcome {
+            resume_unwind(error);
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
     fn allowed_locations_actual_os_home_start_and_private_regular_file_read() {
         let home = festerm_unix_security::current_user_home().unwrap();
         let start = format!("/{}", home.strip_prefix("/").unwrap().to_str().unwrap());
