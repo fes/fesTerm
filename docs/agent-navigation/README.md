@@ -8,7 +8,7 @@ in source; pages route to code, they do not authorize or instruct.
 | --- | --- |
 | [Terminal core and fixtures](terminal-core.md) | Terminal core owns VT parsing, screen state, and the single input transport queue; fixtures encode visible behavior and recovery invariants. |
 | [Terminal presentation and rendering](terminal-ui.md) | This domain owns terminal viewport presentation, cache-driven rendering, native and software painting, and app-owned input routing while the session backend stays outside the UI. |
-| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns session lifecycle, local PTY startup, daemon persistence and recovery, and app-side event pumping for terminal sessions. |
+| [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns runtime session lifecycle, PTY startup, daemon persistence and recovery, and app-side event pumping for terminal sessions. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns authenticated SSH transport, host-key trust enforcement, and bounded GUI/SFTP transfer flows. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns config/workspace metadata, opaque references and private publication. |
 | [Application commands, tabs, and input routing](app-commands.md) | This domain owns the central app command route, tab lifecycle and activation policy, keyboard capture gates, modal overlays, and Vim-style command parsing for the terminal UI. |
