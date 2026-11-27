@@ -7947,6 +7947,7 @@
         "host_files_location_chooser_is_local_and_retirement_hides_namespaced_metadata",
         "host_files_choose_location_requires_new_valid_metadata_and_never_opens_a_folder",
         "host_files_initial_listing_is_required_before_ready",
+        "host_files_worker_drops_ssh_channel_on_close_and_startup_error",
         "files_admitted_initial_listing_is_used_once_and_mismatched_path_refuses_ready",
         "files_failed_view_offers_explicit_location_choice_only_for_host_context",
         "readable_link_wire_variants_are_additive_and_strict",
