@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e30c8ddc50ef9a44fc92c5a9e595c8d10141b1265dea3a05b8caf1c2e7fafb0b"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a3e03ec29371c2ba70c6386ba5535418b52d1c09b6657d96c67a0cdcdd970e2f"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,7 +13,7 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 Use for: What exact local settings and identity are accepted before hosting can start?
 
 - [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated local host settings including file access and startup policy.
-- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected lifecycle record with phase, epoch, and binding state.
+- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected lifecycle record with phase, epoch, and pending ticket.
 - [`Store`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exclusive lease-backed journal for create/open/configure and revoke flows.
 
 Evidence:
@@ -25,14 +25,13 @@ Caveats:
 - A pending ticket is not permission to start; the exact binding and phase must still match.
 - Host-local consent stays separate from cloud identity and cannot be reconstructed from stale metadata.
 
-## Host runtime admission
+## Runtime admission
 
-Use for: When does host setup sign in, register, and require owner approval?
+Use for: When does setup sign in, register, and wait for the real service lease before the host can run?
 
 - [`SetupBoundary`](../../crates/festerm-host-setup/src/controller.rs) — Shared host setup contract for local admission, sign-in, and native provisioning.
 - [`setup`](../../crates/festerm-host-setup/src/controller.rs) — Runs the explicit multi-step setup flow once the current journal passes checks.
-- [`approve_owner`](../../crates/festerm-host-setup/src/controller.rs) — Applies the owner consent flow after native registration and policy checks.
-- [`SetupConsent`](../../crates/festerm-host-setup/src/controller.rs) — Desktop review data carried through setup while preserving exact snapshot scope.
+- [`initial_run_admission`](../../crates/festerm-host-setup/src/controller.rs) — Waits for the native service lease before admitting a runtime start.
 
 Evidence:
 - [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for a real service lease before publishing setup success.
@@ -43,19 +42,19 @@ Caveats:
 - Current snapshot and epoch are rechecked; late or changed consent is refused.
 - Owner approval is distinct from native registration and never grants hidden access.
 
-## Discovery inventory
+## Owner approval gate
 
-Use for: Which runtime sessions are visible and when are fresh results published?
+Use for: Which approval checks and logs ensure provider owner consent is preserved without hidden access or stale state?
 
-- [`Inventory`](../../app/festerm/src/discovery.rs) — Coalesced native, tmux, screen, and hosted session inventory.
-- [`Discovery`](../../app/festerm/src/discovery.rs) — Polls in the background and publishes visible changes once the refresh settles.
-- [`NativeSession`](../../app/festerm/src/discovery.rs) — Describes a discovered session with its runtime root and origin.
+- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Explicit owner approval data carried through setup while preserving exact scope.
+- [`authorize_owner_admission`](../../crates/festerm-host-setup/src/controller.rs) — Validates owner consent and records the failure path without mutating the snapshot.
+- [`record_provisioned`](../../crates/festerm-host-setup/src/lifecycle.rs) — Transitions a matching ticket into the provisioned phase only when the exact settings match.
 
 Evidence:
-- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — A changed inventory is published and periodic polling continues after refresh.
-- [`unchanged_inventory_keeps_polling_until_a_visible_change`](../../app/festerm/src/discovery.rs) — Unchanged results keep polling until a visible difference appears.
+- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Logs and result handling preserve provider-owner consent and the main failure cause.
+- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Provisioning rejects drift from the approved ticket and leaves the journal unchanged.
 
 Caveats:
-- Inventory is observational, not a grant of access or host authority.
-- Stale or unchanged scan results are intentionally coalesced away.
-- Hosted roots and default native roots are tracked separately and not treated as equivalent.
+- Provider-owner consent is a separate gate from native registration and service installation.
+- Any drift between current settings and ticketed settings fails closed without state mutation.
+- Read-only owner readiness checks intentionally never advance high-water state.
