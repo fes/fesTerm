@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "63228baa5552dee830e77ae6dccb6141b4e30e5c178fcb8bf92564ce5ee3336e"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d0b78bdc2d1fd49eaa580ca459f44ca11c5eee7bfa79224dfee2be2378e32d3a"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST runtime policy to concrete local roots.
+Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST policy to concrete local roots.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
@@ -17,8 +17,8 @@ Use for: Which authenticated stream path is chosen and how are proofs revalidate
 - [`authenticate_ordinary`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Revalidates route binding, denied keys, and proof before acceptance
 
 Evidence:
-- [`authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Confirms control routing follows the authenticated stream and revocation is rechecked
-- [`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Shows runtime creation preserves issuer and exact end authority
+- [`authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Control routing follows the authenticated stream and revocation is rechecked
+- [`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Runtime creation preserves issuer and exact end authority
 
 Caveats:
 - Route selection is explicit and relies on the proven encrypted channel state.
@@ -66,7 +66,6 @@ Use for: Which local sessions are discovered and when does a refresh publish a n
 - [`Inventory`](../../app/festerm/src/discovery.rs) — Reports native, tmux, screen, and hosted inventory with errors
 
 Evidence:
-- [`native_inventory_keeps_same_name_sessions_in_their_exact_roots`](../../app/festerm/src/discovery.rs) — Confirms native inventory preserves exact runtime roots instead of fuzzy matching
 - [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Verifies refresh coalescing, publication, and continued polling after a visible change
 
 Caveats:

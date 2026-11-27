@@ -44,8 +44,9 @@ Files authority; separately granted remote Delete reviews up to eight files or
 empty folders before confirmation. Local Delete independently reviews up to eight
 Documents files or empty folders, even when remote Delete is off. A scoped
 [iOS Simulator Local Delete check](validation/dev-tunnels/mobile-files-ios-local-delete-native.json)
-passed file/empty-folder Cancel and fresh Confirm; Android and the remaining
-native lifecycle cases are pending. Remote-permission independence is covered
+passed file/empty-folder Cancel and fresh Confirm. Separately attributed Android
+Local Delete components are recorded below; remaining native lifecycle cases
+are pending. Remote-permission independence is covered
 by automated composition tests, not a native OFF-grant claim. Pinned [Android ordinary Files components](validation/dev-tunnels/mobile-files-android-native-components.json)
 are accepted against Linux, Windows and Mac, with separately attributed builds.
 Pinned [iOS Simulator components](validation/dev-tunnels/mobile-files-ios-native-components.json)

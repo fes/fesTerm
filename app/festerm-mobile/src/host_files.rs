@@ -9,10 +9,13 @@ use festerm_sftp::{
 use festerm_tunnel_bridge::{file_client, file_protocol as rpc, host_client::ordinary::Files};
 use std::{
     collections::HashMap,
-    pin::Pin,
     sync::{mpsc, Arc, Mutex},
-    task::{Context, Poll},
     time::Duration,
+};
+#[cfg(unix)]
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -22,7 +25,9 @@ use tokio_util::sync::CancellationToken;
 
 mod deletion;
 mod local_delete;
+#[cfg(unix)]
 mod local_download;
+mod local_download_queue;
 mod local_root;
 mod local_upload;
 mod uploads;
@@ -39,7 +44,6 @@ enum Command {
     LocalDelete(deletion::Command),
     List(String, ListOptions, Reply<Listing>),
     Stat(String, Reply<Entry>),
-    Download(u64, String, String, CancellationToken),
     Mkdir(String, Reply<()>),
 }
 #[derive(Default)]
@@ -584,35 +588,55 @@ impl Transfers for HostTransfers {
             self.0.wake.request_repaint();
             return Ok(id);
         }
+        self.0.send_current().map_err(|_| "Connection closed")?;
         let source = rooted(source).map_err(|_| "Invalid file path")?;
         let name = path::file_name_remote(&source).map_err(|_| "Invalid file name")?;
         path::validate_name(&name).map_err(|_| "Unsafe file name")?;
-        path::normalize_local(target).map_err(|_| "Invalid local folder")?;
-        let mut state = self.0.state.lock().map_err(|_| "Files queue unavailable")?;
-        if state.failed || state.rows.len() >= HISTORY {
-            return Err("Clear finished transfers or reconnect".into());
+        let target = path::normalize_local(target).map_err(|_| "Invalid local folder")?;
+        let root = self
+            .0
+            .root
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("Downloads are unavailable")?;
+        let directory = local_download_queue::directory(&root, &target)?;
+        let queue = self
+            .0
+            .uploads
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("Downloads are unavailable")?;
+        let id = {
+            let mut state = self.0.state.lock().map_err(|_| "Files queue unavailable")?;
+            if state.failed || state.rows.len() >= HISTORY {
+                return Err("Clear finished transfers or reconnect".into());
+            }
+            state.next = state.next.checked_add(1).ok_or("Files queue exhausted")?;
+            let id = state.next;
+            state.rows.push(TransferRow {
+                id,
+                name,
+                direction: d,
+                target: target.clone(),
+                state: RowState::Queued,
+                done: 0,
+                total: None,
+                rate: 0.0,
+                conflict: None,
+                error: None,
+            });
+            id
+        };
+        if let Err(message) = queue.enqueue_download(id, &source, directory) {
+            self.0.state.lock().unwrap().rows.retain(|row| row.id != id);
+            return Err(message);
         }
-        state.next = state.next.checked_add(1).ok_or("Files queue exhausted")?;
-        let id = state.next;
-        let cancel = CancellationToken::new();
-        self.0
-            .send(Command::Download(id, source, target.into(), cancel.clone()))
-            .map_err(|_| "Files queue is busy")?;
-        state.cancels.insert(id, cancel);
-        state.rows.push(TransferRow {
-            id,
-            name,
-            direction: d,
-            target: target.into(),
-            state: RowState::Queued,
-            done: 0,
-            total: None,
-            rate: 0.0,
-            conflict: None,
-            error: None,
-        });
+        self.0.wake.request_repaint();
         Ok(id)
     }
+
     fn cancel(&self, id: u64) {
         if self
             .0
@@ -664,6 +688,7 @@ impl Transfers for HostTransfers {
             .then(|| "Connection closed. Reconnect to browse files.".into())
     }
 }
+#[cfg(all(test, unix))]
 struct Progress {
     state: Arc<Mutex<State>>,
     id: u64,
@@ -671,12 +696,14 @@ struct Progress {
     started: std::time::Instant,
     last_repaint: std::time::Instant,
 }
+#[cfg(all(test, unix))]
 struct LimitedSink<'a, W> {
     file: &'a mut W,
     written: u64,
     cancel: CancellationToken,
     progress: Option<Progress>,
 }
+#[cfg(all(test, unix))]
 impl<W: AsyncWrite + Unpin> AsyncWrite for LimitedSink<'_, W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -721,6 +748,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for LimitedSink<'_, W> {
         Pin::new(&mut *self.file).poll_shutdown(cx)
     }
 }
+#[cfg(all(test, unix))]
 fn download<S: AsyncRead + AsyncWrite + Unpin>(
     rt: &Runtime,
     client: &mut file_client::Client<S>,
@@ -912,6 +940,7 @@ impl HostConnector {
                             uploads::Uploads::new(
                                 files,
                                 sources.clone(),
+                                local_download_queue::Destinations::new(root.clone(), publish_guard.clone(), cancel.clone()),
                                 state.clone(),
                                 cancel.child_token(),
                             )
@@ -1052,44 +1081,7 @@ impl HostConnector {
                                 });
                                 let _ = reply.send(result);
                             }
-                            Command::Download(id, source, target, job_cancel) => {
-                                wake.request_repaint();
-                                let progress = Progress {
-                                    state: state.clone(),
-                                    id,
-                                    wake: wake.clone(),
-                                    started: std::time::Instant::now(),
-                                    last_repaint: std::time::Instant::now(),
-                                };
-                                let result = download(
-                                    rt,
-                                    client,
-                                    (&root, &target),
-                                    &source,
-                                    &job_cancel,
-                                    publish_guard.as_ref(),
-                                    Some(progress),
-                                );
-                                let mut s = state.lock().unwrap();
-                                s.cancels.remove(&id);
-                                if let Some(row) = s.rows.iter_mut().find(|row| row.id == id) {
-                                    match result {
-                                        Ok(n) => {
-                                            row.done = n;
-                                            row.total = Some(n);
-                                            row.state = RowState::Done;
-                                        }
-                                        Err(e) => {
-                                            row.state = if job_cancel.is_cancelled() {
-                                                RowState::Cancelled
-                                            } else {
-                                                RowState::Failed
-                                            };
-                                            row.error = Some(super::files::describe_error(&e));
-                                        }
-                                    }
-                                }
-                            }
+
                         }
                         wake.request_repaint();
                         if !client.available() {
@@ -1292,6 +1284,188 @@ mod tests {
         (runtime, remote, local, client, written)
     }
     #[test]
+    fn host_files_mobile_download_choices_use_read_only_host_and_retained_local_publication() {
+        use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for (policy, changed, retired, cancelled) in [
+            (ConflictPolicy::Skip, false, false, false),
+            (ConflictPolicy::KeepBoth, false, false, false),
+            (ConflictPolicy::Replace, false, false, false),
+            (ConflictPolicy::Replace, true, false, false),
+            (ConflictPolicy::Replace, false, true, false),
+            (ConflictPolicy::Replace, false, false, true),
+        ] {
+            let (rt, remote, local, client, _) = policy_fixture(false);
+            let root = local_root::Root::open(local.path()).unwrap();
+            let target = root.root().to_owned();
+            std::fs::write(target.join("public.md"), b"old local").unwrap();
+            std::fs::write(target.join("public (copy).md"), b"keep existing copy").unwrap();
+            let current = Arc::new(AtomicBool::new(true));
+            let checked = current.clone();
+            let guard: Arc<dyn Fn() -> Result<(), SftpError> + Send + Sync> = Arc::new(move || {
+                if checked.load(Ordering::SeqCst) {
+                    Ok(())
+                } else {
+                    Err(SftpError::Cancelled)
+                }
+            });
+            let sources = Arc::new(local_upload::Sources::new(root.clone(), guard.clone()));
+            let mut row = transfer_row();
+            row.id = 1;
+            row.direction = Direction::Download;
+            row.state = RowState::Queued;
+            let state = Arc::new(Mutex::new(State {
+                rows: vec![row],
+                ..State::default()
+            }));
+            rt.block_on(async {
+                let failure = FirstFailure::default();
+                let endpoint = FilesEndpoint::from_client(
+                    client,
+                    CancellationToken::new(),
+                    failure.clone(),
+                    FilesChannel::Transfer,
+                );
+                let downloads =
+                    local_download_queue::Destinations::new(root, guard, CancellationToken::new());
+                let manager =
+                    festerm_ssh::SftpTransferManager::from_remote_endpoint_with_local_files(
+                        endpoint,
+                        sources.clone(),
+                        downloads,
+                    );
+                let transfers =
+                    uploads::Uploads::from_manager(manager, sources, state.clone(), failure);
+                transfers
+                    .enqueue_download(1, "/public.md", target.clone())
+                    .unwrap();
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        transfers.poll();
+                        let status = state.lock().unwrap().rows[0].state;
+                        if status == RowState::Awaiting {
+                            break;
+                        }
+                        assert!(
+                            !status.finished(),
+                            "download failed before review: {:?}",
+                            state.lock().unwrap().rows
+                        );
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                {
+                    let state = state.lock().unwrap();
+                    let view = state.rows[0].conflict.as_ref().unwrap();
+                    assert_eq!(view.direction, Direction::Download);
+                    assert_eq!(view.iphone.size, Some(9));
+                    assert_eq!(view.remote.size, Some(b"# public canary\n".len() as u64));
+                    // The suggestion is not a reservation; Keep Both must recheck names.
+                    assert_eq!(view.suggested_name, "public (copy).md");
+                    assert!(view.allowed.contains(&ConflictPolicy::Replace));
+                }
+                if changed {
+                    std::fs::rename(target.join("public.md"), target.join("held-original.md"))
+                        .unwrap();
+                    std::fs::write(target.join("public.md"), b"unreviewed replacement").unwrap();
+                }
+                if retired {
+                    current.store(false, Ordering::SeqCst);
+                }
+                if cancelled {
+                    transfers.cancel(1);
+                } else {
+                    transfers.resolve(1, policy, false);
+                }
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        transfers.poll();
+                        if state.lock().unwrap().rows[0].state.finished() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                let expected = if changed || retired {
+                    RowState::Failed
+                } else if cancelled {
+                    RowState::Cancelled
+                } else if policy == ConflictPolicy::Skip {
+                    RowState::Skipped
+                } else {
+                    RowState::Done
+                };
+                {
+                    let state = state.lock().unwrap();
+                    assert_eq!(state.rows[0].state, expected, "{:?}", state.rows);
+                }
+                if expected == RowState::Done {
+                    let state = state.lock().unwrap();
+                    assert_eq!(state.rows[0].done, b"# public canary\n".len() as u64);
+                    assert_eq!(state.rows[0].total, Some(b"# public canary\n".len() as u64));
+                }
+                transfers.shutdown().await;
+            });
+            assert_eq!(
+                std::fs::read(remote.path().join("public.md")).unwrap(),
+                b"# public canary\n"
+            );
+            assert_eq!(
+                std::fs::read(target.join("public (copy).md")).unwrap(),
+                b"keep existing copy"
+            );
+            assert_eq!(
+                std::fs::read(target.join("public.md")).unwrap(),
+                if changed {
+                    b"unreviewed replacement".as_slice()
+                } else if policy == ConflictPolicy::Replace && !retired && !cancelled {
+                    b"# public canary\n".as_slice()
+                } else {
+                    b"old local".as_slice()
+                }
+            );
+            if changed {
+                assert_eq!(
+                    std::fs::read(target.join("held-original.md")).unwrap(),
+                    b"old local"
+                );
+            }
+            let entries = std::fs::read_dir(&target)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                entries.len(),
+                if changed || policy == ConflictPolicy::KeepBoth {
+                    3
+                } else {
+                    2
+                }
+            );
+            assert!(entries.iter().all(|p| !p
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains(".part")));
+            if policy == ConflictPolicy::KeepBoth {
+                let copy = entries
+                    .iter()
+                    .find(|p| {
+                        p.file_name().unwrap() != "public.md"
+                            && p.file_name().unwrap() != "public (copy).md"
+                    })
+                    .unwrap();
+                assert_eq!(std::fs::read(copy).unwrap(), b"# public canary\n");
+            }
+        }
+    }
+
+    #[test]
     fn host_files_mobile_upload_maps_skip_keep_both_and_reviewed_replace_through_shared_queue() {
         use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
         for policy in [
@@ -1322,8 +1496,21 @@ mod tests {
                     failure.clone(),
                     FilesChannel::Transfer,
                 );
+                // Exercise the same optional local capability used in production
+                // for both directions, rather than the upload-only constructor.
+                let downloads = local_download_queue::Destinations::new(
+                    local_root::Root::open(local.root()).unwrap(),
+                    Arc::new(|| Ok(())),
+                    CancellationToken::new(),
+                );
+                let manager =
+                    festerm_ssh::SftpTransferManager::from_remote_endpoint_with_local_files(
+                        endpoint,
+                        sources.clone(),
+                        downloads,
+                    );
                 let uploads =
-                    uploads::Uploads::from_endpoint(endpoint, sources, state.clone(), failure);
+                    uploads::Uploads::from_manager(manager, sources, state.clone(), failure);
                 uploads.enqueue(1, "public.md", "/").unwrap();
                 tokio::time::timeout(Duration::from_secs(5), async {
                     loop {

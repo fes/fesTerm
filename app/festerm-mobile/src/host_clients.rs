@@ -1988,7 +1988,8 @@ impl MobileApp {
                     return Err("The selected host changed. Choose it again.".into());
                 }
                 guard.check().map_err(|_| "Connection cancelled")?;
-                let transfer = if files.client().capabilities().write {
+                let transfer = {
+                    let write = files.client().capabilities().write;
                     let scope = files.scope().clone();
                     let mut transfer = runtime
                         .block_on(host_client::ordinary::open_files_pinned(
@@ -2003,7 +2004,7 @@ impl MobileApp {
                         ))
                         .map_err(|_| "Could not open the Files transfer channel")?
                         .ok_or("Files are disabled on this host")?;
-                    if !transfer.client().capabilities().write
+                    if transfer.client().capabilities().write != write
                         || !same_files_host(&expected, transfer.host_info())
                     {
                         return Err(
@@ -2012,8 +2013,6 @@ impl MobileApp {
                         );
                     }
                     Some(transfer)
-                } else {
-                    None
                 };
                 guard.check().map_err(|_| "Connection cancelled")?;
                 Ok((files, transfer))

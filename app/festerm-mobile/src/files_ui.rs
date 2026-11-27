@@ -1420,7 +1420,7 @@ pub(crate) fn conflict_sheet_content(
             ui.add_space(space::MD);
             let half = (ui.available_width() - space::MD) / 2.0;
             ui.allocate_ui(egui::vec2(half, 60.0), |ui| {
-                compare_column(ui, "ON THIS iPHONE", view.iphone);
+                compare_column(ui, "ON THIS DEVICE", view.iphone);
             });
             ui.allocate_ui(egui::vec2(half, 60.0), |ui| {
                 compare_column(ui, "ON REMOTE", view.remote);

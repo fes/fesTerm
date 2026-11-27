@@ -1,7 +1,8 @@
 mod endpoint;
 pub use endpoint::{
-    LocalUploadSources, OpenedLocalUpload, RemoteDirectoryPage, RemoteReplacementReview,
-    RemoteTransferEndpoint, RemoteTransferFuture,
+    LocalDownloadDestinations, LocalDownloadFile, LocalReplacementReview, LocalUploadSources,
+    OpenedLocalUpload, RemoteDirectoryPage, RemoteReplacementReview, RemoteTransferEndpoint,
+    RemoteTransferFuture,
 };
 
 use std::{
@@ -566,6 +567,8 @@ impl SftpTransferManager {
             remote,
             partial: None,
             local_upload_sources: None,
+            local_downloads: None,
+            local_download_file: None,
         })
     }
 
@@ -580,6 +583,24 @@ impl SftpTransferManager {
             remote,
             partial: None,
             local_upload_sources: Some(sources),
+            local_downloads: None,
+            local_download_file: None,
+        })
+    }
+
+    /// Uses the existing queue with retained local upload sources and download
+    /// destinations. Opted-in local operations never use ordinary path fallback.
+    pub fn from_remote_endpoint_with_local_files(
+        remote: impl RemoteTransferEndpoint,
+        sources: Arc<dyn LocalUploadSources>,
+        downloads: impl LocalDownloadDestinations,
+    ) -> Self {
+        Self::with_backend(endpoint::EndpointBackend {
+            remote,
+            partial: None,
+            local_upload_sources: Some(sources),
+            local_downloads: Some(Box::new(downloads)),
+            local_download_file: None,
         })
     }
 
@@ -799,7 +820,7 @@ struct WorkerState {
     batches: HashMap<SftpTransferBatchId, BatchState>,
     collisions: HashMap<SftpCollisionId, SftpTransferId>,
     next_collision_id: u64,
-    remote_review_owner: Option<SftpTransferId>,
+    replacement_review_owner: Option<SftpTransferId>,
     admitted_items: Option<Arc<AtomicUsize>>,
     pending_events: VecDeque<SftpTransferEvent>,
     planning_budget: Option<SharedPlanningBudget>,
@@ -831,7 +852,7 @@ struct TransferItem {
     root_state: TransferRootState,
     pending_resolution: Option<SftpCollisionResolution>,
     active_collision: Option<SftpCollisionId>,
-    remote_review: Option<RemoteReplacementReview>,
+    replacement_review: Option<ReplacementReview>,
 }
 
 enum TransferRootState {
@@ -1017,6 +1038,12 @@ struct PlanningControl<'a> {
     event_sender: &'a Sender<SftpTransferEvent>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplacementReview {
+    Remote(RemoteReplacementReview),
+    Local(LocalReplacementReview),
+}
+
 type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SftpSessionError>> + Send + 'a>>;
 type CopyFuture<'a> = Pin<Box<dyn Future<Output = Result<u64, CopyFileError>> + Send + 'a>>;
 type DirectoryFuture<'a> = Pin<
@@ -1031,8 +1058,15 @@ trait TransferBackend {
     fn upload_recovery_pending(&self) -> bool {
         false
     }
-    fn atomic_remote_publication(&self) -> bool {
+    fn atomic_publication(&self, _destination: &SftpPath) -> bool {
         false
+    }
+    fn validate_download_source(
+        &self,
+        _source: &SftpPathMetadata,
+        _destination: &SftpPath,
+    ) -> Result<(), SftpSessionError> {
+        Ok(())
     }
     fn retirement(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(std::future::pending())
@@ -1046,10 +1080,10 @@ trait TransferBackend {
     fn review_replacement<'a>(
         &'a mut self,
         _path: &'a SftpPath,
-    ) -> BackendFuture<'a, Option<(RemoteReplacementReview, SftpPathMetadata)>> {
+    ) -> BackendFuture<'a, Option<(ReplacementReview, SftpPathMetadata)>> {
         Box::pin(async { Ok(None) })
     }
-    fn release_replacement(&mut self, _review: RemoteReplacementReview) -> BackendFuture<'_, ()> {
+    fn release_replacement(&mut self, _review: ReplacementReview) -> BackendFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
     fn protect_partial_commit<'a>(
@@ -1083,7 +1117,7 @@ trait TransferBackend {
         &'a mut self,
         source: &'a SftpPath,
         destination: &'a SftpPath,
-        _expected: Option<RemoteReplacementReview>,
+        _expected: Option<ReplacementReview>,
         on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
     ) -> CopyFuture<'a>;
 }
@@ -1210,7 +1244,7 @@ impl TransferBackend for LiveTransferBackend {
         &'a mut self,
         source: &'a SftpPath,
         destination: &'a SftpPath,
-        _expected: Option<RemoteReplacementReview>,
+        _expected: Option<ReplacementReview>,
         on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
     ) -> CopyFuture<'a> {
         Box::pin(async move {
@@ -1336,9 +1370,8 @@ async fn run_transfer_worker<B: TransferBackend>(
             .await;
 
         let admitted = state.ready.iter().position(|id| {
-            !backend.atomic_remote_publication()
-                || state.remote_review_owner.is_none()
-                || state.remote_review_owner == Some(*id)
+            state.replacement_review_owner.is_none()
+                || state.replacement_review_owner == Some(*id)
                 || state
                     .items
                     .get(id)
@@ -1438,7 +1471,7 @@ impl WorkerState {
                             root_state: TransferRootState::Pending,
                             pending_resolution: None,
                             active_collision: None,
-                            remote_review: None,
+                            replacement_review: None,
                         },
                     );
                 }
@@ -1704,18 +1737,18 @@ impl WorkerState {
         }
     }
 
-    async fn pin_remote_review<B: TransferBackend>(
+    async fn pin_replacement_review<B: TransferBackend>(
         &mut self,
         transfer_id: SftpTransferId,
         destination: &SftpPath,
         backend: &mut B,
     ) -> Result<Option<SftpPathMetadata>, SftpSessionError> {
-        if !backend.atomic_remote_publication() || destination.location() != SftpLocation::Remote {
+        if !backend.atomic_publication(destination) {
             return Ok(None);
         }
         // Admission is reserved before opening a native/wire read handle.
         if self
-            .remote_review_owner
+            .replacement_review_owner
             .is_some_and(|owner| owner != transfer_id)
         {
             return Err(endpoint::endpoint_error(
@@ -1724,7 +1757,7 @@ impl WorkerState {
                 "replacement review admission is already owned",
             ));
         }
-        self.remote_review_owner = Some(transfer_id);
+        self.replacement_review_owner = Some(transfer_id);
         match backend.review_replacement(destination).await {
             Ok(review) => {
                 let (token, metadata) = review.ok_or_else(|| {
@@ -1736,7 +1769,7 @@ impl WorkerState {
                 })?;
                 if metadata.path != *destination || metadata.file_type != SftpEntryType::File {
                     let _ = backend.release_replacement(token).await;
-                    self.remote_review_owner = None;
+                    self.replacement_review_owner = None;
                     return Err(endpoint::endpoint_error(
                         "review replacement",
                         &destination.display(),
@@ -1746,17 +1779,17 @@ impl WorkerState {
                 self.items
                     .get_mut(&transfer_id)
                     .expect("reviewed transfer")
-                    .remote_review = Some(token);
+                    .replacement_review = Some(token);
                 Ok(Some(metadata))
             }
             Err(error) => {
-                self.remote_review_owner = None;
+                self.replacement_review_owner = None;
                 Err(error)
             }
         }
     }
 
-    async fn release_remote_review<B: TransferBackend>(
+    async fn release_replacement_review<B: TransferBackend>(
         &mut self,
         transfer_id: SftpTransferId,
         backend: &mut B,
@@ -1764,14 +1797,14 @@ impl WorkerState {
         let review = self
             .items
             .get_mut(&transfer_id)
-            .and_then(|item| item.remote_review.take());
+            .and_then(|item| item.replacement_review.take());
         if let Some(review) = review {
             if let Err(error) = backend.release_replacement(review).await {
-                tracing::warn!(target: "festerm::sftp", "remote replacement review closed with an error: {error}");
+                tracing::warn!(target: "festerm::sftp", "replacement review closed with an error: {error}");
             }
         }
-        if self.remote_review_owner == Some(transfer_id) {
-            self.remote_review_owner = None;
+        if self.replacement_review_owner == Some(transfer_id) {
+            self.replacement_review_owner = None;
         }
     }
 
@@ -1788,7 +1821,7 @@ impl WorkerState {
         }
         self.snapshot_dirty.insert(transfer_id);
         if self.items[&transfer_id].cancel_requested {
-            self.release_remote_review(transfer_id, backend).await;
+            self.release_replacement_review(transfer_id, backend).await;
             self.finish_cancelled(transfer_id, event_sender).await;
             return;
         }
@@ -1805,7 +1838,7 @@ impl WorkerState {
                 )
                 .await
             {
-                self.release_remote_review(transfer_id, backend).await;
+                self.release_replacement_review(transfer_id, backend).await;
                 self.finish_work_error(transfer_id, error, event_sender)
                     .await;
             }
@@ -1832,7 +1865,7 @@ impl WorkerState {
                     )
                     .await
                 {
-                    self.release_remote_review(transfer_id, backend).await;
+                    self.release_replacement_review(transfer_id, backend).await;
                     self.finish_work_error(transfer_id, error, event_sender)
                         .await;
                 }
@@ -1842,7 +1875,7 @@ impl WorkerState {
                     .execute_plan_step(transfer_id, plan, backend, command_receiver, event_sender)
                     .await
                 {
-                    self.release_remote_review(transfer_id, backend).await;
+                    self.release_replacement_review(transfer_id, backend).await;
                     let error = match backend.cleanup_interrupted_copy().await {
                         Ok(()) => error,
                         Err(cleanup_error) => TransferWorkError::CleanupFailed {
@@ -1879,6 +1912,7 @@ impl WorkerState {
             .metadata(&request.source)
             .await?
             .ok_or_else(|| missing_source_error(&request.source))?;
+        backend.validate_download_source(&source, &request.destination)?;
         let destination =
             normalize_requested_destination(backend, &request.source, &request.destination).await?;
         let budget = self.planning_budget(planning_limits);
@@ -1964,7 +1998,7 @@ impl WorkerState {
             }
         } else if let Some(destination_metadata) = destination_metadata {
             let destination_metadata = if destination_metadata.file_type == SftpEntryType::File {
-                self.pin_remote_review(transfer_id, &destination, backend)
+                self.pin_replacement_review(transfer_id, &destination, backend)
                     .await?
                     .unwrap_or(destination_metadata)
             } else {
@@ -2428,7 +2462,7 @@ impl WorkerState {
         let whole_item = context.whole_item;
         match decision {
             SftpCollisionDecision::Skip => {
-                self.release_remote_review(transfer_id, backend).await;
+                self.release_replacement_review(transfer_id, backend).await;
                 if whole_item && remaining_units.is_empty() {
                     self.finish_skipped(transfer_id, event_sender).await;
                 } else {
@@ -2444,7 +2478,7 @@ impl WorkerState {
                 }
             }
             SftpCollisionDecision::KeepBoth => {
-                self.release_remote_review(transfer_id, backend).await;
+                self.release_replacement_review(transfer_id, backend).await;
                 let target = self
                     .first_available_keep_both_destination(backend, &destination)
                     .await?;
@@ -2559,7 +2593,7 @@ impl WorkerState {
                 if let Some(existing) = backend.metadata(&destination).await? {
                     if !replace_existing_at_commit {
                         let existing = if existing.file_type == SftpEntryType::File {
-                            self.pin_remote_review(transfer_id, &destination, backend)
+                            self.pin_replacement_review(transfer_id, &destination, backend)
                                 .await?
                                 .unwrap_or(existing)
                         } else {
@@ -2621,15 +2655,14 @@ impl WorkerState {
                     .await;
                 let batch_id = self.items[&transfer_id].batch_id;
                 let base_bytes = self.items[&transfer_id].bytes_transferred;
-                let atomic_publication = backend.atomic_remote_publication()
-                    && destination.location() == SftpLocation::Remote;
+                let atomic_publication = backend.atomic_publication(&destination);
                 let temp_destination = if atomic_publication {
                     destination.clone()
                 } else {
                     self.first_available_temp_destination(backend, &destination)
                         .await?
                 };
-                let expected_review = self.items[&transfer_id].remote_review;
+                let expected_review = self.items[&transfer_id].replacement_review;
                 let mut progress = |copied_for_file: u64| -> Result<(), CopyInterrupted> {
                     self.drain_commands_during_copy(command_receiver, event_sender);
                     if self
@@ -2740,7 +2773,7 @@ impl WorkerState {
                             }
                             backend.rename(&temp_destination, &destination).await?;
                         }
-                        self.release_remote_review(transfer_id, backend).await;
+                        self.release_replacement_review(transfer_id, backend).await;
                         let item = self.items.get_mut(&transfer_id).expect("item exists");
                         item.root_state = TransferRootState::Ready(plan);
                         item.state = SftpTransferState::Queued;
@@ -2756,7 +2789,7 @@ impl WorkerState {
                         self.ready.push_front(transfer_id);
                     }
                     Err(CopyFileError::Cancelled) => {
-                        self.release_remote_review(transfer_id, backend).await;
+                        self.release_replacement_review(transfer_id, backend).await;
                         self.cleanup_temporary_output(backend, event_sender).await?;
                         self.finish_cancelled(transfer_id, event_sender).await;
                     }
@@ -2764,14 +2797,21 @@ impl WorkerState {
                         ..
                     })) if atomic_publication && expected_review.is_none() => {
                         // A fully received create-only refusal published nothing.
-                        // Keep the admitted plan, and require a fresh review of
-                        // the object now occupying that name; never replay it.
+                        // The unpublished attempt contributes no completed file
+                        // bytes. A later explicit choice starts from the bytes
+                        // completed before this attempt, rather than counting it twice.
+                        self.items
+                            .get_mut(&transfer_id)
+                            .expect("item exists")
+                            .bytes_transferred = base_bytes;
+                        // Keep the admitted plan and require a fresh review and
+                        // explicit choice before another transfer attempt.
                         let existing = backend
                             .metadata(&destination)
                             .await?
                             .ok_or_else(|| missing_source_error(&destination))?;
                         let existing = if existing.file_type == SftpEntryType::File {
-                            self.pin_remote_review(transfer_id, &destination, backend)
+                            self.pin_replacement_review(transfer_id, &destination, backend)
                                 .await?
                                 .unwrap_or(existing)
                         } else {
@@ -2807,7 +2847,7 @@ impl WorkerState {
                             .await;
                     }
                     Err(CopyFileError::Operation(error)) => {
-                        self.release_remote_review(transfer_id, backend).await;
+                        self.release_replacement_review(transfer_id, backend).await;
                         self.cleanup_temporary_output(backend, event_sender).await?;
                         return Err(error.into());
                     }
@@ -2830,7 +2870,7 @@ impl WorkerState {
             .get(&transfer_id)
             .is_some_and(|item| item.cancel_requested)
         {
-            self.release_remote_review(transfer_id, backend).await;
+            self.release_replacement_review(transfer_id, backend).await;
             self.cleanup_temporary_output(backend, events).await?;
             self.finish_cancelled(transfer_id, events).await;
             return Ok(true);
@@ -3149,8 +3189,7 @@ fn allowed_endpoint_decisions<B: TransferBackend>(
     existing: SftpEntryType,
 ) -> Vec<SftpCollisionDecision> {
     let mut allowed = allowed_decisions_for(source, existing);
-    if backend.atomic_remote_publication()
-        && destination.location() == SftpLocation::Remote
+    if backend.atomic_publication(destination)
         && (source != SftpEntryType::File || existing != SftpEntryType::File)
     {
         allowed.retain(|decision| *decision != SftpCollisionDecision::Replace);
@@ -3479,7 +3518,7 @@ mod tests {
             &'a mut self,
             source: &'a SftpPath,
             destination: &'a SftpPath,
-            _expected: Option<RemoteReplacementReview>,
+            _expected: Option<ReplacementReview>,
             on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
         ) -> CopyFuture<'a> {
             Box::pin(async move {
@@ -3607,7 +3646,7 @@ mod tests {
             &'a mut self,
             _source: &'a SftpPath,
             _destination: &'a SftpPath,
-            _expected: Option<RemoteReplacementReview>,
+            _expected: Option<ReplacementReview>,
             _on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
         ) -> CopyFuture<'a> {
             Box::pin(async { unreachable!("planning test should not copy files") })
@@ -3708,7 +3747,7 @@ mod tests {
             &'a mut self,
             source: &'a SftpPath,
             destination: &'a SftpPath,
-            _expected: Option<RemoteReplacementReview>,
+            _expected: Option<ReplacementReview>,
             on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
         ) -> CopyFuture<'a> {
             Box::pin(async move {
@@ -3779,7 +3818,7 @@ mod tests {
             &'a mut self,
             _source: &'a SftpPath,
             _destination: &'a SftpPath,
-            _expected: Option<RemoteReplacementReview>,
+            _expected: Option<ReplacementReview>,
             _on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
         ) -> CopyFuture<'a> {
             Box::pin(async { unreachable!("cancelled planning should not copy files") })
@@ -4104,7 +4143,7 @@ mod tests {
                     root_state: TransferRootState::Pending,
                     pending_resolution: None,
                     active_collision: Some(SftpCollisionId(1)),
-                    remote_review: None,
+                    replacement_review: None,
                 },
             );
             let (event_sender, _events) = channel(1);

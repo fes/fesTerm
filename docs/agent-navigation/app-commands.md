@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d14e7296b8f1f60795b62b279955985ec54720edf07418de2560d8f755b1b9c1"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "bd834bb59e1e3f487f5657829a99d8744f63bfb6e65747f379ce009b222b0933"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns singleton-tab application intent routing, close/focus fallback, keyboard capture scope, modal input gates, and Vim-style editor commands.
+This domain owns the central app command route, tab lifecycle and activation policy, keyboard capture gates, modal overlays, and Vim-style command parsing for the terminal UI.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
@@ -12,17 +12,17 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 
 Use for: A widget or launcher needs to turn a gesture into a state-changing app intent
 
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents emitted from widgets and menus
+- [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents emitted by widgets, menus, and launchers
 - [`AppState`](../../app/festerm/src/tabs.rs) — authoritative per-window tab and session state
-- [`dispatch`](../../app/festerm/src/tabs.rs) — central mutation path from commands into state
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from command to state
 
 Evidence:
-- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — fallback returns to the opener instead of the neighbor
-- [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — singleton surfaces are skipped from close fallback
+- [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — fallback prefers the opener over nearby tabs
+- [`a_singleton_tab_is_never_where_a_close_returns_to`](../../app/festerm/src/tabs.rs) — launcher/settings singleton surfaces are skipped
 
 Caveats:
-- Widgets emit commands; they do not own session policy.
-- dispatch is the single mutation path for tab state.
+- Widgets emit commands; they do not own tab or session policy.
+- dispatch is the single state mutation path.
 - Launcher, Settings, and Profiles are singleton surfaces and are not valid close targets.
 
 ## Close flow
@@ -35,12 +35,12 @@ Use for: A tab is closing and the fallback focus target must be chosen
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — open-from fallback beats the adjacent tab
-- [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — left-neighbor fallback when activation history is absent
+- [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — left-neighbor fallback when history is absent
 - [`closing_the_leftmost_tab_without_a_history_falls_back_to_the_rightmost`](../../app/festerm/src/tabs.rs) — wrap-around fallback preserves an empty root state
 
 Caveats:
-- Only remembered tabs are recorded; singleton surfaces are intentionally skipped.
-- A closed tab is evicted from history before fallback selection.
+- Only remembered tabs are recorded; singleton surfaces are skipped.
+- A closed tab is evicted from activation history before fallback selection.
 - The root window never goes empty; it reopens the launcher.
 
 ## Keyboard route
@@ -49,7 +49,7 @@ Use for: A raw key event is checked for eligibility, capture, and exact-match di
 
 - [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — scope gate for terminal, markdown, document, and global actions
 - [`consume`](../../app/festerm/src/keyboard.rs) — removes exact matches and clipboard-derived semantics
-- [`consume_exact`](../../app/festerm/src/keyboard.rs) — consumes only the exact expected key combination
+- [`consume_exact`](../../app/festerm/src/keyboard.rs) — captures only the exact expected key combination
 
 Evidence:
 - [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — scope gating and exact-event capture stay aligned
@@ -81,7 +81,7 @@ Caveats:
 
 Use for: A user types a Vim-style command in the command area and needs it mapped to app behavior
 
-- [`ViCommand`](../../app/festerm/src/vi_command.rs) — typed line semantics mapped to save, close, and refresh actions
+- [`ViCommand`](../../app/festerm/src/vi_command.rs) — typed Ex command semantics mapped to save, close, and refresh
 - [`parse`](../../app/festerm/src/vi_command.rs) — maps a raw command line to a supported editor action
 - [`completions`](../../app/festerm/src/vi_command.rs) — offers only commands that are actually valid
 
@@ -92,5 +92,5 @@ Evidence:
 
 Caveats:
 - Unsupported commands are refused with no side effects.
-- Substitution parsing reuses the same engine as the find bar.
+- Substitution parsing reuses the shared find-bar engine.
 - Completion offers only commands that are actually valid.
