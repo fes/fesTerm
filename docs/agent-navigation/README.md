@@ -16,7 +16,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST runtime policy to concrete local roots. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged-update gating, native smoke validation, Finder/AppKit bridging, and wake/privacy monitoring for the desktop app. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns packaged update gating, native smoke validation, native Finder/AppKit bridging, and wake/privacy monitoring for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | Owns the shared mobile runtime that coordinates lifecycle, input gating, host discovery, file access, and transient SSH on iOS and Android. |
 | [Desktop application shell and screens](app-shell.md) | Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
