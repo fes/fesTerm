@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "645047e6c10f09a50b793b9789fa86e2a24eba04c92c820eb2cd85f9c4288e53"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "50d3506477507c6af04ba9735cf83f3a52d1be04014e0cac34ee1a0a2b46a954"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,16 +12,15 @@ Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experime
 
 Use for: Which local settings and identity are accepted before hosting can start?
 
-- [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated host policy: friendly name, startup, file roots, owner access.
-- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected journal: phase, epoch, binding, pending ticket.
+- [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated host policy: friendly name, startup, file roots, ordinary access.
+- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected journal: phase, epoch, binding, and in-flight approval.
 - [`Store`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exclusive lease-backed journal for create, open, configure, and revoke.
 
 Evidence:
 - [`host_desktop_consent_atomically_binds_settings_and_exact_snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Desktop consent binds exact settings and snapshot atomically.
-- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Enable rejects drift and leaves the pending ticket untouched.
 
 Caveats:
-- Changed settings require renewed foreground review; config is never authority.
+- Changed settings require foreground review before runtime can proceed.
 
 ## Runtime admission
 
@@ -29,14 +28,13 @@ Use for: When does setup sign in, enroll owners, and wait for the service lease 
 
 - [`SetupBoundary`](../../crates/festerm-host-setup/src/controller.rs) — Shared host setup contract for local admission, sign-in, and native provisioning.
 - [`setup`](../../crates/festerm-host-setup/src/controller.rs) — Runs the explicit multi-step setup flow once the journal passes checks.
-- [`initial_run_admission`](../../crates/festerm-host-setup/src/controller.rs) — Blocks runtime until the current snapshot and lease match the expected state.
+- [`run`](../../crates/festerm-host-setup/src/controller.rs) — Explicit runtime entry point that reserves the exact lifecycle and admits startup.
 
 Evidence:
-- [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for a real lease before publishing setup success.
-- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Owner admission preserves provider-owner consent and the primary failure path.
+- [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for the real service lease before publishing setup success.
 
 Caveats:
-- Host item admission and helper checks run before cloud sign-in or owner enrollment.
+- Initial admission retries only on the real service lease contention, never on drifted consent.
 
 ## Discovery and binding
 
@@ -48,7 +46,6 @@ Use for: How are local sessions, hosted roots, and exact host bindings discovere
 
 Evidence:
 - [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Changed inventory is published and periodic discovery continues without stale refreshes.
-- [`hosted_runtime_accepts_short_and_previous_namespaces_only`](../../crates/festerm-tunnel-bridge/src/profile_hosting.rs) — Only current and previous hosted runtime namespaces are accepted.
 
 Caveats:
 - Configuration alone never authorizes a host or resource creation.
@@ -57,15 +54,23 @@ Caveats:
 
 Use for: Which file service and filesystem boundary prevents escape and stale approval?
 
-- [`Filesystem`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Explicit rooted FS with validated start directory and approved locations.
-- [`FileService`](../../crates/festerm-tunnel-bridge/src/files.rs) — Configures rooted file and observation access from a guarded policy.
 - [`Policy`](../../crates/festerm-tunnel-bridge/src/file_protocol.rs) — Policy defines roots, writes, deletes, and the virtual start directory.
+- [`FileService`](../../crates/festerm-tunnel-bridge/src/files.rs) — Configures rooted file and observation access from a guarded policy.
+- [`Filesystem`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Explicit rooted FS with validated start directory and approved locations.
 
 Evidence:
 - [`rooted_files_enumerate_stream_and_refuse_escape_and_read_only_writes`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Rooted FS enumerates within policy and rejects escapes and write violations.
 
-Caveats:
-- The initial directory is validated before any file access is admitted.
+## Ordinary access
+
+Use for: How is provider-owned ordinary remote access prepared and renewed without owner enrollment drift?
+
+- [`CurrentHostPolicySource`](../../crates/festerm-host-setup/src/ordinary.rs) — Protected source that prepares and refreshes the current ordinary policy.
+- [`CurrentHostPolicy`](../../crates/festerm-host-setup/src/ordinary.rs) — Current policy guard that exposes ordinary or owner authority based on the native anchor.
+- [`Prepared`](../../crates/festerm-host-setup/src/ordinary.rs) — Immutable provider-ready state with the expected snapshot and observer digest.
+
+Evidence:
+- [`readiness_diagnostic_is_bounded_per_static_reason_without_tick_noise`](../../crates/festerm-host-setup/src/ordinary.rs) — Readiness diagnostics are deduplicated per reason and do not spam renewals.
 
 ## PowerShell enterprise
 
@@ -77,6 +82,3 @@ Use for: How do enterprise PowerShell sessions connect with SSH or PSRP and boun
 
 Evidence:
 - [`opt_in_real_pwsh_ssh_subsystem_runs_structured_psrp`](../../crates/festerm-powershell/tests/psrp_ssh_pwsh.rs) — Real PSRP SSH session round-trips streams and rejects host-call misuse.
-
-Caveats:
-- HTTPS uses TLS/NTLM and SSH uses an explicit pinned subsystem, not an unbound fallback.

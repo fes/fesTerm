@@ -27,6 +27,10 @@ pub enum Phase {
     OrdinaryIdentityBefore,
     OrdinaryIdentityAfter,
     OrdinaryRenewal,
+    OrdinaryRenewalContext,
+    OrdinaryRenewalPreflight,
+    OrdinaryRenewalObserver,
+    OrdinaryRenewalPublication,
 }
 impl Phase {
     pub fn code(self) -> &'static str {
@@ -44,6 +48,10 @@ impl Phase {
             Self::OrdinaryIdentityBefore => "ordinary_identity_not_ready_before",
             Self::OrdinaryIdentityAfter => "ordinary_identity_not_ready_after",
             Self::OrdinaryRenewal => "ordinary_inplace_renewal",
+            Self::OrdinaryRenewalContext => "ordinary_renewal_context",
+            Self::OrdinaryRenewalPreflight => "ordinary_renewal_preflight",
+            Self::OrdinaryRenewalObserver => "ordinary_renewal_observer",
+            Self::OrdinaryRenewalPublication => "ordinary_renewal_publication",
         }
     }
     fn parse(code: &str) -> Option<Self> {
@@ -61,9 +69,23 @@ impl Phase {
             Self::OrdinaryIdentityBefore,
             Self::OrdinaryIdentityAfter,
             Self::OrdinaryRenewal,
+            Self::OrdinaryRenewalContext,
+            Self::OrdinaryRenewalPreflight,
+            Self::OrdinaryRenewalObserver,
+            Self::OrdinaryRenewalPublication,
         ]
         .into_iter()
         .find(|phase| phase.code() == code)
+    }
+
+    fn renewal_failure_boundary(self) -> bool {
+        matches!(
+            self,
+            Self::OrdinaryRenewalContext
+                | Self::OrdinaryRenewalPreflight
+                | Self::OrdinaryRenewalObserver
+                | Self::OrdinaryRenewalPublication
+        )
     }
 }
 
@@ -229,13 +251,13 @@ impl Log {
         event: crate::ordinary::ReadinessEvent,
         error: Option<&io::Error>,
     ) {
-        use crate::ordinary::ReadinessEvent;
+        use crate::ordinary::{ReadinessEvent, RenewalStage};
         let phase = match event {
             ReadinessEvent::OwnerDigestChanged => Phase::OrdinaryOwnerDigest,
             ReadinessEvent::CloudDigestChanged => Phase::OrdinaryCloudDigest,
             ReadinessEvent::IdentityNotReadyBefore => Phase::OrdinaryIdentityBefore,
             ReadinessEvent::IdentityNotReadyAfter => Phase::OrdinaryIdentityAfter,
-            ReadinessEvent::RenewalOk | ReadinessEvent::RenewalError => Phase::OrdinaryRenewal,
+            ReadinessEvent::RenewalOk | ReadinessEvent::RenewalError(_) => Phase::OrdinaryRenewal,
         };
         self.event(
             phase,
@@ -248,6 +270,16 @@ impl Log {
             None,
             None,
         );
+        if let ReadinessEvent::RenewalError(stage) = event {
+            // Keep the original row for readers that predate the boundary codes.
+            let phase = match stage {
+                RenewalStage::Context => Phase::OrdinaryRenewalContext,
+                RenewalStage::Preflight => Phase::OrdinaryRenewalPreflight,
+                RenewalStage::Observer => Phase::OrdinaryRenewalObserver,
+                RenewalStage::Publication => Phase::OrdinaryRenewalPublication,
+            };
+            self.event(phase, Outcome::Error, error, None, None);
+        }
     }
 
     pub(super) fn event(
@@ -260,11 +292,24 @@ impl Log {
     ) {
         let Some(run_id) = self.run_id else { return };
         let diagnostic = error.and_then(diagnostics::from_io_error);
-        let category = diagnostic
+        let failure_category = diagnostic.map(|value| value.category).or_else(|| {
+            if !phase.renewal_failure_boundary() || outcome != Outcome::Error {
+                return None;
+            }
+            let error = error?;
+            if crate::cloud::is_cancelled(error) {
+                Some(Category::Cancelled)
+            } else if error.kind() == io::ErrorKind::WouldBlock {
+                Some(Category::Busy)
+            } else {
+                None
+            }
+        });
+        let category = failure_category
             .and_then(|value| {
                 CATEGORIES
                     .iter()
-                    .find(|(_, category)| *category == value.category)
+                    .find(|(_, category)| *category == value)
                     .map(|(code, _)| *code)
             })
             .unwrap_or("none");

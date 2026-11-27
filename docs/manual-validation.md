@@ -1292,9 +1292,13 @@ binding and durable generations; replacement must refuse changed/revoked scope,
 cancelled work and failed native credential persistence. No keychain prompts or
 interactive fallback are permitted. Retain the original error before Refresh;
 an expired prepared observer may refuse admission briefly until replacement.
-This new renewal gate is **UNRUN** natively; prior unchanged-file-digest refusals
-do not prove credential expiry or a root cause. Existing lifetime and no-replay
-checks remain required.
+The Windows HOST 0.17.30 run in [#795](https://github.com/fes/fesTerm/issues/795)
+recorded a terminal renewal error without a specific cause. A later source
+regression verifies that an actual held private lease records a protected
+preflight failure and that renewal remains terminal. The bounded history keeps
+the generic renewal event and adds a fixed failure stage. #795 already records
+a separately attributed successful Windows 0.17.15 renewal. The new stage
+diagnostics and current combined-build qualification remain pending.
 
 DT-02 / RSD-02 also retain native recovery checks with a wide character at a
 screen or configured right margin, including wrap retained in an inactive

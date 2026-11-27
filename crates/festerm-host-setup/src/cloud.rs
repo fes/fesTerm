@@ -245,6 +245,36 @@ pub(crate) struct PreparedOrdinaryObserver {
 
 #[cfg(feature = "host-runtime")]
 impl PreparedOrdinaryObserver {
+    #[cfg(test)]
+    pub(crate) fn expired_fixture(resource: Resource) -> Self {
+        let mut encoded = b"FESTERM_GITHUB_IDENTITY_V2\0".to_vec();
+        encoded.extend(
+            serde_json::to_vec(&serde_json::json!({
+                "account": {"id":resource.account_id,"login":"fixture"},
+                "client_id":identity::SERVICE_CLIENT_ID,
+                "access_token":"fixture-only",
+                "refresh_token":null,
+                "expires_at":1,
+                "refresh_expires_at":null,
+            }))
+            .unwrap(),
+        );
+        Self {
+            identity: Identity::decode_private(
+                &encoded,
+                resource.account_id,
+                identity::SERVICE_CLIENT_ID,
+            )
+            .unwrap(),
+            exact: Receipt {
+                resource,
+                created: "2026-01-01T00:00:00Z".into(),
+            },
+            network: NativeNetwork::new().unwrap(),
+            record_digest: [0; 32],
+        }
+    }
+
     pub(crate) fn is_ready(&self) -> bool {
         !self.identity.needs_sign_in()
     }
