@@ -1,74 +1,61 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d0b78bdc2d1fd49eaa580ca459f44ca11c5eee7bfa79224dfee2be2378e32d3a"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "e30c8ddc50ef9a44fc92c5a9e595c8d10141b1265dea3a05b8caf1c2e7fafb0b"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST policy to concrete local roots.
+Owns authenticated host admission, consented lifecycle state, and the trusted local roots that gate dev-tunnel hosting and discovery.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host runtime
+## Host lifecycle consent
 
-Use for: Which authenticated stream path is chosen and how are proofs revalidated?
+Use for: What exact local settings and identity are accepted before hosting can start?
 
-- [`HostRuntime`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Shared aggregate budget and per-role dispatch for authenticated host sessions
-- [`serve_reserved`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Authenticates then dispatches control, terminal, or files by proven role
-- [`authenticate_ordinary`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Revalidates route binding, denied keys, and proof before acceptance
-
-Evidence:
-- [`authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Control routing follows the authenticated stream and revocation is rechecked
-- [`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Runtime creation preserves issuer and exact end authority
-
-Caveats:
-- Route selection is explicit and relies on the proven encrypted channel state.
-- Protected policy is reloaded and revalidated; cached state is not authority.
-- A cancelled or stale proof can reject before control or terminal dispatch.
-
-## Rooted files
-
-Use for: How does the client handle uploads, aborts, and connection-local file handles?
-
-- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared Files adapter that tracks transfer state, generation, and review markers
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Rooted sequential file protocol with strict replacement and path validation
-- [`Handle`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Connection-local transfer handle; close is explicit and does not prove remote completion
+- [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated local host settings including file access and startup policy.
+- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected lifecycle record with phase, epoch, and binding state.
+- [`Store`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exclusive lease-backed journal for create/open/configure and revoke flows.
 
 Evidence:
-- [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Abort closes the local handle but keeps the transfer stream usable
-- [`files_endpoint_returned_cancel_and_source_error_do_not_leave_unknown_markers`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Cancel and source errors do not leave stale unknown state behind
+- [`host_desktop_consent_atomically_binds_settings_and_exact_snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Desktop consent is atomically bound to the exact snapshot and settings.
+- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Enable requests require matching foreground settings and exact pending ticket.
 
 Caveats:
-- Handle IDs are connection-local and cannot authorize a matching remote object elsewhere.
-- A close or abort does not imply unlink success or publication completion.
-- Failure markers and state are retained only under explicit review and strict cancellation rules.
+- Changed settings require renewed foreground review; fresh config is never authority.
+- A pending ticket is not permission to start; the exact binding and phase must still match.
+- Host-local consent stays separate from cloud identity and cannot be reconstructed from stale metadata.
 
-## Filesystem trust
+## Host runtime admission
 
-Use for: What local roots and start paths are accepted before a HOST files session can run?
+Use for: When does host setup sign in, register, and require owner approval?
 
-- [`Filesystem`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Prepared root and allowed-location policy for HOST filesystem access
-- [`validate_start_directory`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Rechecks the configured start path is real, not symlinked, and not a privileged escape
+- [`SetupBoundary`](../../crates/festerm-host-setup/src/controller.rs) — Shared host setup contract for local admission, sign-in, and native provisioning.
+- [`setup`](../../crates/festerm-host-setup/src/controller.rs) — Runs the explicit multi-step setup flow once the current journal passes checks.
+- [`approve_owner`](../../crates/festerm-host-setup/src/controller.rs) — Applies the owner consent flow after native registration and policy checks.
+- [`SetupConsent`](../../crates/festerm-host-setup/src/controller.rs) — Desktop review data carried through setup while preserving exact snapshot scope.
 
 Evidence:
-- [`start_directory_is_nofollow_navigation_not_an_allowed_root`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Shows start-directory validation rejects nofollow, missing, file, and symlink cases
+- [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for a real service lease before publishing setup success.
+- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Owner admission preserves consent and records the primary failure path faithfully.
 
 Caveats:
-- A start directory is metadata-checked; path grants are not a substitute for local root trust.
-- Allowed locations and root proofs must be current and consistent with the request scope.
-- Review-only metadata cannot widen a filesystem root or bypass mutation checks.
+- Host item admission and file helper checks run before cloud sign-in or owner enrollment.
+- Current snapshot and epoch are rechecked; late or changed consent is refused.
+- Owner approval is distinct from native registration and never grants hidden access.
 
 ## Discovery inventory
 
-Use for: Which local sessions are discovered and when does a refresh publish a new inventory?
+Use for: Which runtime sessions are visible and when are fresh results published?
 
-- [`HostBinding`](../../crates/festerm-tunnel-client/src/service.rs) — Selected tunnel binding identifies the concrete bridge host and public key
-- [`Discovery`](../../app/festerm/src/discovery.rs) — Polls native and hosted session roots and coalesces refreshes
-- [`Inventory`](../../app/festerm/src/discovery.rs) — Reports native, tmux, screen, and hosted inventory with errors
+- [`Inventory`](../../app/festerm/src/discovery.rs) — Coalesced native, tmux, screen, and hosted session inventory.
+- [`Discovery`](../../app/festerm/src/discovery.rs) — Polls in the background and publishes visible changes once the refresh settles.
+- [`NativeSession`](../../app/festerm/src/discovery.rs) — Describes a discovered session with its runtime root and origin.
 
 Evidence:
-- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Verifies refresh coalescing, publication, and continued polling after a visible change
+- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — A changed inventory is published and periodic polling continues after refresh.
+- [`unchanged_inventory_keeps_polling_until_a_visible_change`](../../app/festerm/src/discovery.rs) — Unchanged results keep polling until a visible difference appears.
 
 Caveats:
 - Inventory is observational, not a grant of access or host authority.
-- Refreshes intentionally coalesce stale results; a stale scan is discarded.
-- Hosted roots are tracked separately from default native roots and do not imply identity equivalence.
+- Stale or unchanged scan results are intentionally coalesced away.
+- Hosted roots and default native roots are tracked separately and not treated as equivalent.
