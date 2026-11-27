@@ -7,7 +7,9 @@
   "combined_release_qualified": false,
   "client_build": {
     "platform": "arm64 iOS Simulator",
-    "features": ["host-clients"],
+    "features": [
+      "host-clients"
+    ],
     "kind": "Private development SDK artifact",
     "commit": "3d6ed76b3f897418ab02a481465fb493cb8e4b90",
     "tree": "428eeed872daa9381e43e24045374242494cbbf9",
@@ -180,6 +182,53 @@
       "private_receipt_sha256": "19af32a866057f236d9e43fd0755372cb0defffd59222c3868e713430b58feda",
       "private_final_seal_sha256": "0e24754dd5ac4a495bf3db5d212ef1453b47480c6fae87dc93d4e1098eb1197b",
       "private_closedmap_sha256": "a64048d0405a9a99a462a3d9973cc5ad8922f72c3ab87b2fc6a7564fa5cfb4d0"
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Three fresh Upload choices showed Skipped, Done and Done. Skip preserved the full identity and hash of the 13-byte remote original and the 31-byte local source. Keep both published the actual distinct copy name with the exact source content, preserving the original.",
+        "An exclusive private backup preserved the held 13-byte original before fresh Replace remote file review. One selection of Replace published a new 31-byte target identity; the kept copy and local source remained unchanged. No second confirmation sheet appeared or was acted upon.",
+        "Transfers displayed Done/Done/Skipped. A fresh normal Local Delete review and confirmation removed only the owned 31-byte local source. All original Documents entries, retained preview, profiles, account and metadata were preserved; Files closed with no open work. The app and unchanged frozen runner drained, all Simulators shut down and all three original VM power states were restored.",
+        "Strict post-drain cleanup removed only the two owned 31-byte remote outputs. The original remote preview and seven protected journals remained unchanged. Original Mac and Linux guard comparisons and app-data checks passed.",
+        "A separately reviewed one-time start of the existing Windows HOST task restored Listening with a new manager and run. All 33 original protected actors, catalog, settings, task definition and signed payload identities passed before/after comparisons; lifecycle/native/updater epochs were unchanged. This is separately attributed recovery, not preservation of the former HOST lifetime. Fixture, resume, resource and host-restoration debt are zero."
+      ],
+      "failure_disposition": "The original controller exited 1 because the first Windows post-resume guard found a real stopped HOST. Corrected current-run logs place an unclassified account-renewal error before the terminal transport error; its underlying cause remains unknown under #795. The initial private log collector omitted the existing not_observed sentinel; that negative inference was withdrawn without changing original evidence. The first remote cleanup invocation selected the wrong guest and refused before opening its parent or removing anything; one materially corrected Linux invocation performed the exact cleanup. Original failures and the 859-file seal remain immutable; the separate 22-file Windows recovery does not rewrite the controller result or claim a causal repair.",
+      "limits": "Pinned Simulator/Linux Upload choices and owned cleanup only. No physical-device, TestFlight, native read-only HOST, persisted rename/restart, account/grant retirement, background-completion, current-source concise-copy or whole-mobile/release qualification. The existing product was reused without reinstall or rebuild. XCTest used the unchanged frozen runner through its normal staging. Product close used the existing caller termination route, not UI quit.",
+      "private_receipt_sha256": "2a6a4d767272683a0d4335f1d6dc1a857a8a661785da7cedcc02831955e590e1",
+      "private_final_seal_sha256": "40cdf18551e4c8e165f82816b6a0a42f8af9c8737ead253b7318d67bdfa57fd7",
+      "private_closed_map": {
+        "entries": 859,
+        "sha256": "2458b81ce364d12b772079fc02604b62ec6fee847123ec9e6c372c4bb21d9400"
+      },
+      "separate_windows_recovery": {
+        "source": "2ecf0cd7433de151d533506b15bf55d3aad41c0c",
+        "version": "0.17.30",
+        "private_receipt_sha256": "031630ba1c0fc372ace197494771b055fd839abb88e18046fccb1e6f59d4e885",
+        "private_final_seal_sha256": "36c83eac9b406def9fcf7cdbf6610027e9a580b3df3e7b273bbf86fe390cb050",
+        "private_closed_map": {
+          "entries": 22,
+          "sha256": "271432b890c4d9456803666333457162d63830aafd06b420e52ec6612b07eb45"
+        },
+        "original_host_run_preserved": false,
+        "renewal_root_cause_fixed": false
+      },
+      "root_combined_acceptance_sha256": "be3aa85aaee8cacd56776da73485272692b761ba74ad469c8b8e132721012a9c"
     }
   ],
   "pending": [
