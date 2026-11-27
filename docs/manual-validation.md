@@ -2253,9 +2253,9 @@ owned remote targets/profiles were removed. Linux composes ee14929e/20c7142; Win
 uses 20c7142; Mac uses d136872e, with HOST24/26 producers separately attributed. A
 separate Linux active 16 MiB-upload Cancel and same-queue download passed; Mac API37
 system KEYCODE_BACK hid Gboard without losing the form, and idle Back/launcher return
-retained the same process and responsive navigation. These do not qualify Files-profile
-process restart, active-transfer background/return, legacy Back, terminal Escape count,
-conflict/replacement, live retirement or all item25 gates. Three iOS Files pairs and
+retained the same process and responsive navigation. See the scoped follow-ups below
+for Android active Download, Upload choices and Files-profile restart. Legacy Back,
+terminal Escape count, wider conflict cases and live retirement stay open. Three iOS Files pairs and
 combined-release qualification remain pending. Earlier emulator unresponsiveness/splash
 causes remain unknown. Keep the remaining scenario checks above.
 
@@ -2265,8 +2265,27 @@ and final output were both absent. The same process returned to a
 closed-connection message, and explicit Reconnect listed the configured
 root. Back stopped the Activity. A separate final observation verified
 emulator and resource drain after the immediate check failed. Wider
-background behavior and Files-profile reopening after process restart
-remain pending.
+background behavior remains pending.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+MOB-12 Android Linux105 Upload choices passed on the `f4b45db6` development
+APK. **Skip file** preserved the 13-byte original. **Keep both** added one
+distinct 31-byte copy. A fresh **Replace remote file** review and confirmation
+published the exact 31-byte source at the original name while preserving the
+kept copy. Independent hashes, cleanup and resource drain were verified.
+The Android comparison still displayed **ON THIS iPHONE**. Download choices,
+the Android comparison label and iOS remain separate validation cases.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+MOB-13 Android Linux105 follow-ups used two development APKs. With
+`f4b45db6`, Remote Delete showed **Empty folder** after a cached file had
+been replaced before review, and Cancel preserved the directory. A separate
+**File · 31 B** review followed by a replacement and one Confirm reported
+zero removals and preserved both objects. With `e5142f2b`, one saved Files
+profile reopened with fresh authority after a same-boot app process restart.
+Separate offline Delete removed only that profile and preserved the five
+original host-session recipes and account. Persisted rename, sign-out and
+wider stale-review and restart cases remain pending.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
 A separately accepted iOS Simulator component used development source `20c7142`

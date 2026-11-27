@@ -480,11 +480,23 @@ intact to this client module. Desktop account preparation, connection admission,
 GUI state, recovery presentation and tab lifetimes remain desktop-owned. Moving
 existing Delete internals does not expose mobile Delete controls or new grants.
 
-Mobile obtains a second Files stream against the same authenticated scope only
-when the fresh host advertises write permission. That stream uses the existing
-queue's bounded planning, progress, Skip/Keep Both/reviewed Replace and atomic
-publication semantics. It does not introduce a mobile publication or conflict
-engine. Read-only downloads retain their existing guarded new-file staging.
+Mobile obtains a second Files stream against the same authenticated host and
+scope for the existing transfer queue, including read-only hosts. Upload still
+requires the fresh remote write grant. Both directions share bounded planning,
+progress, Skip/Keep Both/reviewed Replace and cancellation; no separate mobile
+scheduler or conflict engine is introduced.
+
+An opt-in local destination capability retains Documents, parent and staging
+handles. Download source admission rejects directories, unknown sizes and files
+above 16 MiB before recursive planning; actual writes have the same byte cap and
+a 30-second operation deadline. Create/Keep Both use no-replace publication. An
+explicit Replace retains the reviewed regular file and rechecks identity,
+change stamps, security metadata and current authority before conditional atomic
+replacement, without first unlinking the target. A changed target refuses and
+preserves it. No opted-in local operation falls back to ordinary pathname I/O.
+The ordinary SFTP constructors preserve their existing semantics. These checks
+remain negative fences against substitution, not hostile same-user race immunity.
+Local Download replacement confers no remote write or Delete permission.
 
 A single Documents root is opened no-follow from the supplied startup path
 before LocalFs canonicalization, normalizing only Apple's documented /var

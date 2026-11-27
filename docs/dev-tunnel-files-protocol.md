@@ -548,9 +548,13 @@ same stream; in-flight cancellation may retire that Files connection. Explicit R
 uses only retained public target metadata to request fresh Files authority;
 it never replays transfers. Retirement discards pending automatic preview
 disclosure, including completed downloads, while preserving local files and
-explicit local preview. Existing files are preserved on destination
-conflicts. The next client increment below adds write-gated upload and mkdir;
-other remote mutations and download replacement/Keep Both remain pending.
+explicit local preview. Existing destinations pause in the shared conflict sheet
+for Skip, Keep Both or explicit reviewed Replace. Keep Both publishes a fresh
+name without overwriting; Replace validates the held reviewed local file and
+publishes atomically without preliminary deletion. Changed targets refuse.
+These local choices are available with a read-only host grant and grant no remote
+write permission. The increment below adds write-gated upload and mkdir;
+other remote mutations remain separate.
 No wire format or host grant changes are introduced.
 There is no crash-resume or durable partial-file recovery ledger in this slice. Device-native qualification
 is still required; framed-service and UI tests are source evidence only.

@@ -29,13 +29,20 @@ impl Uploads {
     pub(super) fn new(
         files: Files,
         sources: Arc<local_upload::Sources>,
+        downloads: local_download_queue::Destinations,
         state: Arc<Mutex<State>>,
         cancel: CancellationToken,
     ) -> Self {
         let failure = FirstFailure::default();
         let endpoint = FilesEndpoint::new(files, cancel, failure.clone(), FilesChannel::Transfer);
-        Self::from_endpoint(endpoint, sources, state, failure)
+        let manager = SftpTransferManager::from_remote_endpoint_with_local_files(
+            endpoint,
+            sources.clone(),
+            downloads,
+        );
+        Self::from_manager(manager, sources, state, failure)
     }
+    #[cfg(test)]
     pub(super) fn from_endpoint(
         endpoint: impl festerm_ssh::RemoteTransferEndpoint,
         sources: Arc<local_upload::Sources>,
@@ -46,6 +53,14 @@ impl Uploads {
             endpoint,
             sources.clone(),
         );
+        Self::from_manager(manager, sources, state, failure)
+    }
+    pub(super) fn from_manager(
+        manager: SftpTransferManager,
+        sources: Arc<local_upload::Sources>,
+        state: Arc<Mutex<State>>,
+        failure: FirstFailure,
+    ) -> Self {
         Self {
             queue: Mutex::new(Queue {
                 manager: Some(manager),
@@ -87,6 +102,30 @@ impl Uploads {
             self.sources.release(&source);
         }
         result
+    }
+    pub(super) fn enqueue_download(
+        &self,
+        id: u64,
+        source: &str,
+        directory: PathBuf,
+    ) -> Result<(), String> {
+        let mut queue = self.queue.lock().unwrap();
+        let manager = queue.manager.as_ref().ok_or("Connection closed")?;
+        let request =
+            SftpTransferRequest::new(SftpPath::remote(source), SftpPath::local(directory))
+                .map_err(|_| "Invalid download destination")?;
+        let admitted = manager
+            .enqueue_batch(vec![request])
+            .map_err(|_| "Transfer queue is unavailable or full")?;
+        queue.items.insert(
+            id,
+            Item {
+                transfer: admitted.transfer_ids[0],
+                source: None,
+                started: std::time::Instant::now(),
+            },
+        );
+        Ok(())
     }
     pub(super) fn poll(&self) {
         let mut queue = self.queue.lock().unwrap();
@@ -268,7 +307,7 @@ impl Uploads {
                     ..
                 } => (transfer_id, RowState::Failed, None, None, Some(reason)),
                 E::CleanupIncomplete { .. } => {
-                    queue.cleanup = Some("Couldn’t confirm upload cleanup. Inspect the destination before starting new work.".into());
+                    queue.cleanup = Some("Couldn’t confirm transfer cleanup. Inspect the destination before starting new work.".into());
                     continue;
                 }
                 _ => continue,
@@ -312,7 +351,7 @@ impl Uploads {
                     }
                 }
                 row.conflict = Some(super::super::files::ConflictView {
-                    direction: Direction::Upload,
+                    direction: row.direction,
                     allowed: collision
                         .allowed_decisions
                         .iter()
@@ -325,8 +364,16 @@ impl Uploads {
                         .collect(),
                     // Every mobile enqueue is its own batch; no cross-batch promise.
                     can_remember: false,
-                    iphone: facts(&collision.source),
-                    remote: facts(&collision.destination),
+                    iphone: facts(if row.direction == Direction::Upload {
+                        &collision.source
+                    } else {
+                        &collision.destination
+                    }),
+                    remote: facts(if row.direction == Direction::Upload {
+                        &collision.destination
+                    } else {
+                        &collision.source
+                    }),
                     suggested_name: collision
                         .proposed_keep_both_destination
                         .file_name()
@@ -412,7 +459,7 @@ impl Uploads {
         let manager = self.queue.lock().unwrap().manager.take();
         if let Some(manager) = manager {
             if manager.shutdown().await.is_err() {
-                self.queue.lock().unwrap().cleanup = Some("Couldn’t confirm upload cleanup. Inspect the destination before starting new work.".into());
+                self.queue.lock().unwrap().cleanup = Some("Couldn’t confirm transfer cleanup. Inspect the destination before starting new work.".into());
             }
         }
     }

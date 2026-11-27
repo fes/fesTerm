@@ -108,9 +108,18 @@ impl Stage {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(super) fn publish(
         &mut self,
         name: &str,
+        authorize: impl FnOnce() -> Result<(), SftpError>,
+    ) -> Result<(), SftpError> {
+        self.publish_reviewed(name, None, authorize)
+    }
+    pub(super) fn publish_reviewed(
+        &mut self,
+        name: &str,
+        reviewed: Option<&File>,
         authorize: impl FnOnce() -> Result<(), SftpError>,
     ) -> Result<(), SftpError> {
         path::validate_name(name)?;
@@ -121,21 +130,35 @@ impl Stage {
         authorize()?;
         festerm_unix_security::trusted_private_storage_ancestor(&self.parent)
             .map_err(|_| uncertain())?;
-        festerm_unix_security::rename_noreplace(
-            &self.parent,
-            &self.name,
-            &self.parent,
-            Path::new(name),
-        )
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                SftpError::AlreadyExists(
-                    "Choose a different destination; existing files are preserved".into(),
-                )
-            } else {
-                uncertain()
+        if let Some(reviewed) = reviewed {
+            if !festerm_unix_security::download_file_matches(
+                &self.parent,
+                Path::new(name),
+                reviewed,
+            )
+            .map_err(|_| uncertain())?
+            {
+                return Err(uncertain());
             }
-        })?;
+            festerm_unix_security::replace_private_file(&self.parent, &self.name, Path::new(name))
+                .map_err(|_| uncertain())?;
+        } else {
+            festerm_unix_security::rename_noreplace(
+                &self.parent,
+                &self.name,
+                &self.parent,
+                Path::new(name),
+            )
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    SftpError::AlreadyExists(
+                        "Choose a different destination; existing files are preserved".into(),
+                    )
+                } else {
+                    uncertain()
+                }
+            })?;
+        }
         self.published = true;
         Ok(())
     }

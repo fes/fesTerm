@@ -402,6 +402,82 @@
       "limits": "This case qualifies active Download retirement and fresh-root reconnect. Completion while backgrounded, Android missing-Start recovery, process restart and normal Activity finish are outside the result.",
       "drain_disposition": "The resource owner exited 1 after an immediate drain assertion without a diagnostic. A later independent observation verified the final emulator process, ports and transport were absent, all Simulators were shut down, and no resource debt remained. The emulator itself exited 0.",
       "private_receipt_sha256": "89a07c9185652a51ab5d2dad551ccca71289d932228f4f2384c649657aa3c7c2"
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "f4b45db6713a2d73804beca6ee0f0e60f58ffc6b",
+        "tree": "ffeb65f0fb99eba161f1f36a4888e8ef9a7e639b",
+        "apk_sha256": "204aa547a71cc904b294dcbcdee9608bf9cf29885b958f6e9dc96b260b846586"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "An owned target selected as a file in the cached listing became an empty directory before Remote Delete review. The review displayed Empty folder, and Cancel preserved the directory.",
+        "A fresh file review displayed File · 31 B. After the target was replaced, one Confirm reported 0 of 1 removals and preserved both the replacement directory and the held original file.",
+        "The test fixtures were removed. Original app data and all three host baselines were preserved."
+      ],
+      "limits": "Qualification covers the two Remote Delete review cases on this Android APK and Linux host. Successful deletion through this case, other stale-review races, normal Activity finish and iOS remain outside this result.",
+      "drain_disposition": "The initial immediate drain assertion failed. A separate observation verified that the owned emulator, ports and transport were absent and all resource debt was closed.",
+      "private_receipt_sha256": "ce627f32746b8b253a82588273d55029ac5b106250546623b83cce097977fe28"
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "e5142f2beb1ba1cf3ec5e659cb64de3a4a5ab711",
+        "tree": "29403dc975ba31222bf3509032b4327fb0b87740",
+        "apk_sha256": "34af7e6bc6824d8aac1a8b71e4975da8665cd100bde5e817eaac621464a5270c"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105
+      },
+      "accepted_components": [
+        "The app saved one Files profile. After a package-only process restart within the same emulator boot, the saved row established fresh Files authority and opened the configured root.",
+        "Files closed with no outstanding work. In a separate cleanup lease, the offline Edit screen opened Delete and a fresh confirmation removed only the saved profile. The store returned to zero Files profiles, with all five original host-session recipes, account metadata and other app data preserved."
+      ],
+      "limits": "The rename remained an unsaved draft. Persisted rename, sign-out, changed-identity refusal, normal Activity finish and other client or host pairs remain unqualified.",
+      "drain_disposition": "The initial drain assertion and the Mac disk-floor refusal remain in private evidence. Independent resource drain and the final three host preservation checks closed the outstanding resource and profile debt.",
+      "private_receipt_sha256": {
+        "save_restart_reopen": "b2ce67ea55c2e601c8c1555df6f859615c436b4b57446633ac7b7f2995d0d9f7",
+        "separate_cleanup": "602b1ac50063753bcefe33a5ac499e7e91400f71ceaec81151ab9cac06d80e84"
+      }
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "f4b45db6713a2d73804beca6ee0f0e60f58ffc6b",
+        "tree": "ffeb65f0fb99eba161f1f36a4888e8ef9a7e639b",
+        "apk_sha256": "204aa547a71cc904b294dcbcdee9608bf9cf29885b958f6e9dc96b260b846586"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Skip file preserved the existing 13-byte remote file. Keep both preserved it and published one distinct 31-byte copy.",
+        "A fresh Replace remote file review and confirmation published the 31-byte source at the original name with a new inode and preserved the kept copy. Independent hashes verified both outputs.",
+        "Reviewed Local Delete removed the owned source, and exact cleanup removed the two owned remote outputs. Original app data and all three host baselines were preserved."
+      ],
+      "limits": "Qualification covers these three Upload choices on this Android APK and Linux host. The APK still displayed ON THIS iPHONE in the comparison. Platform-label validation, Download conflict choices, iOS and wider transfer cases remain separate.",
+      "fixture_disposition": "The first fixture setup failed because the child process could not see an inherited descriptor. The empty fixture was populated once through the same inode after independent identity verification.",
+      "drain_disposition": "The owner exited 1 after an immediate drain assertion without a diagnostic. The emulator exited 0, and independent observation verified that the owned emulator process group, ports and transport were absent, with all resource debt closed.",
+      "private_receipt_sha256": "23cb175ee137fa799f096a31a66935bc2facf5bcc7b9143b0bc94cab02625100"
     }
   ],
   "limits": [
@@ -412,7 +488,7 @@
     "All original screenshots, raw logs and protected records remain private and unchanged. Only original artifact names, byte sizes and SHA256 digests are published; no PNG, crop or generated replacement image is included.",
     "Owned emulator shutdown and QEMU absence were verified. Recorded launcher exit statuses alone do not establish a product crash.",
     "Artifact producer metadata predates install; actual installed qualification records separately bind source/APK/app identity. The latest main or release does not inherit these native passes.",
-    "Saved Files profiles were reopened with fresh authority in the foreground; Files-profile reopening after a process restart and offline edit/sign-out were not qualified by these components."
+    "One Android Linux105 profile qualified reopening with fresh authority after a process restart and separate offline deletion. Persisted offline rename, sign-out and restart on the other client and host pairs remain pending."
   ],
   "retained_background_refusal": [
     {
