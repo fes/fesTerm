@@ -360,6 +360,48 @@
         "entries": 529,
         "sha256": "4e7a12e58b61b03ac9102379d7926c686e7ecfd47defc389e3157500193da634"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 107,
+        "write": false,
+        "delete": false
+      },
+      "accepted_components": [
+        "With one unchanged Local regular file selected, Upload 1 was disabled. Remote folder creation was disabled, and the Remote menu had no Delete action with the actual preview file selected. No disabled mutation was attempted.",
+        "One Download 1 of the existing controlled preview completed Done. Independent readback verified the sole new Local file at 83 bytes, SHA-256 5ba26d441ae45a5cc316de77240681d8dade6e7d250e9e2d6d197cd9af7e427a, mode 0644 and one link, with every original Documents entry preserved.",
+        "While server Write and Delete remained OFF, a fresh ordinary This iPhone review listed only that new File · 83 B. One confirmation removed only the owned download. Exact readback restored the original Documents map, account, metadata, zero typed Files profiles and five host recipes. The controlled remote fixture remained unchanged; the client submitted no remote mutation.",
+        "All fifteen existing bounded XCTest calls passed. Files closed with no open work and the product closed normally. Owner and boot exited zero; the three comparisons to the admitted Linux RO107, Mac67 and Win94 baselines passed. All Simulators shut down, original VM states were restored and owned actors/groups were absent in all process states, with zero mobile resource or Local fixture debt."
+      ],
+      "restoration_disposition": "Separate original-policy restoration is now accepted: normal Desktop controls restored the exact original root, Start, Write/Delete-ON and other settings at runtime109/native96. The full native record matched the pre-RO record, all three host guards passed, both GUI owners exited normally and resource/policy debt is zero. The mobile receipt itself remains attributed only to the admitted temporary RO107 baseline.",
+      "limits": "Pinned iOS Simulator SDK30890/Linux RO controls, one read and Local Delete independence only. No forced remote-mutation or wire-level denial proof, alias escape, user-facing folder creation or typing, physical device, TestFlight, current main/current-source concise-copy or whole-mobile/release qualification. The existing installed product and frozen runner were reused without rebuild or reinstall.",
+      "private_receipt_sha256": "4a7603769aaacffb3015dc2ed4fbbd8db51e8a835192b329634d38c824d14234",
+      "private_final_seal_sha256": "ca6db1adb79b37df9305550c410c55729a34eb068c07a37476a9fd9d41d956f7",
+      "private_closed_map": {
+        "entries": 801,
+        "sha256": "974193e7c4285c0958fbc923eec37b926e8f41cb040bbe880d1ee4678219fc4a"
+      },
+      "separate_policy_restoration": {
+        "desktop_source": "2ecf0cd7433de151d533506b15bf55d3aad41c0c",
+        "runtime_epoch": 109,
+        "native_epoch": 96,
+        "first_disable_failure": "The original Disable left StopRequested108 and logged kind=busy/reason=installation_busy. A delivered read-only status refresh preserved epoch108; a separately reviewed completion reached Disabled at that same epoch before one Enable restored the original policy at109. The historical lock holder and exact inner failing boundary are unknown. This is not native qualification of the later source fix.",
+        "private_result_sha256": "02dc842397fe0250facda698ea99143fe07f8ba62363c57fa1361b52df072cc4",
+        "private_root_closure_sha256": "5588cc65726e0d04e67fb1d5ed1d429023abc8cc2ab1a5982b9d48f2404db0bf",
+        "independent_review_sha256": "fc82ba84ff8816f15b299b43fd21af9227cfd910a92435a48223c324b8697308"
+      }
     }
   ],
   "pending": [

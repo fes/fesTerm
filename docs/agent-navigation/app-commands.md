@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "039a1a5c4cf68506ceba8ea93c390156c68bfe2607e9f0ff99e777906d5c7ada"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "15a57d70860147af85a45be42f49b056bea1eab3bd6bd6d9d3324e7b4a5ade42"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -13,7 +13,7 @@ Canonical docs: [docs/application-command-model.md](../../docs/application-comma
 Use for: A widget or launcher needs to turn a gesture into a state-changing app intent
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents emitted by widgets, menus, and launchers
-- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from command to tab/session state
+- [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from command to tab and session state
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — proves opener fallback beats adjacent-tab fallback
@@ -28,7 +28,7 @@ Caveats:
 
 Use for: A tab is closing and the fallback focus target must be chosen
 
-- [`close`](../../app/festerm/src/tabs.rs) — removes a tab and selects the next active tab
+- [`close`](../../app/festerm/src/tabs.rs) — removes the tab and selects the next active tab
 
 Evidence:
 - [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — proves neighbor fallback when activation history is empty
@@ -44,6 +44,7 @@ Caveats:
 Use for: A raw key event is checked for eligibility, capture, and exact-match dispatch
 
 - [`ShortcutContext`](../../app/festerm/src/keyboard.rs) — scope gate for terminal, markdown, document, and global actions
+- [`prepare_terminal_events`](../../app/festerm/src/keyboard.rs) — drops clipboard-derived events before terminal input is considered
 
 Evidence:
 - [`keyboard_cancellation_and_consumption_share_contextual_eligibility`](../../app/festerm/src/keyboard.rs) — proves scope gating and capture stay aligned
@@ -59,6 +60,7 @@ Caveats:
 Use for: A modal or confirmation blocks terminal input while app state remains authoritative
 
 - [`OverlayState`](../../app/festerm/src/overlay_state.rs) — single holder for confirmations and modal blockers
+- [`blocks_terminal_input`](../../app/festerm/src/overlay_state.rs) — decides whether a pending overlay consumes terminal input
 
 Evidence:
 - [`blocks_terminal_input_is_false_with_no_pending_overlays`](../../app/festerm/src/overlay_state.rs) — proves the default is open and non-blocking
@@ -74,6 +76,7 @@ Caveats:
 Use for: A user types a Vim-style command in the command area and needs it mapped to app behavior
 
 - [`ViCommand`](../../app/festerm/src/vi_command.rs) — typed Ex command semantics mapped to save, close, and refresh
+- [`parse`](../../app/festerm/src/vi_command.rs) — maps a line to a supported command or a refused error
 
 Evidence:
 - [`write_without_a_destination_is_the_ordinary_save`](../../app/festerm/src/vi_command.rs) — proves plain save commands resolve through normal save logic

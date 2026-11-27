@@ -1087,7 +1087,9 @@ async fn native_snapshot_wait_reports_terminal_busy_without_snapshot_timeout() {
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_original_ensure() {
-    use crate::host_client::{CreationIntent, CreationMode, Outcome, Scope, Worker};
+    use crate::host_client::{
+        AttachStage, CreationIntent, CreationMode, Failure, Outcome, Scope, Worker,
+    };
     use festerm_host_protocol::EnsureDisposition;
     let mut fixture = NativeRuntimeFixture::new();
     let context = fixture.client_context();
@@ -1142,27 +1144,89 @@ async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_orig
     let mut live = Vec::new();
     let mut frontends = Vec::new();
     for (target, intent) in targets.iter().cloned().zip(&intents) {
-        let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
         let scope = Scope {
             binding: fixture.binding(),
             request: OperationId::new(),
             generation: 2,
         };
         let selection = (target, intent.creation().attachment.clone());
-        let worker = Worker::spawn(
-            scope.clone(),
-            Arc::new(|| {}),
-            move |scope, cancel, events, wake| async move {
-                crate::host_client::attach_reserved_authenticated(
-                    stream, permit, &scope, selection, &cancel, &events, &wake,
+        let directory =
+            festerm_sessiond::private_storage::private_directory(&fixture.native.root, false)
+                .unwrap();
+        let mut generation_lock = Some(
+            festerm_sessiond::private_storage::open_private_file(
+                &directory,
+                std::path::Path::new(&format!(
+                    "host-daemon-{}.lock",
+                    selection.0.generation.get()
+                )),
+                false,
+            )
+            .unwrap(),
+        );
+        // Like client_attach_snapshot_worker, tolerate only a typed Busy
+        // before adoption, retaining the exact scope/target/attachment and
+        // one deadline. No creation, activation or terminal input is replayed.
+        let (worker, adoption) = tokio::time::timeout(Duration::from_secs(8), async {
+            // Force this path through real contention instead of relying on
+            // incidental competition with the daemon's lease watcher.
+            loop {
+                match fs2::FileExt::try_lock_exclusive(generation_lock.as_ref().unwrap()) {
+                    Ok(()) => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(error) => panic!("exact generation lease failed: {error}"),
+                }
+            }
+            loop {
+                let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+                let selection = selection.clone();
+                let worker = Worker::spawn(
+                    scope.clone(),
+                    Arc::new(|| {}),
+                    move |scope, cancel, events, wake| async move {
+                        crate::host_client::attach_reserved_authenticated(
+                            stream, permit, &scope, selection, &cancel, &events, &wake,
+                        )
+                        .await
+                    },
                 )
-                .await
-            },
-        )
-        .unwrap();
-        let Outcome::Snapshot(adoption) = client_worker_result(&worker, &scope).await else {
-            panic!("real frontend snapshot must precede activation/input")
-        };
+                .unwrap();
+                match client_worker_result(&worker, &scope).await {
+                    Outcome::Snapshot(adoption) => {
+                        assert!(
+                            generation_lock.is_none(),
+                            "contention must precede adoption"
+                        );
+                        break (worker, adoption);
+                    }
+                    Outcome::Failed(Failure::Attachment {
+                        stage: stage @ (AttachStage::Capabilities | AttachStage::Snapshot),
+                        error: Error::Refused(festerm_host_protocol::Refusal::Busy),
+                    }) => {
+                        if stage == AttachStage::Snapshot {
+                            drop(generation_lock.take());
+                        }
+                        drop(worker);
+                        assert!(matches!(
+                            fixture.servers.last_mut().unwrap().await.unwrap(),
+                            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+                        ));
+                        fixture.servers.pop();
+                        let ssh = fixture.connections.last_mut().unwrap();
+                        ssh.abort();
+                        let _ = ssh.await;
+                        fixture.connections.pop();
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Outcome::Failed(error) => panic!("actual attachment worker: {error:?}"),
+                    _ => panic!("real frontend snapshot must precede activation/input"),
+                }
+            }
+        })
+        .await
+        .expect("same original bounded native attachment fixture deadline");
         assert!(worker.try_receive(&scope).is_none());
         let mut frontend =
             festerm_core::Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();

@@ -1,74 +1,82 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d0b78bdc2d1fd49eaa580ca459f44ca11c5eee7bfa79224dfee2be2378e32d3a"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "645047e6c10f09a50b793b9789fa86e2a24eba04c92c820eb2cd85f9c4288e53"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns authenticated host admission, rooted file-transfer semantics, and the trusted filesystem boundaries that attach HOST policy to concrete local roots.
+This domain owns the authenticated local host lifecycle, exact dev-tunnel consent, rooted file access, and enterprise PowerShell handling that gate hosted sessions.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host runtime
+## Host consent
 
-Use for: Which authenticated stream path is chosen and how are proofs revalidated?
+Use for: Which local settings and identity are accepted before hosting can start?
 
-- [`HostRuntime`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Shared aggregate budget and per-role dispatch for authenticated host sessions
-- [`serve_reserved`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Authenticates then dispatches control, terminal, or files by proven role
-- [`authenticate_ordinary`](../../crates/festerm-tunnel-bridge/src/host_runtime.rs) — Revalidates route binding, denied keys, and proof before acceptance
+- [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated host policy: friendly name, startup, file roots, owner access.
+- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected journal: phase, epoch, binding, pending ticket.
+- [`Store`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exclusive lease-backed journal for create, open, configure, and revoke.
 
 Evidence:
-- [`authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Control routing follows the authenticated stream and revocation is rechecked
-- [`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`](../../crates/festerm-tunnel-bridge/src/host_runtime/tests.rs) — Runtime creation preserves issuer and exact end authority
+- [`host_desktop_consent_atomically_binds_settings_and_exact_snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Desktop consent binds exact settings and snapshot atomically.
+- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Enable rejects drift and leaves the pending ticket untouched.
 
 Caveats:
-- Route selection is explicit and relies on the proven encrypted channel state.
-- Protected policy is reloaded and revalidated; cached state is not authority.
-- A cancelled or stale proof can reject before control or terminal dispatch.
+- Changed settings require renewed foreground review; config is never authority.
+
+## Runtime admission
+
+Use for: When does setup sign in, enroll owners, and wait for the service lease before runtime start?
+
+- [`SetupBoundary`](../../crates/festerm-host-setup/src/controller.rs) — Shared host setup contract for local admission, sign-in, and native provisioning.
+- [`setup`](../../crates/festerm-host-setup/src/controller.rs) — Runs the explicit multi-step setup flow once the journal passes checks.
+- [`initial_run_admission`](../../crates/festerm-host-setup/src/controller.rs) — Blocks runtime until the current snapshot and lease match the expected state.
+
+Evidence:
+- [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for a real lease before publishing setup success.
+- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Owner admission preserves provider-owner consent and the primary failure path.
+
+Caveats:
+- Host item admission and helper checks run before cloud sign-in or owner enrollment.
+
+## Discovery and binding
+
+Use for: How are local sessions, hosted roots, and exact host bindings discovered and kept consistent?
+
+- [`Inventory`](../../app/festerm/src/discovery.rs) — Native, tmux, screen, and hosted runtime inventory collected without stale UI state.
+- [`Discovery`](../../app/festerm/src/discovery.rs) — Refreshable observer that coalesces inventory updates and redraws only on change.
+- [`ManagementRequest`](../../crates/festerm-tunnel-bridge/src/profile_hosting.rs) — Protected bind, status, suspend, remove, and inventory requests.
+
+Evidence:
+- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Changed inventory is published and periodic discovery continues without stale refreshes.
+- [`hosted_runtime_accepts_short_and_previous_namespaces_only`](../../crates/festerm-tunnel-bridge/src/profile_hosting.rs) — Only current and previous hosted runtime namespaces are accepted.
+
+Caveats:
+- Configuration alone never authorizes a host or resource creation.
 
 ## Rooted files
 
-Use for: How does the client handle uploads, aborts, and connection-local file handles?
+Use for: Which file service and filesystem boundary prevents escape and stale approval?
 
-- [`FilesEndpoint`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Shared Files adapter that tracks transfer state, generation, and review markers
-- [`Client`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Rooted sequential file protocol with strict replacement and path validation
-- [`Handle`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Connection-local transfer handle; close is explicit and does not prove remote completion
-
-Evidence:
-- [`rooted_client_interrupted_upload_closes_handle_and_keeps_stream_usable`](../../crates/festerm-tunnel-bridge/src/file_client.rs) — Abort closes the local handle but keeps the transfer stream usable
-- [`files_endpoint_returned_cancel_and_source_error_do_not_leave_unknown_markers`](../../crates/festerm-tunnel-bridge/src/files_endpoint.rs) — Cancel and source errors do not leave stale unknown state behind
-
-Caveats:
-- Handle IDs are connection-local and cannot authorize a matching remote object elsewhere.
-- A close or abort does not imply unlink success or publication completion.
-- Failure markers and state are retained only under explicit review and strict cancellation rules.
-
-## Filesystem trust
-
-Use for: What local roots and start paths are accepted before a HOST files session can run?
-
-- [`Filesystem`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Prepared root and allowed-location policy for HOST filesystem access
-- [`validate_start_directory`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Rechecks the configured start path is real, not symlinked, and not a privileged escape
+- [`Filesystem`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Explicit rooted FS with validated start directory and approved locations.
+- [`FileService`](../../crates/festerm-tunnel-bridge/src/files.rs) — Configures rooted file and observation access from a guarded policy.
+- [`Policy`](../../crates/festerm-tunnel-bridge/src/file_protocol.rs) — Policy defines roots, writes, deletes, and the virtual start directory.
 
 Evidence:
-- [`start_directory_is_nofollow_navigation_not_an_allowed_root`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Shows start-directory validation rejects nofollow, missing, file, and symlink cases
+- [`rooted_files_enumerate_stream_and_refuse_escape_and_read_only_writes`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Rooted FS enumerates within policy and rejects escapes and write violations.
 
 Caveats:
-- A start directory is metadata-checked; path grants are not a substitute for local root trust.
-- Allowed locations and root proofs must be current and consistent with the request scope.
-- Review-only metadata cannot widen a filesystem root or bypass mutation checks.
+- The initial directory is validated before any file access is admitted.
 
-## Discovery inventory
+## PowerShell enterprise
 
-Use for: Which local sessions are discovered and when does a refresh publish a new inventory?
+Use for: How do enterprise PowerShell sessions connect with SSH or PSRP and bounded transport?
 
-- [`HostBinding`](../../crates/festerm-tunnel-client/src/service.rs) — Selected tunnel binding identifies the concrete bridge host and public key
-- [`Discovery`](../../app/festerm/src/discovery.rs) — Polls native and hosted session roots and coalesces refreshes
-- [`Inventory`](../../app/festerm/src/discovery.rs) — Reports native, tmux, screen, and hosted inventory with errors
+- [`PowerShellSession`](../../crates/festerm-powershell/src/lib.rs) — Structured PSRP session with endpoint, auth, and runtime options.
+- [`PowerShellSshSession`](../../crates/festerm-powershell/src/lib.rs) — SSH subsystem connection with explicit host fingerprint and bounded transport.
+- [`PowerShellTab`](../../app/festerm/src/powershell.rs) — UI worker owns lifecycle, cancellation, event presentation, and worker state.
 
 Evidence:
-- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Verifies refresh coalescing, publication, and continued polling after a visible change
+- [`opt_in_real_pwsh_ssh_subsystem_runs_structured_psrp`](../../crates/festerm-powershell/tests/psrp_ssh_pwsh.rs) — Real PSRP SSH session round-trips streams and rejects host-call misuse.
 
 Caveats:
-- Inventory is observational, not a grant of access or host authority.
-- Refreshes intentionally coalesce stale results; a stale scan is discarded.
-- Hosted roots are tracked separately from default native roots and do not imply identity equivalence.
+- HTTPS uses TLS/NTLM and SSH uses an explicit pinned subsystem, not an unbound fallback.
