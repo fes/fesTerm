@@ -1,6 +1,6 @@
 {
   "record_version": 1,
-  "status": "three pinned Android ordinary Files workflows accepted; iOS and broader interruption checks pending",
+  "status": "Three pinned Android ordinary Files workflows and scoped follow-up components accepted. Full iOS pairs and wider interruption coverage remain open.",
   "tracker": "https://github.com/fes/fesTerm/issues/778",
   "date_utc": "2026-11-25",
   "not_a_new_terminal_matrix_case": true,
@@ -329,9 +329,84 @@
       ]
     }
   ],
+  "follow_up_components": [
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "2ecf0cd7433de151d533506b15bf55d3aad41c0c",
+        "tree": "11408f6f51f16045432f8ba7c6a97a3c7ca7917b",
+        "apk_sha256": "4b68c44dd1b1232d934c7cd76c2aa5c1c9b137e15477b67f75b4a59ae69c254f"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.24",
+        "runtime_epoch": 95,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "A Local Delete review named the owned 31-byte file and empty folder. Cancel preserved both identities and contents; a new review and Confirm removed only the two owned entries.",
+        "The existing Documents objects and all three server baselines were preserved. Normal Android Activity finish and owned emulator/transport absence were verified."
+      ],
+      "limits": "Native remote OFF-grant independence, stale-review and retirement remain separate. The emulator stop fallback exit is retained in private evidence.",
+      "private_receipt_sha256": {
+        "cancel": "0822fa08f53acc490e6ffc1bb6e3a87cc12f94dbd0ce6d3772e4252f9c061763",
+        "confirm": "8112cf4746e2bcffd6d8b14a82f0ff7f1f0d5a95040ff4f0562b306f82aea4c6",
+        "drain": "742a8f42232edec731c9ed57bf57d52140a6ac9d2eba961917fb5c986cb889af",
+        "installed_apk": "744d76569aba680fa7fb62cb347397b940d55ea1c0fab0cde20ca381c8fb373f"
+      }
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "2ecf0cd7433de151d533506b15bf55d3aad41c0c",
+        "tree": "11408f6f51f16045432f8ba7c6a97a3c7ca7917b",
+        "apk_sha256": "4b68c44dd1b1232d934c7cd76c2aa5c1c9b137e15477b67f75b4a59ae69c254f"
+      },
+      "server": {
+        "os": "macOS",
+        "version": "0.17.30",
+        "native_epoch": 52,
+        "runtime_epoch": 61
+      },
+      "accepted_components": [
+        "The configured Start showed A/start and start.txt. Up stopped at root A. The normal Allowed locations chooser opened B and then A.",
+        "An absolute directory alias stayed read-only with Write and Delete granted and rendered the actual 38-byte Markdown preview. The direct A folder still offered New folder.",
+        "An absolute file alias kept remote Delete disabled. Explicit Download produced the exact 16-byte hash, and a reviewed local Delete removed that download."
+      ],
+      "limits": "This run covered positive navigation and approved aliases. Missing-Start recovery, live link races and active background return remain separate.",
+      "private_receipt_sha256": "f2cea9aab0ed92de63d61809ca30ec7ffc58e0009b4228f22b601ae40cef61b3"
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "e5142f2beb1ba1cf3ec5e659cb64de3a4a5ab711",
+        "tree": "29403dc975ba31222bf3509032b4327fb0b87740",
+        "apk_sha256": "34af7e6bc6824d8aac1a8b71e4975da8665cd100bde5e817eaac621464a5270c"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105
+      },
+      "accepted_components": [
+        "A 16 MiB Download had an independently observed 131072-byte partial immediately before Home. While backgrounded, the partial and final output were absent.",
+        "The same process returned to a closed-connection message. One explicit Reconnect listed the configured root. The earlier child directory was not restored.",
+        "Files closed with no outstanding work. Back left the Activity in STOPPED state. Exact owned emulator, transport and Simulator drain was confirmed separately after the initial immediate drain check failed.",
+        "The original 29 objects and three retained previews matched their recorded identities and contents. Only the Documents directory mtime changed with the owned partial. The temporary remote fixture was removed and all three host baselines were preserved."
+      ],
+      "limits": "This case qualifies active Download retirement and fresh-root reconnect. Completion while backgrounded, Android missing-Start recovery, process restart and normal Activity finish are outside the result.",
+      "drain_disposition": "The resource owner exited 1 after an immediate drain assertion without a diagnostic. A later independent observation verified the final emulator process, ports and transport were absent, all Simulators were shut down, and no resource debt remained. The emulator itself exited 0.",
+      "private_receipt_sha256": "89a07c9185652a51ab5d2dad551ccca71289d932228f4f2384c649657aa3c7c2"
+    }
+  ],
   "limits": [
     "Three iOS ordinary Files pairs remain unqualified. No full item25 closure or current uniform release acceptance.",
-    "Active-transfer background feedback, return and explicit reconnect remain unqualified after earlier emulator-wide unresponsiveness; no product crash/OOM cause established.",
+    "One later corrected Android Linux105 run qualified active Download retirement and explicit reconnect. The cause of earlier emulator-wide unresponsiveness remains unknown; wider background and completion cases remain open.",
     "The earlier Windows-return splash observation retains unknown cause; later idle Back success does not establish its cause or permanent cure.",
     "No live account/sign-out/lock/grant-revocation, lost-Finish, destination conflict/replacement, multi-file or wider usability acceptance beyond the stated components.",
     "All original screenshots, raw logs and protected records remain private and unchanged. Only original artifact names, byte sizes and SHA256 digests are published; no PNG, crop or generated replacement image is included.",

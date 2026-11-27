@@ -32,9 +32,13 @@
     "independent_acceptance_sha256": "d2953bc01e456b4140e72159226b7d1f0569306493deead18887f797083adb0e",
     "captures": "Original images and device paths remain private."
   },
+  "later_scoped_records": {
+    "iOS": "mobile-files-ios-native-components.json records in-app cleanup of the exact 97-byte Mac59 and 83-byte Linux105 downloads with their separately pinned SDKs.",
+    "Android": "mobile-files-android-native-components.json records the API37 file/empty-folder Local Delete Cancel and fresh Confirm against Linux HOST24 with Write and Delete on.",
+    "native_off_grant_status": "Remote OFF-grant independence remains automated coverage."
+  },
   "pending": [
-    "Android native Local Delete.",
     "Native stale-review, Save-overlap, unsafe-restoration and authority-retirement cases.",
-    "iOS remote folder creation, active-transfer interruption, complete pairs and combined-release qualification."
+    "iOS remote folder creation, wider active-transfer and Local Delete cases, complete pairs and combined-release qualification."
   ]
 }
