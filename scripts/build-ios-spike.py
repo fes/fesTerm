@@ -122,6 +122,8 @@ def main() -> int:
     parser.add_argument("--simulator", default="booted", help="Simulator UDID (default: booted)")
     parser.add_argument("--live-ssh", action="store_true", help="include the legacy live SSH/tunnel connection UI")
     parser.add_argument("--host-clients", action="store_true", help="include host-oriented Dev Tunnels and live SSH client workflows")
+    parser.add_argument("--target-dir", type=Path,
+                        help="Cargo cache and Simulator bundle directory (default: repository target)")
     parser.add_argument("--native-document-smoke", action="store_true",
                         help="run document I/O qualification against a fresh app-owned Simulator fixture")
     parser.add_argument("--check-dependencies", action="store_true", help="check mobile/SSH/Dev Tunnels graphs for both iOS targets only; works on Linux")
@@ -146,6 +148,7 @@ def main() -> int:
         return 0
     if platform.system() != "Darwin":
         parser.error("Simulator packaging requires macOS and full Xcode; use --check-dependencies here")
+    target_dir = args.target_dir.resolve() if args.target_dir is not None else ROOT / "target"
     target = "aarch64-apple-ios-sim" if platform.machine() == "arm64" else "x86_64-apple-ios"
     sdk = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path", capture_output=True, text=True).stdout.strip()
     run("rustup", "target", "add", target)
@@ -153,7 +156,7 @@ def main() -> int:
     # The Simulator reads Keychain access groups from an entitlements section
     # linked into the executable (an entitlement in an ad-hoc signature stops the
     # app launching); without it every Keychain call fails with -34018.
-    entitlements = ROOT / "target" / "festerm-simulator.entitlements"
+    entitlements = target_dir / "festerm-simulator.entitlements"
     entitlements.parent.mkdir(parents=True, exist_ok=True)
     with entitlements.open("wb") as stream:
         plistlib.dump(bundle_entitlements(), stream)
@@ -170,11 +173,11 @@ def main() -> int:
         features.append("native-document-smoke")
     run("cargo", "build", "--locked", "-p", "festerm-mobile", "--target", target,
         *(["--features", ",".join(features)] if features else []),
-        "--target-dir", str(ROOT / "target"), env=env)
+        "--target-dir", str(target_dir), env=env)
     output = "ios-spike-hosts" if args.host_clients else "ios-spike-live" if args.live_ssh else "ios-spike"
-    bundle = ROOT / "target" / output / "fesTermSpike.app"
+    bundle = target_dir / output / "fesTermSpike.app"
     bundle.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "target" / target / "debug" / "festerm-mobile", bundle / "festerm-mobile")
+    shutil.copy2(target_dir / target / "debug" / "festerm-mobile", bundle / "festerm-mobile")
     with (bundle / "Info.plist").open("wb") as stream:
         plistlib.dump(bundle_info(args.live_ssh or args.host_clients), stream)
     run("codesign", "--force", "--sign", "-", str(bundle))

@@ -92,6 +92,43 @@ class IosSshDependencyTests(unittest.TestCase):
             self.assertEqual(receipt["cargo_features"], ["host-clients"])
             self.assertEqual(receipt["native_validation"], "not-run")
 
+    def test_simulator_build_uses_one_target_directory_without_moving_the_source_root(self):
+        for explicit_target in (False, True):
+            with self.subTest(explicit_target=explicit_target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve() / "source"
+                shared = root.parent / "shared-target"
+                target_dir = shared if explicit_target else root / "target"
+                arguments = ["build", "--host-clients"]
+                if explicit_target:
+                    arguments += ["--target-dir", str(root / ".." / shared.name)]
+                with patch.object(build, "ROOT", root), \
+                        patch.object(build.sys, "argv", arguments), \
+                        patch.dict(build.os.environ, {"CARGO_TARGET_DIR": str(root.parent / "ignored")}), \
+                        patch.object(build.platform, "system", return_value="Darwin"), \
+                        patch.object(build.platform, "machine", return_value="arm64"), \
+                        patch.object(build, "check_dependencies"), \
+                        patch.object(build.shutil, "copy2") as copy, \
+                        patch.object(build.shutil, "make_archive") as archive, \
+                        patch.object(build.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "/sdk")) as run:
+                    self.assertEqual(build.main(), 0)
+
+                cargo = next(call for call in run.call_args_list if call.args[0][:2] == ("cargo", "build"))
+                command = cargo.args[0]
+                self.assertEqual(cargo.kwargs["cwd"], root)
+                self.assertEqual(command[command.index("--target-dir") + 1], str(target_dir))
+                entitlements = target_dir / "festerm-simulator.entitlements"
+                self.assertTrue(entitlements.is_file())
+                rustflags = cargo.kwargs["env"]["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+                self.assertIn(f"link-arg=-Wl,-sectcreate,__TEXT,__entitlements,{entitlements}", rustflags)
+                output = target_dir / "ios-spike-hosts"
+                bundle = output / "fesTermSpike.app"
+                copy.assert_called_once_with(target_dir / "aarch64-apple-ios-sim/debug/festerm-mobile",
+                                             bundle / "festerm-mobile")
+                self.assertTrue((bundle / "Info.plist").is_file())
+                self.assertTrue((output / "build-receipt.json").is_file())
+                archive.assert_called_once_with(str(output / "fesTermSpike-simulator"), "gztar",
+                                                root_dir=output, base_dir=bundle.name)
+
     def test_host_client_graph_feature_is_forwarded_without_desktop_defaults(self):
         with patch.object(build, "run", return_value=subprocess.CompletedProcess([], 0, "festerm-mobile v0.17.1")) as run:
             build.check_dependencies("aarch64-apple-ios", host_clients=True)
