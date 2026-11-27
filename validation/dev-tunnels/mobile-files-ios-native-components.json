@@ -1,7 +1,7 @@
 {
   "record_version": 1,
   "tracker": "https://github.com/fes/fesTerm/issues/778",
-  "date_utc": "2026-11-26",
+  "date_utc": "2026-11-27",
   "status": "Scoped iOS Simulator Files components accepted against three pinned hosts. Full pair and release qualification remain open.",
   "mobile_files_item25_complete": false,
   "combined_release_qualified": false,
@@ -150,6 +150,36 @@
         "The app and owned Simulator drained with all three host baselines preserved."
       ],
       "private_receipt_sha256": "e5f4c08fad2a925dadc1b6b435c2c563a03584c542164d6e1d064bdcda6ecc34"
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Three fresh Download choices completed: Skip preserved the full identity and hash of the 13-byte local original and showed Skipped; Keep both published a distinct 31-byte copy and showed Done.",
+        "After an exclusive private host backup of the original, fresh Replace local file review and confirmation published a new 31-byte target identity and showed Done. Both outputs matched the remote source SHA-256, and the kept copy retained its full identity.",
+        "Normal Local Delete freshly reviewed and removed only the two owned 31-byte outputs. Original Documents paths, metadata, profiles and account data were preserved. After Simulator drain, exact cleanup removed only the owned remote source; the retained 83-byte preview and seven host journals remained unchanged.",
+        "The app, frozen runner and all Simulators drained. A distinct settled observation passed all three unchanged original host guards; fixture and resume debt were zero."
+      ],
+      "limits": "This qualifies only these Download choices and owned cleanup on this Simulator SDK and Linux host with Write and Delete on. Physical devices, TestFlight, native read-only HOST, other providers, Upload choices, persisted profile rename, background/race cases and whole-mobile or release acceptance remain outside this result. Product close used the existing caller termination route, not UI quit.",
+      "failure_disposition": "Original owner exit 1 and first Mac post-resume guard failure remain preserved. The later distinct settled three-host pass does not turn that first guard into a pass or establish its cause. Earlier capture, private-phase, operator-stdin and stale-runner reader refusals were helper/operator failures, not evidence of a product defect.",
+      "private_receipt_sha256": "19af32a866057f236d9e43fd0755372cb0defffd59222c3868e713430b58feda",
+      "private_final_seal_sha256": "0e24754dd5ac4a495bf3db5d212ef1453b47480c6fae87dc93d4e1098eb1197b",
+      "private_closedmap_sha256": "a64048d0405a9a99a462a3d9973cc5ad8922f72c3ab87b2fc6a7564fa5cfb4d0"
     }
   ],
   "pending": [

@@ -2,7 +2,7 @@
   "record_version": 1,
   "status": "Three pinned Android ordinary Files workflows and scoped follow-up components accepted. Full iOS pairs and wider interruption coverage remain open.",
   "tracker": "https://github.com/fes/fesTerm/issues/778",
-  "date_utc": "2026-11-25",
+  "date_utc": "2026-11-27",
   "not_a_new_terminal_matrix_case": true,
   "combined_release_qualified": false,
   "mobile_files_item25_complete": false,
@@ -504,6 +504,31 @@
       "limits": "Qualification covers these three Download choices on this Android APK and Linux host with Write and Delete on. Native read-only host, iOS, TestFlight, other providers, background and race cases, and normal Activity finish remain outside this result. Back left the Activity STOPPED with finishing false.",
       "drain_disposition": "The owner exited 1 after an immediate drain assertion without a diagnostic. The emulator exited 0, and independent settled observations verified that the owned emulator group, ports and transport were absent and all resource debt was closed.",
       "private_receipt_sha256": "b4acb046cf47e84999f7ffc42782612a5e7a16ac211aa01cfdf94ec7ec2aae9b"
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "apk_sha256": "60657878aedf8a8699287d323e744f2a5395f3633fef25aed6b8dab7998bb427"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105
+      },
+      "accepted_components": [
+        "Saved one typed Files profile, closed Files and verified no open work. The saved row’s trailing Edit opened the offline editor; Save only persisted the new name. Reopening Edit displayed the exact saved name. Semantic readbacks preserved the same profile UUID, creation timestamp and complete destination.",
+        "Normal Delete profile and fresh inline confirmation removed only the held profile. Final readback restored zero typed Files profiles and all five original host recipes, including full fields/order, accounts, pending deletions and version. All 32 original private paths and content were preserved; only normal profile-store atomic metadata and parent modification time changed.",
+        "Independent settled observations verified the entire owned emulator group absent in all states, ports and transport absent, all Simulators shut down, all three VMs restored and original host guard comparisons passed. Profile, fixture and resume debt were zero."
+      ],
+      "limits": "This qualifies persisted offline rename and reopening Edit on this Android APK only. Offline means Files closed and no open work, not OS networking disabled. No process restart, reinstall, reconnect, transfer, host policy change, physical-device, TestFlight, iOS or whole-mobile/release qualification is claimed. Normal Back initially left the Activity PAUSED, not visible and finishing false; no Activity finish or later STOPPED claim.",
+      "drain_disposition": "Owner exit 1 and the original immediate blank drain assertion remain preserved. Emulator exit was 0; a separate settled observation established positive closure and zero debt without changing the original owner result.",
+      "private_receipt_sha256": "3a2c1b0250088f5880629f6b337dbb31477b0e39bc1c93d8ff55c854adb3ec3d",
+      "private_final_seal_sha256": "d247fd905948abfbeb50081d7d88e057311719a8146ea0ab6f4285dc93db858a",
+      "private_settled_closure_sha256": "9435727093f1db6f366d881a3dc0e4f5925f7d20043163cdf5db47d1eee120fc"
     }
   ],
   "limits": [
@@ -514,7 +539,7 @@
     "All original screenshots, raw logs and protected records remain private and unchanged. Only original artifact names, byte sizes and SHA256 digests are published; no PNG, crop or generated replacement image is included.",
     "Owned emulator shutdown and QEMU absence were verified. Recorded launcher exit statuses alone do not establish a product crash.",
     "Artifact producer metadata predates install; actual installed qualification records separately bind source/APK/app identity. The latest main or release does not inherit these native passes.",
-    "One Android Linux105 profile qualified reopening with fresh authority after a process restart and separate offline deletion. Persisted offline rename, sign-out and restart on the other client and host pairs remain pending."
+    "One Android Linux105 profile qualified reopening with fresh authority after a process restart and separate offline deletion. A separately pinned 30890c49 Android component qualified persisted offline rename and reopening Edit without restart. Sign-out, rename on other client/host pairs and wider restart coverage remain pending."
   ],
   "retained_background_refusal": [
     {

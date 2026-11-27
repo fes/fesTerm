@@ -2275,9 +2275,27 @@ original. **Keep both** published a distinct 31-byte copy. A fresh
 **Replace local file** review and confirmation published the exact source
 at the original name and preserved the copy. The comparison showed
 **ON THIS DEVICE**. Independent hashes and cleanup covered both owned
-local outputs and the remote source. Native read-only host, iOS, TestFlight,
-and other providers remain pending.
+local outputs and the remote source. Native read-only host, TestFlight,
+and other providers remain pending. The iOS result below is separately attributed.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+MOB-11 iOS Simulator Linux105 Download choices separately passed on private
+SDK `3d25f8c6`, source `30890c49`/tree `f5b77f40`, executable `4923bb0a`,
+against HOST 0.17.30 native96/runtime105 with Write and Delete on. Three fresh
+choices showed **Skipped**, **Done** and **Done**: Skip preserved the 13-byte
+original; Keep both published a distinct 31-byte copy; after a private host
+backup, fresh Replace published a new 31-byte target identity and preserved
+the copy. Full identities and hashes verified both outputs against the source.
+Normal Local Delete removed only those two outputs; after Simulator drain,
+exact cleanup removed only the owned remote source. Original app data,
+Documents, retained preview and host journals were preserved; fixture and
+resume debt were zero. Original owner exit 1 and the first Mac post-resume
+guard failure remain recorded separately from the later settled three-host
+guard pass; the first failure's cause is unproven. Earlier helper/operator
+refusals do not establish a product defect. Physical devices, TestFlight,
+native read-only HOST, iOS Upload choices, persisted profile rename and whole
+mobile/release qualification remain pending.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
 MOB-12 Android Linux105 Upload choices passed on the `f4b45db6` development
 APK. **Skip file** preserved the 13-byte original. **Keep both** added one
@@ -2296,8 +2314,25 @@ been replaced before review, and Cancel preserved the directory. A separate
 zero removals and preserved both objects. With `e5142f2b`, one saved Files
 profile reopened with fresh authority after a same-boot app process restart.
 Separate offline Delete removed only that profile and preserved the five
-original host-session recipes and account. Persisted rename, sign-out and
-wider stale-review and restart cases remain pending.
+original host-session recipes and account. The unsaved rename draft in that
+cohort remains unqualified; the separate result below covers persisted rename.
+Sign-out and wider stale-review and restart cases remain pending.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+MOB-13 Android Linux105 persisted offline Files-profile rename separately
+passed on development APK `60657878`, source `30890c49`/tree `f5b77f40`.
+After Save and normal Files close with no open work, trailing **Edit** →
+rename → **Save only** persisted the name; reopening Edit showed it again.
+Readbacks preserved the same UUID, creation timestamp and exact destination.
+Normal **Delete profile** and fresh inline confirmation restored zero typed
+Files profiles and the five original host-session recipes, full fields/order,
+accounts, pending deletions, version and all 32 original private paths/content.
+No process restart or reinstall occurred. Offline here means Files closed,
+not networking disabled. Owner exit 1 and its immediate blank drain assertion
+remain preserved; emulator exit 0 and separate settled observations verified
+whole-group/ports/transport absence, all three original host guards and zero
+profile, fixture and resume debt. Physical/TestFlight/iOS, wider restart and
+whole-mobile/release qualification remain pending; Activity finish is not claimed.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
 A separately accepted iOS Simulator component used development source `20c7142`

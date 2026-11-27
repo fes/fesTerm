@@ -1,28 +1,28 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "9820eedab492cdd0522170fde5250030a4afc26f1ad519811152e23dc0100593"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "636e5fc3c902e9a15d40e401ad77a65a90c67db161ed0b92d0c6c25649838fd0"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-This domain owns packaged install/update gating, native smoke validation, macOS AppKit/Finder bridges, and wake/privacy monitoring across desktop platforms.
+This domain owns packaged install/update gating, native smoke validation, desktop app bridge integration, and wake/privacy monitoring across host platforms.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
 ## Packaging gate
 
-Use for: A packaged build decides whether self-update is available and what installation kind it is.
+Use for: A packaged build decides whether self-update is available and which installation kind it is.
 
-- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to developer, managed, and self-update install states.
+- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to developer, packaged, and self-update install states.
 - [`UpdateController`](../../app/festerm/src/updates.rs) — Tracks package kind, verification key, and install-ready update flow.
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Proves packaged builds fail closed without a verification key.
-- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Proves only supported packaged self-update markers can install.
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Packaged builds fail closed without a verification key.
+- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only supported packaged self-update markers can install.
 
 Caveats:
-- Install markers gate updater availability, not signing.
-- Packaging smoke UI is dev-only; host policy checks are separate.
+- Install markers gate updater availability, not code signing.
 - Developer builds intentionally disable update checks.
+- Packaging smoke UI is dev-only; host policy checks are separate.
 
 ## Native smoke
 
@@ -32,8 +32,8 @@ Use for: CI must prove a real native window and PTY pass a smoke flow inside the
 - [`from_environment`](../../app/festerm/src/native_smoke.rs) — Requires one smoke mode and result path from the environment.
 
 Evidence:
-- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces the one-of env-var contract for native smoke mode.
-- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Validates emoji width and trailing ASCII rendering in the native smoke fixture.
+- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces the one-of env var contract for native smoke mode.
+- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Validates emoji width and trailing ASCII rendering in the smoke fixture.
 
 Caveats:
 - Exactly one smoke mode and result path may be active.
