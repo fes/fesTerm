@@ -433,6 +433,38 @@
         "entries": 668,
         "sha256": "07550e2a7fbe4efdaa631cb4e1e0a2b5e8d8c2f2bfa6a979a58950c124a00936"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Windows",
+        "version": "0.17.30",
+        "native_epoch": 83,
+        "runtime_epoch": 96,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Remote Delete Cancel preserved one operator-created empty folder and its native identity. A fresh review and Confirm removed only that folder; the original parent and four direct siblings were preserved. This does not qualify product folder creation.",
+        "One owned 16 MiB Upload showed 1.2 MB of 16.8 MB before one Cancel and retained a Cancelled row. Independent readback found no published target or extra entry in the controlled remote root. A fresh 31-byte Upload then reached Done on the same connection and queue, above the retained Cancelled row, with its exact SHA-256. No reconnect, relaunch or Clear finished occurred between the two transfers.",
+        "Reviewed remote Delete removed only the completed 31-byte target. A separately admitted cleanup-only run used normal Local Delete for the two known scratch sources. Final checks preserved all nine original Documents entries, account and metadata, zero Files profiles and five host recipes.",
+        "All nineteen functional-batch and six cleanup-only bounded XCTest calls passed. Both resource owners exited 1 and both boot supervisors exited 0: the first retained known local cleanup after the fixed caller admission cutoff; the second retained a Mac Starting check. Separate positive resource closure, Linux and Windows baseline passes, and a later same-identity Listening/full strict Mac comparison established final preservation and zero fixture, resource or preservation debt. The failed owner results remain unchanged."
+      ],
+      "limits": "Pinned SDK30890 iOS Simulator/Windows HOST30 components only. No product folder typing/creation, physical-device/TestFlight, current-main diagnostics or concise-copy, whole-mobile/full-pair or combined-release qualification. No cause of the historical runtime failures or wire Begin-absence is inferred.",
+      "private_receipt_sha256": "e394eb1b76f0b493ad6d2eb9a1d3fca039e932d844a0f9e3b3254e4422934abe",
+      "private_final_seal_sha256": "1da01cd1c8444444d9d011bbadb008af865c06face2319212058b4a7e18d909d",
+      "private_closed_map": {
+        "entries": 1371,
+        "sha256": "8d79324046e040857f2d1624bab6bb2f6d628595d9652045f5253088b46f1c5d"
+      }
     }
   ],
   "pending": [
