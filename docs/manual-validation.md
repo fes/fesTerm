@@ -2293,8 +2293,8 @@ resume debt were zero. Original owner exit 1 and the first Mac post-resume
 guard failure remain recorded separately from the later settled three-host
 guard pass; the first failure's cause is unproven. Earlier helper/operator
 refusals do not establish a product defect. Physical devices, TestFlight,
-native read-only HOST, iOS Upload choices, persisted profile rename and whole
-mobile/release qualification remain pending.
+native read-only HOST, persisted profile rename and whole mobile/release
+qualification remain pending. The iOS Upload result below is separately attributed.
 [iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
 MOB-12 Android Linux105 Upload choices passed on the `f4b45db6` development
@@ -2303,14 +2303,35 @@ distinct 31-byte copy. A fresh **Replace remote file** review and confirmation
 published the exact 31-byte source at the original name while preserving the
 kept copy. Independent hashes, cleanup and resource drain were verified.
 That APK displayed **ON THIS iPHONE** in the Android comparison. The later
-Android Download result above records the corrected label. Native iOS
-Upload choices remain pending. For retained-source refusal, verify that mobile
+Android Download result above records the corrected label. The iOS Upload
+result below is separately attributed. For retained-source refusal, verify that mobile
 Upload rows ask to select the changed or unavailable file again; technical
 operation/path details belong in diagnostics. Confirm that cleanup failures and
 unknown publication retain their distinct explanations. The concise copy needs
 fresh native qualification on its changed source.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
+
+MOB-12 iOS Simulator Linux105 Upload choices separately passed on private SDK
+`3d25f8c6`, source `30890c49`/tree `f5b77f40`, executable `4923bb0a`.
+Skip preserved the 13-byte remote original; Keep both published a distinct
+31-byte copy. After an exclusive backup of the original, fresh **Replace
+remote file** published a new 31-byte target and preserved the copy/source.
+No second confirmation sheet appeared. Transfers showed **Done/Done/Skipped**.
+Normal Local Delete removed only the owned source, and exact post-drain cleanup
+removed only the two remote outputs. Original Documents, account/profile data,
+preview and host journals were preserved.
+
+The controller exited 1 when the first Windows post-resume check found a stopped
+HOST. Corrected typed history records an account-renewal error before the
+terminal transport error; its underlying cause remains unknown under #795.
+A separate reviewed single start of the existing Windows task restored Listening
+with a new HOST lifetime, preserving its settings, catalog, signed payload and
+33 original protected actors. Original failures remain recorded; this is not a
+renewal repair or preservation of the old HOST run. Fixture/resource/restoration
+debt is zero. Physical devices, TestFlight, native read-only HOST, profile
+restart/rename and whole-mobile/release qualification remain pending.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
 MOB-12 Android Linux105 queued-source refusal separately passed on development
 APK `60657878`, source `30890c49`/tree `f5b77f40`, against HOST 0.17.30
@@ -2358,6 +2379,22 @@ remain preserved; emulator exit 0 and separate settled observations verified
 whole-group/ports/transport absence, all three original host guards and zero
 profile, fixture and resume debt. Physical/TestFlight/iOS, wider restart and
 whole-mobile/release qualification remain pending; Activity finish is not claimed.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+MOB-13 Android Linux105 separately passed the empty-folder post-review change
+check on development APK `60657878`, source `30890c49`/tree `f5b77f40`.
+A fresh Delete review showed one owned **Empty folder**. After a separately
+approved 31-byte child insertion, one Confirm reported **0 of 1 removals
+confirmed** and stopped deletion. Independent readback preserved the exact
+folder and child. Normal Files close left no open work; original app data,
+profiles, preview and host journals were preserved. After positive settled
+drain, exact cleanup removed only the child and its now-empty owned folder.
+Final original three-host guard comparisons passed with zero fixture/resume
+debt. Owner exit 1, the immediate drain assertion and first post-resume Mac
+guard failure remain recorded separately from the successful settled checks;
+the first tuple and cause are unconfirmed. This qualifies only the pinned
+Android/Linux component, not recursive deletion, iOS, physical devices,
+TestFlight, the new source-change copy or whole-mobile/release acceptance.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
 A separately accepted iOS Simulator component used development source `20c7142`

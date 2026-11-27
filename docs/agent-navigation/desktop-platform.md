@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8d93a9206986e89a61451e20072bd708ba324acadd3e7467c99da23e1d6a287b"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "8b05f02d7b35bc0f5f86ada7e30a5a355f9204071656701b909c61925a3c83a0"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration for packaged update gating, native smoke validation, macOS Finder/menu bridges, and resume/privacy wake monitoring.
+Desktop platform integration owns packaged updater gating, native smoke validation, macOS Finder/menu bridges, and wake/privacy resume monitoring across packaged app startup.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -13,7 +13,7 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 Use for: How does a packaged build decide whether self-update is available and which install kind it is?
 
 - [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to developer, managed, and self-update install states.
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Holds install kind, verification key, and package-gated update flow.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Carries install kind, verification key, and the package-gated update flow.
 
 Evidence:
 - [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Packaged builds refuse to install or check without a verification key.

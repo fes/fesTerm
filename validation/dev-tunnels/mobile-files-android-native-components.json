@@ -421,7 +421,7 @@
       },
       "accepted_components": [
         "An owned target selected as a file in the cached listing became an empty directory before Remote Delete review. The review displayed Empty folder, and Cancel preserved the directory.",
-        "A fresh file review displayed File · 31 B. After the target was replaced, one Confirm reported 0 of 1 removals and preserved both the replacement directory and the held original file.",
+        "A fresh file review displayed File \u00b7 31 B. After the target was replaced, one Confirm reported 0 of 1 removals and preserved both the replacement directory and the held original file.",
         "The test fixtures were removed. Original app data and all three host baselines were preserved."
       ],
       "limits": "Qualification covers the two Remote Delete review cases on this Android APK and Linux host. Successful deletion through this case, other stale-review races, normal Activity finish and iOS remain outside this result.",
@@ -520,7 +520,7 @@
         "runtime_epoch": 105
       },
       "accepted_components": [
-        "Saved one typed Files profile, closed Files and verified no open work. The saved row’s trailing Edit opened the offline editor; Save only persisted the new name. Reopening Edit displayed the exact saved name. Semantic readbacks preserved the same profile UUID, creation timestamp and complete destination.",
+        "Saved one typed Files profile, closed Files and verified no open work. The saved row\u2019s trailing Edit opened the offline editor; Save only persisted the new name. Reopening Edit displayed the exact saved name. Semantic readbacks preserved the same profile UUID, creation timestamp and complete destination.",
         "Normal Delete profile and fresh inline confirmation removed only the held profile. Final readback restored zero typed Files profiles and all five original host recipes, including full fields/order, accounts, pending deletions and version. All 32 original private paths and content were preserved; only normal profile-store atomic metadata and parent modification time changed.",
         "Independent settled observations verified the entire owned emulator group absent in all states, ports and transport absent, all Simulators shut down, all three VMs restored and original host guard comparisons passed. Profile, fixture and resume debt were zero."
       ],
@@ -560,6 +560,37 @@
       "private_closed_map": {
         "entries": 211,
         "sha256": "f37ffebcf850348e78ca6bc04d5f6cf346414b4a2346c2d8bdfc385c7f959a4f"
+      }
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "apk_sha256": "60657878aedf8a8699287d323e744f2a5395f3633fef25aed6b8dab7998bb427"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "A fresh remote Delete review showed one owned empty folder. After the review, one separately approved insertion added a 31-byte child to that same directory. Confirm was selected once without refreshing the review.",
+        "The UI reported: \"0 of 1 removals confirmed. Deletion stopped. Refresh before reviewing untouched entries.\" It reported neither success nor an unknown outcome. Independent readback preserved the exact directory and child identities and content.",
+        "Normal Files close left no open work. All 32 original private paths, zero typed Files profiles, five complete original host recipes, the original preview and seven protected journals were preserved.",
+        "After positive settled native drain, separately approved exact cleanup removed only the inserted child and its now-empty owned folder. Final original host guard comparisons passed for all three VMs, with zero fixture or resume debt."
+      ],
+      "limits": "Pinned Android/Linux component only. No recursive deletion, iOS, physical-device, TestFlight, new source-copy, whole-mobile, release, account/grant retirement or wider race qualification. Normal Back left the Activity PAUSED, not visible and finishing false; Activity finish is not claimed.",
+      "drain_disposition": "The original owner exit 1, immediate blank drain assertion and first post-resume Mac guard tuple failure remain preserved; that first tuple and its cause are unconfirmed. A later observation matched the original Mac projection, and distinct settled full host guard comparisons passed before exact cleanup and again afterward. These later checks do not replace the original failed owner result.",
+      "private_receipt_sha256": "a78e8637ead72e5a1ebae8c7937d1ebd99e4e18893123d7894e256ded8b57095",
+      "private_final_seal_sha256": "bb8eaff35f1b0345fdfdfe1993b24d6acfbdde74de3f141a0432116bd1bddbae",
+      "private_closed_map": {
+        "entries": 235,
+        "sha256": "ebb9cce8139874edb48e18afd8c04ef74167a6090e757bb6f7b5ec62fbe74383"
       }
     }
   ],
