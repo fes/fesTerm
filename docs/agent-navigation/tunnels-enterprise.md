@@ -1,60 +1,82 @@
-<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a3e03ec29371c2ba70c6386ba5535418b52d1c09b6657d96c67a0cdcdd970e2f"} -->
+<!-- agent-navigation: {"domain": "tunnels-enterprise", "generator": "2", "model": "mai-code-1.1-flash", "sources": "645047e6c10f09a50b793b9789fa86e2a24eba04c92c820eb2cd85f9c4288e53"} -->
 # Dev tunnels, enterprise, and PowerShell
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns authenticated host admission, consented lifecycle state, and the trusted local roots that gate dev-tunnel hosting and discovery.
+This domain owns the authenticated local host lifecycle, exact dev-tunnel consent, rooted file access, and enterprise PowerShell handling that gate hosted sessions.
 
 Canonical docs: [docs/dev-tunnels-experiment.md](../../docs/dev-tunnels-experiment.md), [docs/dev-tunnel-files-protocol.md](../../docs/dev-tunnel-files-protocol.md), [docs/remote-observation-protocol.md](../../docs/remote-observation-protocol.md), [docs/powershell-enterprise.md](../../docs/powershell-enterprise.md), [docs/host-release-artifacts.md](../../docs/host-release-artifacts.md), [docs/adr/0084-host-based-dev-tunnels.md](../../docs/adr/0084-host-based-dev-tunnels.md)
 
-## Host lifecycle consent
+## Host consent
 
-Use for: What exact local settings and identity are accepted before hosting can start?
+Use for: Which local settings and identity are accepted before hosting can start?
 
-- [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated local host settings including file access and startup policy.
-- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected lifecycle record with phase, epoch, and pending ticket.
-- [`Store`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exclusive lease-backed journal for create/open/configure and revoke flows.
+- [`Settings`](../../crates/festerm-host-setup/src/lifecycle.rs) — Validated host policy: friendly name, startup, file roots, owner access.
+- [`Snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exact protected journal: phase, epoch, binding, pending ticket.
+- [`Store`](../../crates/festerm-host-setup/src/lifecycle.rs) — Exclusive lease-backed journal for create, open, configure, and revoke.
 
 Evidence:
-- [`host_desktop_consent_atomically_binds_settings_and_exact_snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Desktop consent is atomically bound to the exact snapshot and settings.
-- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Enable requests require matching foreground settings and exact pending ticket.
+- [`host_desktop_consent_atomically_binds_settings_and_exact_snapshot`](../../crates/festerm-host-setup/src/lifecycle.rs) — Desktop consent binds exact settings and snapshot atomically.
+- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Enable rejects drift and leaves the pending ticket untouched.
 
 Caveats:
-- Changed settings require renewed foreground review; fresh config is never authority.
-- A pending ticket is not permission to start; the exact binding and phase must still match.
-- Host-local consent stays separate from cloud identity and cannot be reconstructed from stale metadata.
+- Changed settings require renewed foreground review; config is never authority.
 
 ## Runtime admission
 
-Use for: When does setup sign in, register, and wait for the real service lease before the host can run?
+Use for: When does setup sign in, enroll owners, and wait for the service lease before runtime start?
 
 - [`SetupBoundary`](../../crates/festerm-host-setup/src/controller.rs) — Shared host setup contract for local admission, sign-in, and native provisioning.
-- [`setup`](../../crates/festerm-host-setup/src/controller.rs) — Runs the explicit multi-step setup flow once the current journal passes checks.
-- [`initial_run_admission`](../../crates/festerm-host-setup/src/controller.rs) — Waits for the native service lease before admitting a runtime start.
+- [`setup`](../../crates/festerm-host-setup/src/controller.rs) — Runs the explicit multi-step setup flow once the journal passes checks.
+- [`initial_run_admission`](../../crates/festerm-host-setup/src/controller.rs) — Blocks runtime until the current snapshot and lease match the expected state.
 
 Evidence:
-- [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for a real service lease before publishing setup success.
-- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Owner admission preserves consent and records the primary failure path faithfully.
+- [`host_runtime_initial_admission_waits_for_real_service_lease_then_succeeds`](../../crates/festerm-host-setup/src/controller.rs) — Admission waits for a real lease before publishing setup success.
+- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Owner admission preserves provider-owner consent and the primary failure path.
 
 Caveats:
-- Host item admission and file helper checks run before cloud sign-in or owner enrollment.
-- Current snapshot and epoch are rechecked; late or changed consent is refused.
-- Owner approval is distinct from native registration and never grants hidden access.
+- Host item admission and helper checks run before cloud sign-in or owner enrollment.
 
-## Owner approval gate
+## Discovery and binding
 
-Use for: Which approval checks and logs ensure provider owner consent is preserved without hidden access or stale state?
+Use for: How are local sessions, hosted roots, and exact host bindings discovered and kept consistent?
 
-- [`OwnerConsent`](../../crates/festerm-host-setup/src/controller.rs) — Explicit owner approval data carried through setup while preserving exact scope.
-- [`authorize_owner_admission`](../../crates/festerm-host-setup/src/controller.rs) — Validates owner consent and records the failure path without mutating the snapshot.
-- [`record_provisioned`](../../crates/festerm-host-setup/src/lifecycle.rs) — Transitions a matching ticket into the provisioned phase only when the exact settings match.
+- [`Inventory`](../../app/festerm/src/discovery.rs) — Native, tmux, screen, and hosted runtime inventory collected without stale UI state.
+- [`Discovery`](../../app/festerm/src/discovery.rs) — Refreshable observer that coalesces inventory updates and redraws only on change.
+- [`ManagementRequest`](../../crates/festerm-tunnel-bridge/src/profile_hosting.rs) — Protected bind, status, suspend, remove, and inventory requests.
 
 Evidence:
-- [`host_owner_admission_preserves_provider_owner_consent_and_primary_failures`](../../crates/festerm-host-setup/src/controller.rs) — Logs and result handling preserve provider-owner consent and the main failure cause.
-- [`host_enable_requires_exact_foreground_settings_and_binds_the_ticket`](../../crates/festerm-host-setup/src/lifecycle.rs) — Provisioning rejects drift from the approved ticket and leaves the journal unchanged.
+- [`changed_inventory_is_published_and_periodic_discovery_continues`](../../app/festerm/src/discovery.rs) — Changed inventory is published and periodic discovery continues without stale refreshes.
+- [`hosted_runtime_accepts_short_and_previous_namespaces_only`](../../crates/festerm-tunnel-bridge/src/profile_hosting.rs) — Only current and previous hosted runtime namespaces are accepted.
 
 Caveats:
-- Provider-owner consent is a separate gate from native registration and service installation.
-- Any drift between current settings and ticketed settings fails closed without state mutation.
-- Read-only owner readiness checks intentionally never advance high-water state.
+- Configuration alone never authorizes a host or resource creation.
+
+## Rooted files
+
+Use for: Which file service and filesystem boundary prevents escape and stale approval?
+
+- [`Filesystem`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Explicit rooted FS with validated start directory and approved locations.
+- [`FileService`](../../crates/festerm-tunnel-bridge/src/files.rs) — Configures rooted file and observation access from a guarded policy.
+- [`Policy`](../../crates/festerm-tunnel-bridge/src/file_protocol.rs) — Policy defines roots, writes, deletes, and the virtual start directory.
+
+Evidence:
+- [`rooted_files_enumerate_stream_and_refuse_escape_and_read_only_writes`](../../crates/festerm-tunnel-bridge/src/filesystem.rs) — Rooted FS enumerates within policy and rejects escapes and write violations.
+
+Caveats:
+- The initial directory is validated before any file access is admitted.
+
+## PowerShell enterprise
+
+Use for: How do enterprise PowerShell sessions connect with SSH or PSRP and bounded transport?
+
+- [`PowerShellSession`](../../crates/festerm-powershell/src/lib.rs) — Structured PSRP session with endpoint, auth, and runtime options.
+- [`PowerShellSshSession`](../../crates/festerm-powershell/src/lib.rs) — SSH subsystem connection with explicit host fingerprint and bounded transport.
+- [`PowerShellTab`](../../app/festerm/src/powershell.rs) — UI worker owns lifecycle, cancellation, event presentation, and worker state.
+
+Evidence:
+- [`opt_in_real_pwsh_ssh_subsystem_runs_structured_psrp`](../../crates/festerm-powershell/tests/psrp_ssh_pwsh.rs) — Real PSRP SSH session round-trips streams and rejects host-call misuse.
+
+Caveats:
+- HTTPS uses TLS/NTLM and SSH uses an explicit pinned subsystem, not an unbound fallback.
