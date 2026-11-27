@@ -7934,6 +7934,7 @@
         "mobile_files_account_guard_retires_exact_account_and_lock_without_a_frame",
         "mobile_files_retirement_preserves_target_metadata_and_fences_host_replacement",
         "mobile_files_entry_uses_authenticated_inventory_independently_of_shell_creation",
+        "files_failed_refresh_clears_only_failed_pane_and_allows_up",
         "files_read_only_capability_disables_upload_and_rejects_stale_dispatch",
         "host_files_late_ready_after_account_retirement_is_not_disclosed",
         "files_retired_connection_never_opens_completed_remote_preview_but_keeps_local_file",
@@ -8009,6 +8010,7 @@
         "mobile_files_only_tab_returns_to_profiles_and_drops_its_session",
         "files_new_folder_uses_bounded_name_and_current_pane_without_remote_write_authority",
         "files_conflict_projects_only_supported_actions_and_no_cross_batch_remember",
+        "files_failed_refresh_clears_only_failed_pane_and_allows_up",
         "files_read_only_capability_disables_upload_and_rejects_stale_dispatch"
       ],
       "manual_scenarios": [

@@ -466,7 +466,11 @@ impl Pane {
                 self.selected.retain(|name| names.contains(name.as_str()));
                 self.listing = Some(listing);
             }
-            Err(error) => self.error = Some(describe_error(&error)),
+            Err(error) => {
+                self.listing = None;
+                self.selected.clear();
+                self.error = Some(describe_error(&error));
+            }
         }
         true
     }
@@ -664,21 +668,19 @@ impl FilesSession {
             .find(|location| location.contains(path))
     }
     pub(crate) fn remote_mutations_available(&self) -> bool {
+        let Some(pane) = self.remote.as_ref().filter(|pane| pane.error.is_none()) else {
+            return false;
+        };
         let Some(locations) = self.remote_locations() else {
             return true;
         };
-        self.remote.as_ref().is_some_and(|pane| {
-            !pane.loading()
-                && pane.error.is_none()
-                && pane.listing.as_ref().is_some_and(|listing| {
-                    listing.path == pane.path && listing.directory_read_only != Some(true)
-                })
-                && locations.iter().any(|location| {
-                    location.contains(&pane.path)
-                        && location.available
-                        && location.mutations_available
-                })
-        })
+        !pane.loading()
+            && pane.listing.as_ref().is_some_and(|listing| {
+                listing.path == pane.path && listing.directory_read_only != Some(true)
+            })
+            && locations.iter().any(|location| {
+                location.contains(&pane.path) && location.available && location.mutations_available
+            })
     }
     pub(crate) fn can_upload(&self) -> bool {
         self.remote_write && self.remote_mutations_available()
@@ -1578,6 +1580,110 @@ mod tests {
         pane.toggle("README.md");
         assert!(pane.selected_files().is_empty());
         assert_eq!(pane.crumbs("Documents")[1].0, "srv");
+    }
+
+    #[test]
+    fn files_failed_refresh_clears_only_failed_pane_and_allows_up() {
+        use egui_kittest::{
+            kittest::{By, Queryable},
+            Harness,
+        };
+
+        let ctx = egui::Context::default();
+        let mut data = ready(Arc::new(FixtureTransfers::new(Vec::new())));
+        data.local = Arc::new(FixtureFs {
+            kind: PaneKind::Local,
+            home: "",
+            entries: vec![fixture_entry("local.md", false, 31, 0)],
+        });
+        let mut session = FilesSession::ready("Files".into(), "Host".into(), data, &ctx);
+        settle(&mut session, &ctx);
+        session.remote.as_mut().unwrap().toggle("README.md");
+        session.local.as_mut().unwrap().toggle("local.md");
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 853.0))
+            .build_ui_state(
+                |ui, session: &mut FilesSession| {
+                    crate::files_ui::show(ui, session);
+                },
+                session,
+            );
+        harness.run();
+        harness.get(
+            By::new()
+                .label("Download 1")
+                .predicate(|node| !node.is_disabled()),
+        );
+
+        let session = harness.state_mut();
+        let remote = session.remote.as_mut().unwrap();
+        let (send, receive) = mpsc::channel();
+        remote.generation += 1;
+        send.send((remote.generation, Err(SftpError::NotFound("/srv".into()))))
+            .unwrap();
+        remote.pending = Some((remote.path.clone(), receive));
+        session.poll(&ctx);
+
+        let remote = session.remote.as_ref().unwrap();
+        assert_eq!(remote.path, "/srv");
+        assert!(remote.listing.is_none() && remote.selected.is_empty());
+        assert!(session.is_ready());
+        assert!(session.open_markdown(true).is_none());
+        assert_eq!(session.cache_counter, 0, "no stale preview preparation");
+        session.start_transfer(false);
+        assert!(
+            session.notice.is_none(),
+            "no stale Download reached enqueue"
+        );
+        assert_eq!(
+            session.local.as_ref().unwrap().selected_files()[0].name,
+            "local.md"
+        );
+        harness.run();
+        harness.get_by_label("Not found");
+        assert!(harness.query_by_label("README.md").is_none());
+        harness.get(
+            By::new()
+                .label("Download")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("Upload 1")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("New remote folder")
+                .predicate(|node| node.is_disabled()),
+        );
+        harness.get(
+            By::new()
+                .label("New local folder")
+                .predicate(|node| !node.is_disabled()),
+        );
+        harness.get_by_label("Open");
+
+        harness
+            .get(
+                By::new()
+                    .label("Parent folder")
+                    .predicate(|node| !node.is_disabled()),
+            )
+            .click();
+        harness.step();
+        settle(harness.state_mut(), &ctx);
+        harness.run();
+        let remote = harness.state().remote.as_ref().unwrap();
+        assert_eq!(remote.path, "/");
+        assert!(remote.error.is_none());
+        assert!(remote.selected.is_empty());
+        assert!(remote
+            .visible()
+            .iter()
+            .any(|entry| entry.name == "README.md"));
+        assert!(harness.state().can_upload());
     }
 
     #[test]
