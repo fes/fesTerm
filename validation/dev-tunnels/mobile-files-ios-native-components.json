@@ -402,6 +402,37 @@
         "private_root_closure_sha256": "5588cc65726e0d04e67fb1d5ed1d429023abc8cc2ab1a5982b9d48f2404db0bf",
         "independent_review_sha256": "fc82ba84ff8816f15b299b43fd21af9227cfd910a92435a48223c324b8697308"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "executable_sha256": "4923bb0a78af86527d9d05be465d5723fc00af5f41c6cf021492ecab48b6b024",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 109,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Remote Delete Cancel preserved one operator-created empty folder. A fresh review and Confirm removed only that same folder; independent readback preserved the parent, original 83-byte preview and seven host journals.",
+        "All twelve bounded XCTest calls passed. Files closed with no open work. Original Documents, account, metadata, zero Files profiles and five host recipes were preserved.",
+        "The owner and boot supervisor exited zero. All three host baseline comparisons passed, Simulators shut down, original VM states returned and owned process groups were absent, with zero fixture or resource debt."
+      ],
+      "limits": "Pinned SDK30890 iOS Simulator/Linux HOST30 component only. The folder was operator-created; product folder creation and typing, physical-device/TestFlight, current-main and combined-release qualification remain separate.",
+      "private_receipt_sha256": "e6fb46651d10f1ab4d19cd3fbe50d32b3af75fd0fdf6db4ea365a0d93aca35a5",
+      "private_final_seal_sha256": "7cdd7b82a24f3cd99e597c9c7eed29f19e0370218a15d4b8de541f8fb6337f6b",
+      "private_closed_map": {
+        "entries": 668,
+        "sha256": "07550e2a7fbe4efdaa631cb4e1e0a2b5e8d8c2f2bfa6a979a58950c124a00936"
+      }
     }
   ],
   "pending": [

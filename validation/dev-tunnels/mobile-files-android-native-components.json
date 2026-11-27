@@ -641,10 +641,61 @@
           "sha256": "05cf9669475a83bc412c4cb66cecf21bda4f5165d69804258a57ac610a6afc43"
         }
       }
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "apk_bytes": 44028758,
+        "apk_sha256": "60657878aedf8a8699287d323e744f2a5395f3633fef25aed6b8dab7998bb427"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 111,
+        "write": false,
+        "delete": false
+      },
+      "accepted_components": [
+        "With an existing Local file selected, Upload 1 and remote New folder were disabled. The Remote menu had no Delete action with the actual preview selected; Download 1 remained available. No remote mutation was attempted.",
+        "One download completed Done. Independent readback verified the sole new Local file at 83 bytes, mode 0600, one link and SHA-256 5ba26d441ae45a5cc316de77240681d8dade6e7d250e9e2d6d197cd9af7e427a. A fresh This device review and one Confirm removed only that download while remote Write and Delete remained OFF. The original 32 entries and store metadata were preserved, with the expected Documents directory size and modification-time changes."
+      ],
+      "controller_history": {
+        "original_owner_exit": 1,
+        "failures": [
+          "The immediate emulator drain found two live workers after the emulator main exited. They subsequently exited naturally; separate all-state, group, port, serial and Simulator checks established closure.",
+          "The independent Windows host check found Failed/runtime-failed. Its cause and preservation investigation remain separate under #795."
+        ],
+        "activity_after_Back": "PAUSED with finishing=false; no Activity-finished claim"
+      },
+      "restoration": {
+        "Linux_original_settings_restored": true,
+        "runtime_epoch": 113,
+        "native_epoch": 96,
+        "full_parsed_native_record_matches_original": true,
+        "original_actors_catalog_configuration_and_fixtures_preserved": true,
+        "GUI_source": "3eb9b4caf9d82d4767b1fd10c335665707d402f2",
+        "normal_Disable_epochs": [
+          110,
+          112
+        ],
+        "GUI_exit_and_supervisor_cleanup": 0,
+        "private_receipt_sha256": "bff944acaadb1b3d6c8b67a6e331905fb04139f3e431c1b8d5ac77f5dc256a97"
+      },
+      "limits": "Scoped Android/Linux controls, download and Local Delete independence only. The original owner failed; later resource closure and Linux restoration do not turn it into a passing three-host campaign. No current-release, physical-device or whole-mobile qualification.",
+      "separate_failure_issue": "https://github.com/fes/fesTerm/issues/795",
+      "private_receipt_sha256": "a14921627080efd9c15619644e5b1d859bc416633d1ab4935ec0385b8167456d",
+      "private_closed_map": {
+        "entries": 152,
+        "sha256": "4d09a3c972da6419abfcb2b9ebc21e0816d1acbbc4d04d7eb2d61e8d65114ecf"
+      }
     }
   ],
   "limits": [
-    "Three iOS ordinary Files pairs remain unqualified. No full item25 closure or current uniform release acceptance.",
+    "Full iOS Files pairs remain unqualified. No full item25 closure or current uniform release acceptance.",
     "One later corrected Android Linux105 run qualified active Download retirement and explicit reconnect. The cause of earlier emulator-wide unresponsiveness remains unknown; wider background and completion cases remain open.",
     "The earlier Windows-return splash observation retains unknown cause; later idle Back success does not establish its cause or permanent cure.",
     "No live account/sign-out/lock/grant-revocation, lost-Finish, destination conflict/replacement, multi-file or wider usability acceptance beyond the stated components.",
