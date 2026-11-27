@@ -47,8 +47,9 @@ Documents files or empty folders, even when remote Delete is off. A scoped
 passed file/empty-folder Cancel and fresh Confirm. Separately attributed Android
 Local Delete components are recorded below; remaining native lifecycle cases
 are pending. Remote-permission independence has automated coverage and a separately pinned
-iOS Simulator/Linux read-only download and Local Delete component. Android
-OFF-grant and wider native independence remain pending. Pinned [Android ordinary Files components](validation/dev-tunnels/mobile-files-android-native-components.json)
+iOS Simulator/Linux read-only download and Local Delete component. A separate
+Android/Linux component verified the read-only controls, download and independent
+Local Delete; wider native crosscuts remain pending. Pinned [Android ordinary Files components](validation/dev-tunnels/mobile-files-android-native-components.json)
 are accepted against Linux, Windows and Mac, with separately attributed builds.
 Pinned [iOS Simulator components](validation/dev-tunnels/mobile-files-ios-native-components.json)
 qualify only their recorded private SDK artifact and component scope. Full iOS
