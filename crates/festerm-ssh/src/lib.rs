@@ -77,9 +77,9 @@ pub use sftp_transfer::{
     RemoteTransferFuture, SftpCollision, SftpCollisionDecision, SftpCollisionId,
     SftpCollisionResolution, SftpCollisionScope, SftpDirectoryItem, SftpDirectorySnapshot,
     SftpLocation, SftpPath, SftpPathMetadata, SftpQueuedTransferBatch, SftpTransferBatchId,
-    SftpTransferDirection, SftpTransferEvent, SftpTransferId, SftpTransferItemSnapshot,
-    SftpTransferManager, SftpTransferManagerError, SftpTransferQueueSnapshot, SftpTransferRequest,
-    SftpTransferState,
+    SftpTransferDirection, SftpTransferEvent, SftpTransferFailureKind, SftpTransferId,
+    SftpTransferItemSnapshot, SftpTransferManager, SftpTransferManagerError,
+    SftpTransferQueueSnapshot, SftpTransferRequest, SftpTransferState,
 };
 
 /// Canonical SSH destination identity used for trust decisions.

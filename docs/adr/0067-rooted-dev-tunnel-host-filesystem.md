@@ -519,6 +519,12 @@ These checks are negative fences, not atomic immunity to hostile same-user/root
 mutation. Sources are bounded to admitted regular files; recursive local upload
 and durable mobile recovery are not claimed by this slice.
 
+Retained upload-source refusal carries a narrow typed presentation hint through
+queue events and snapshots. Mobile Upload rows ask the user to select the file
+again without exposing operation/path wording. The original error display and
+diagnostic reason remain intact; unknown failures, incomplete cleanup and
+publication uncertainty never inherit this hint.
+
 New folder controls validate one bounded name and target path. Remote creation
 requires the current write capability and ordinary Files authority. Local
 creation uses a retained no-follow trusted Documents parent and exclusive
@@ -527,7 +533,8 @@ profile or mobile Delete workflow is added. Unobserved publication remains
 uncertain and is never replayed automatically.
 
 Validation impact: GUI:MOB-11, GUI:MOB-12, GUI:DTFILES-02, ADR-0067. Preserve the
-existing relocated endpoint/publication/Delete tests; add actual held-source
+existing relocated endpoint/publication/Delete tests; cover typed source-refusal
+presentation and cleanup/unknown precedence, and add actual held-source
 replacement and account-cutover tests, real framed queue/conflict tests and
 rendered capability/directory-action tests. Device-native upload, mkdir,
 conflicts, lifecycle retirement and uncertainty remain separate pending gates.

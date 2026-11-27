@@ -529,6 +529,38 @@
       "private_receipt_sha256": "3a2c1b0250088f5880629f6b337dbb31477b0e39bc1c93d8ff55c854adb3ec3d",
       "private_final_seal_sha256": "d247fd905948abfbeb50081d7d88e057311719a8146ea0ab6f4285dc93db858a",
       "private_settled_closure_sha256": "9435727093f1db6f366d881a3dc0e4f5925f7d20043163cdf5db47d1eee120fc"
+    },
+    {
+      "client_build": {
+        "platform": "Android API37 emulator",
+        "kind": "Development APK",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "apk_bytes": 44028758,
+        "apk_sha256": "60657878aedf8a8699287d323e744f2a5395f3633fef25aed6b8dab7998bb427"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "native_epoch": 96,
+        "runtime_epoch": 105,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "One Upload 2 admitted two owned 31-byte local sources. The first source paused at its 13-byte remote collision. While that fresh collision review remained open, a separately approved exclusive mutation changed only the queued second source to 32 bytes at the same inode.",
+        "Skip left the first row Skipped and its 13-byte remote original unchanged. The second row Failed with the source-or-authority-changed explanation. Strict remote observations found only the original 83-byte preview and the first 13-byte target; no second target, partial or other output was published, and all seven protected journals matched.",
+        "A fresh normal Local Delete review showed only the owned 31-byte and 32-byte files; confirmation removed them. The original 32 private paths and content, zero typed Files profiles and five complete original host recipes were preserved, with only the known Documents size and modification-time changes. Files closed with Open Work 0.",
+        "After positive settled whole-group drain, separately approved exact cleanup removed only the first owned remote 13-byte target. The original preview and journals remained, all three original host guard comparisons passed after cleanup, and fixture and resume debt were zero."
+      ],
+      "limits": "This qualifies queued-source change refusal on the pinned Android APK and Linux host only. The old native row exposed the technical local-read/Documents prefix, motivating the later typed concise presentation change. This APK does not qualify that new copy: its presentation and precedence are verified automatically, with fresh native copy qualification pending. No in-flight mutation, background, account/grant retirement, iOS, physical-device, TestFlight, whole-mobile or release inheritance is claimed. Normal Back left the Activity PAUSED, not visible and finishing false; Activity finish is not claimed.",
+      "drain_disposition": "Owner exit 1 and the original immediate blank drain assertion remain preserved. Emulator exit was 0. A separate settled observation verified the complete owned process group absent in all states, ports and transport absent, all Simulators shut down, all three VMs restored, and original host guard comparisons passed; the later closure does not replace the original owner result.",
+      "private_receipt_sha256": "59d1eb83713ba60a15fc3cbd0a6f2f92d77faa844e711cf4b4dfb3a43eb8d5b0",
+      "private_final_seal_sha256": "e15fa33e156e0df32d6964ff1b4254b4cfc489209c18d10a23aa268e5d4560a9",
+      "private_closed_map": {
+        "entries": 211,
+        "sha256": "f37ffebcf850348e78ca6bc04d5f6cf346414b4a2346c2d8bdfc385c7f959a4f"
+      }
     }
   ],
   "limits": [

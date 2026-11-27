@@ -2,10 +2,45 @@
 use super::*;
 use festerm_ssh::{
     SftpCollision, SftpCollisionDecision, SftpCollisionResolution, SftpCollisionScope, SftpPath,
-    SftpTransferId, SftpTransferManager, SftpTransferRequest, SftpTransferState,
+    SftpTransferFailureKind, SftpTransferId, SftpTransferManager, SftpTransferRequest,
+    SftpTransferState,
 };
 use festerm_tunnel_bridge::files_endpoint::{FilesChannel, FilesEndpoint, FirstFailure};
 use std::path::PathBuf;
+
+fn failure_message(
+    direction: Direction,
+    kind: Option<SftpTransferFailureKind>,
+    reason: String,
+    cleanup_incomplete: bool,
+) -> String {
+    if !cleanup_incomplete
+        && direction == Direction::Upload
+        && kind == Some(SftpTransferFailureKind::LocalUploadSourceUnavailable)
+    {
+        log::debug!(target: "festerm::sftp", "Retained local upload source refused: {reason}");
+        "This file changed or is no longer available. Select it again.".into()
+    } else {
+        reason
+    }
+}
+
+fn snapshot_failure_message(
+    direction: Direction,
+    state: &SftpTransferState,
+    cleanup_incomplete: bool,
+) -> Option<String> {
+    match state {
+        SftpTransferState::Failed { reason, kind } => Some(failure_message(
+            direction,
+            *kind,
+            reason.clone(),
+            cleanup_incomplete,
+        )),
+        SftpTransferState::PublicationUncertain { reason } => Some(reason.clone()),
+        _ => None,
+    }
+}
 
 struct Item {
     transfer: SftpTransferId,
@@ -154,6 +189,7 @@ impl Uploads {
             .collect::<std::collections::HashSet<_>>();
         let mut state = self.state.lock().unwrap();
         for entry in snapshot.items {
+            let cleanup_incomplete = queue.cleanup.is_some();
             let Some((&id, item)) = queue
                 .items
                 .iter_mut()
@@ -174,7 +210,7 @@ impl Uploads {
                 row.total = entry.total_bytes;
             }
             row.rate = row.done as f64 / item.started.elapsed().as_secs_f64().max(0.001);
-            row.error = None;
+            row.error = snapshot_failure_message(row.direction, &entry.state, cleanup_incomplete);
             row.state = match entry.state {
                 SftpTransferState::Queued | SftpTransferState::Planning => {
                     if row.state == RowState::Active {
@@ -188,11 +224,8 @@ impl Uploads {
                 SftpTransferState::Completed => RowState::Done,
                 SftpTransferState::Skipped => RowState::Skipped,
                 SftpTransferState::Cancelled => RowState::Cancelled,
-                SftpTransferState::Failed { reason }
-                | SftpTransferState::PublicationUncertain { reason } => {
-                    row.error = Some(reason);
-                    RowState::Failed
-                }
+                SftpTransferState::Failed { .. }
+                | SftpTransferState::PublicationUncertain { .. } => RowState::Failed,
             };
             if row.state.finished() {
                 if let Some(source) = item.source.take() {
@@ -206,6 +239,10 @@ impl Uploads {
         // Terminal outcomes stay in bounded mobile history until cleared.
         for event in events {
             use festerm_ssh::SftpTransferEvent as E;
+            let failure_kind = match &event {
+                E::ItemFailed { kind, .. } => *kind,
+                _ => None,
+            };
             let (transfer, status, done, total, error) = match event {
                 E::Collision(collision) => {
                     if let Some((&id, _)) = queue
@@ -312,6 +349,7 @@ impl Uploads {
                 }
                 _ => continue,
             };
+            let cleanup_incomplete = queue.cleanup.is_some();
             let Some((&id, item)) = queue
                 .items
                 .iter_mut()
@@ -327,7 +365,9 @@ impl Uploads {
                 if total.is_some() {
                     row.total = total;
                 }
-                row.error = error;
+                row.error = error.map(|reason| {
+                    failure_message(row.direction, failure_kind, reason, cleanup_incomplete)
+                });
                 row.conflict = None;
             }
             if let Some(source) = item.source.take() {
@@ -461,6 +501,73 @@ impl Uploads {
             if manager.shutdown().await.is_err() {
                 self.queue.lock().unwrap().cleanup = Some("Couldn’t confirm transfer cleanup. Inspect the destination before starting new work.".into());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_files_upload_failure_copy_keeps_unknown_download_and_uncertain_diagnostics() {
+        let diagnostic = "local read admitted upload source failed for Documents: changed";
+        let kind = Some(SftpTransferFailureKind::LocalUploadSourceUnavailable);
+        let expected = "This file changed or is no longer available. Select it again.";
+        assert_eq!(
+            failure_message(Direction::Upload, kind, diagnostic.into(), false),
+            expected
+        );
+        assert_eq!(
+            snapshot_failure_message(
+                Direction::Upload,
+                &SftpTransferState::Failed {
+                    reason: diagnostic.into(),
+                    kind
+                },
+                false,
+            )
+            .as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            failure_message(Direction::Upload, kind, diagnostic.into(), true),
+            diagnostic
+        );
+        assert_eq!(
+            snapshot_failure_message(
+                Direction::Upload,
+                &SftpTransferState::Failed {
+                    reason: diagnostic.into(),
+                    kind
+                },
+                true,
+            )
+            .as_deref(),
+            Some(diagnostic)
+        );
+        // Identical diagnostic text without a typed hint must not be rewritten.
+        assert_eq!(
+            failure_message(Direction::Upload, None, diagnostic.into(), false),
+            diagnostic
+        );
+        assert_eq!(
+            failure_message(Direction::Download, kind, diagnostic.into(), false),
+            diagnostic
+        );
+        for state in [
+            SftpTransferState::Failed {
+                reason: diagnostic.into(),
+                kind: None,
+            },
+            SftpTransferState::PublicationUncertain {
+                reason: diagnostic.into(),
+            },
+        ] {
+            assert_eq!(
+                snapshot_failure_message(Direction::Upload, &state, false).as_deref(),
+                Some(diagnostic)
+            );
         }
     }
 }

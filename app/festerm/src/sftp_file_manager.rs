@@ -5064,11 +5064,13 @@ impl SftpFileManagerTab {
                 transfer_id,
                 destination,
                 reason,
+                kind,
                 ..
             } => {
                 if let Some(item) = self.transfer_drawer.item_mut(transfer_id) {
                     item.state = SftpTransferState::Failed {
                         reason: reason.clone(),
+                        kind,
                     };
                     item.destination = destination;
                     item.details = Some(reason);
@@ -8458,6 +8460,7 @@ pub(crate) mod tests {
             } else {
                 SftpTransferState::Failed {
                     reason: "pre-copy fixture failure".to_owned(),
+                    kind: None,
                 }
             };
             history.record_finished(id);
@@ -8473,6 +8476,7 @@ pub(crate) mod tests {
         for id in 0..512 {
             history.upsert(id, history_request()).state = SftpTransferState::Failed {
                 reason: "controlled failure".to_owned(),
+                kind: None,
             };
             history.record_finished(id);
         }
@@ -8816,6 +8820,7 @@ pub(crate) mod tests {
             SftpTransferState::Cancelled,
             SftpTransferState::Failed {
                 reason: "owned fixture failure".to_owned(),
+                kind: None,
             },
         ] {
             history.item_mut(0).unwrap().state = terminal;

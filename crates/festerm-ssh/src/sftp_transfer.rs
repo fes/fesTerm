@@ -241,6 +241,7 @@ pub fn gallery_transfer_events(collision: bool) -> Vec<SftpTransferEvent> {
                 transfer_id,
                 destination: Some(destination),
                 reason: "Synthetic permission denied; no transfer was attempted.".into(),
+                kind: None,
             },
             _ => SftpTransferEvent::ItemProgress {
                 batch_id,
@@ -359,6 +360,12 @@ pub struct SftpCollisionResolution {
     pub scope: SftpCollisionScope,
 }
 
+/// Narrow presentation hint; the full diagnostic reason remains unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SftpTransferFailureKind {
+    LocalUploadSourceUnavailable,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SftpTransferState {
     Queued,
@@ -366,8 +373,13 @@ pub enum SftpTransferState {
     AwaitingCollision(SftpCollisionId),
     Running,
     Completed,
-    Failed { reason: String },
-    PublicationUncertain { reason: String },
+    Failed {
+        reason: String,
+        kind: Option<SftpTransferFailureKind>,
+    },
+    PublicationUncertain {
+        reason: String,
+    },
     Cancelled,
     Skipped,
 }
@@ -432,6 +444,7 @@ pub enum SftpTransferEvent {
         transfer_id: SftpTransferId,
         destination: Option<SftpPath>,
         reason: String,
+        kind: Option<SftpTransferFailureKind>,
     },
     ItemPublicationUncertain {
         batch_id: SftpTransferBatchId,
@@ -967,6 +980,17 @@ pub(crate) enum TransferWorkError {
 }
 
 impl TransferWorkError {
+    fn failure_kind(&self) -> Option<SftpTransferFailureKind> {
+        match self {
+            Self::Operation(SftpSessionError::LocalUploadSourceUnavailable { .. }) => {
+                Some(SftpTransferFailureKind::LocalUploadSourceUnavailable)
+            }
+            // Cleanup/close failures retain their complete outcome, even when
+            // the original operation was a refused local source.
+            _ => None,
+        }
+    }
+
     fn publication_uncertain(&self) -> bool {
         match self {
             Self::Operation(SftpSessionError::PublicationUncertain { .. }) => true,
@@ -3033,8 +3057,14 @@ impl WorkerState {
                 self.finish_cancelled(transfer_id, event_sender).await;
             }
             other => {
-                self.finish_failed(transfer_id, None, other.to_string(), event_sender)
-                    .await;
+                self.finish_failed(
+                    transfer_id,
+                    None,
+                    other.to_string(),
+                    other.failure_kind(),
+                    event_sender,
+                )
+                .await;
             }
         }
     }
@@ -3067,6 +3097,7 @@ impl WorkerState {
         transfer_id: SftpTransferId,
         destination: Option<SftpPath>,
         reason: String,
+        kind: Option<SftpTransferFailureKind>,
         event_sender: &Sender<SftpTransferEvent>,
     ) {
         if let Some(item) = self.remove_item(transfer_id) {
@@ -3077,6 +3108,7 @@ impl WorkerState {
                     transfer_id,
                     destination: destination.or(item.destination),
                     reason,
+                    kind,
                 },
             )
             .await;
@@ -3844,6 +3876,53 @@ mod tests {
     // remote basenames slash-separated even when the fixture lives on Windows.
     fn protocol_fixture_path(path: &Path) -> SftpPath {
         SftpPath::remote(display_path(path).replace('\\', "/"))
+    }
+
+    #[test]
+    fn transfer_source_failure_hint_does_not_hide_cleanup_or_unknown_outcomes() {
+        let source = || {
+            TransferWorkError::Operation(SftpSessionError::LocalUploadSourceUnavailable {
+                operation: "read admitted upload source",
+                path: "Documents".into(),
+                reason: "The source or its authority changed. Select the file again.".into(),
+            })
+        };
+        assert_eq!(
+            source().failure_kind(),
+            Some(SftpTransferFailureKind::LocalUploadSourceUnavailable)
+        );
+        assert!(source()
+            .to_string()
+            .contains("local read admitted upload source failed for Documents"));
+        for error in [
+            TransferWorkError::CleanupFailed {
+                operation_error: Box::new(source()),
+                cleanup_error: SftpSessionError::SessionClosed,
+            },
+            TransferWorkError::DirectoryCloseFailed {
+                operation_error: Some(Box::new(source())),
+                close_error: SftpSessionError::SessionClosed,
+            },
+            TransferWorkError::Operation(SftpSessionError::TransferFailedWithIncompleteCleanup {
+                operation_error: Box::new(SftpSessionError::LocalUploadSourceUnavailable {
+                    operation: "read admitted upload source",
+                    path: "Documents".into(),
+                    reason: "changed".into(),
+                }),
+                cleanup_error: Box::new(SftpSessionError::SessionClosed),
+            }),
+            TransferWorkError::Operation(SftpSessionError::LocalOperationFailed {
+                operation: "read admitted upload source",
+                path: "Documents".into(),
+                reason: "The source or its authority changed. Select the file again.".into(),
+            }),
+            TransferWorkError::Operation(SftpSessionError::PublicationUncertain {
+                path: "remote".into(),
+                reason: "unknown publication".into(),
+            }),
+        ] {
+            assert_eq!(error.failure_kind(), None, "{error}");
+        }
     }
 
     #[test]

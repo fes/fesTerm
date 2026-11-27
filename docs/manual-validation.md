@@ -2304,7 +2304,32 @@ published the exact 31-byte source at the original name while preserving the
 kept copy. Independent hashes, cleanup and resource drain were verified.
 That APK displayed **ON THIS iPHONE** in the Android comparison. The later
 Android Download result above records the corrected label. Native iOS
-Upload choices remain pending.
+Upload choices remain pending. For retained-source refusal, verify that mobile
+Upload rows ask to select the changed or unavailable file again; technical
+operation/path details belong in diagnostics. Confirm that cleanup failures and
+unknown publication retain their distinct explanations. The concise copy needs
+fresh native qualification on its changed source.
+[Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
+
+
+MOB-12 Android Linux105 queued-source refusal separately passed on development
+APK `60657878`, source `30890c49`/tree `f5b77f40`, against HOST 0.17.30
+native96/runtime105. **Upload 2** admitted two owned 31-byte sources; the first
+13-byte remote collision held the queue while the second source changed to
+32 bytes at the same inode. One **Skip** left the first row **Skipped** and
+the second **Failed** for source change. Strict observations preserved the
+first 13-byte target and 83-byte preview, with no second output or partial.
+Fresh normal Local Delete removed only the owned 31/32-byte sources; all
+32 original private paths/content and zero Files profiles/five recipes were
+preserved. Exact post-drain cleanup removed only the owned remote target;
+all three original host guards passed and fixture/resume debt was zero.
+Owner exit 1 and its immediate blank drain assertion remain recorded beside
+emulator exit 0 and later positive whole-group/all-states, ports and transport
+drain. Back was PAUSED and finishing false; Activity finish is not claimed.
+The observed technical local-read/Documents prefix motivated the typed concise
+copy above. This old APK does not qualify the new copy, which is verified
+automatically only and still needs fresh native qualification; no whole-mobile
+or release inheritance follows.
 [Android component record](../validation/dev-tunnels/mobile-files-android-native-components.json)
 
 MOB-13 Android Linux105 follow-ups used two development APKs. With
