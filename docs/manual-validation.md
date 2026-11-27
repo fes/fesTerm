@@ -2530,6 +2530,19 @@ later same-identity full Mac comparison established final preservation and zero 
 These are not folder-creation, physical/TestFlight, current-source or release passes.
 [iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
+MOB-13 iOS Simulator Local reviewed-parent Delete passed on pinned SDK `30890c49`
+with Linux HOST30/113. A fresh review showed an owned 29-byte canary; the retained
+sheet survived an operator replacement of its parent with a separate owned parent
+and a different 32-byte canary at the same name. One Confirm stopped with zero of
+one removals confirmed and no Unknown; exact identities and hashes preserved both
+objects. Operator cleanup restored the nine original Documents entries and metadata,
+zero Files profiles and five recipes. Thirteen bounded XCTest calls, owner/boot
+exit 0, full host comparisons and positive resource closure established zero debt.
+The separate Remote swap was unobserved after its confirmation window expired;
+Cancel and exact cleanup followed without Confirm or replay. This does not qualify
+current main, folder creation, physical devices, TestFlight or a whole pair.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
 MOB-13 Android/Linux111 separately verified read-only controls on APK `60657878`
 (source `30890c49`): Upload and remote New folder disabled, remote Delete absent,
 and one 83-byte download with an exact hash. Fresh local Delete removed only that

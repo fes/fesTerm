@@ -465,6 +465,34 @@
         "entries": 1371,
         "sha256": "8d79324046e040857f2d1624bab6bb2f6d628595d9652045f5253088b46f1c5d"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "tree": "f5b77f40c3f7934362cab4bbb4e7737b734b3b7d",
+        "sdk_artifact_sha256": "3d25f8c63245697843f280aa46586432eb9704ef14cdd419bdad810267e5a60f",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "runtime_epoch": 113,
+        "native_epoch": 96,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "A fresh Local Delete review showed only an operator-owned 29-byte canary in its owned parent. Without changing or refreshing that review, an operator moved the original parent aside and placed a separately owned parent at the same name with a different 32-byte canary. One Confirm reported zero of one removals confirmed and stopped, without Unknown. Exact identity and hash checks preserved both the held original and the replacement.",
+        "Exact operator cleanup removed only the owned test trees. All thirteen bounded XCTest calls passed; owner and boot supervisor exited 0. Full original host comparisons, all nine original Documents entries and metadata, zero Files profiles, five recipes, Simulator shutdown, restored VM states and positive process closure passed with zero debt."
+      ],
+      "limits": "Pinned SDK30890 iOS Simulator Local reviewed-parent authority component only. The independent Remote parent swap was unobserved after its confirmation window expired; it was cancelled and cleaned without Confirm or replay. No product folder creation, typing, current-main, physical/TestFlight, whole-pair or release qualification.",
+      "private_receipt_sha256": "88f2ccf147f5aa1f786d5d364cb4b4fdaa3ea832a97caefdccba4cb5328a8de9",
+      "private_final_seal_sha256": "cb95e8651b5ee2a2917f899c3e7e3e87c6697817df27b19170d11100f13188a2",
+      "private_closed_map": {
+        "entries": 716,
+        "sha256": "0eb5b602057268eee498a4dad83e7513cdb284e2afed13a5efbd38af0ca8def2"
+      }
     }
   ],
   "pending": [
