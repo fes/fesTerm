@@ -2235,8 +2235,30 @@ MOB-11–13 failed Refresh: hold an owned folder outside its original name and
 refresh that pane. Require the visible error, no stale selectable rows, and
 unavailable Preview, Download and remote mutation actions. The other pane keeps
 its current listing and controls. Use Up to get a fresh parent listing. The
-rendered regression covers this transition. Native confirmation of the corrected
-behavior remains pending.
+rendered regression covers this transition.
+
+In MOB-11–13, private iOS Simulator SDK `30890c49` kept a selectable Remote
+row after a failed Refresh on Linux117 and enabled Download when selected.
+Private SDK `e4d2d682` showed **Not found**, zero Remote rows, and disabled
+Download and Remote New folder in the same case. Local selection and Delete
+review remained usable through Cancel, and Up restored the parent listing.
+One explicit read-only Retry recovered an initial host Busy of unknown cause.
+All original data was preserved and the exact test fixture was removed. This
+qualifies the pinned Simulator/Linux case. Physical-device, release and wider
+native coverage remain pending.
+[Scoped iOS Simulator record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
+For MOB-12–13, private iOS Simulator SDK `e4d2d682` held open a Remote
+Delete review for an original 83-byte file. Normal Linux Disable retired
+runtime 117 and the review. Normal Enable started runtime 119 with the
+same singleton root, Start, and full settings. Explicit Reconnect opened
+the configured root on the same host with no old review and an empty
+Transfers sheet. The reviewed file and original data were preserved.
+The first GUI binding refusal was retained and corrected before GUI input.
+A separate field focus after Reconnect showed the software keyboard and
+accepted `ftqx` by visible key taps. Cancel dismissed the form without
+Create. These observations cover the pinned Simulator/Linux case.
+[Scoped iOS Simulator record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
 During MOB-11, the 0.17.30 iOS Simulator app aborted on an unavailable Start.
 The private corrected SDK at `e5142f2b` stayed alive, showed the unavailable
