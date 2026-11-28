@@ -77,11 +77,17 @@ transfers. Existing singleton settings retain their encoding shape and read
 rules when only Start in changes.
 The new read route admits supported ordinary data directories while preserving
 strict mutation/publication checks and the separate Write/Delete controls.
-Mounted-volume, starting-directory and allowlist native qualification remain
-pending under [#938](https://github.com/fes/fesTerm/issues/938). New peers can
+Wider mounted-volume, starting-directory and allowlist native qualification
+remains pending under [#938](https://github.com/fes/fesTerm/issues/938). A pinned
+[Linux-to-Mac mounted-volume component](validation/dev-tunnels/macos-noowners-host-client-native-component.json)
+passed discovery of a later-mounted APFS/noowners volume, private/shared-folder
+preview, exact-hash download and a refused write, with complete cleanup.
+Readable-directory metadata also reports strict parent ineligibility to the
+existing mutation controls; that advisory correction has separate regression
+coverage and is not a new-build native visual claim. New peers can
 negotiate read-only link traversal within the explicit allowed union; legacy
-operations retain link refusal. The new Desktop/mobile link workflow still
-requires native qualification; production HOME access is unchanged. On macOS, the
+operations retain link refusal. Broader Desktop/mobile link workflow
+qualification remains open; production HOME access is unchanged. On macOS, the
 new allowlist requires the qualified 27.2.1 native containment boundary; older
 systems retain the existing singleton behavior.
 

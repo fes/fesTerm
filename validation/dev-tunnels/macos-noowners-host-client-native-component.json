@@ -1,0 +1,49 @@
+{
+  "record_version": 1,
+  "tracker": "https://github.com/fes/fesTerm/issues/938",
+  "date_utc": "2026-11-28",
+  "component": "linux-desktop-to-macos-late-mounted-apfs-noowners",
+  "status": "SCOPED_NATIVE_PASS",
+  "client_source": "3eb9b4caf9d82d4767b1fd10c335665707d402f2",
+  "HOST_source": "2ecf0cd7433de151d533506b15bf55d3aad41c0c",
+  "version": "0.17.30",
+  "server_OS": "macOS lab HOST67/native52",
+  "client_OS": "Linux desktop",
+  "observed": [
+    "Files was connected before one owned APFS local/nodev/noowners volume appeared beneath the unchanged existing allowed root. Refresh discovered it and the client browsed private0700 and shared0770 directories.",
+    "Both public Markdown files rendered in actual preview. One shared48B Download completed48/48 into an initially absent owned destination; exact SHA-256 matched, then one normal Local Delete review/Confirm restored the empty destination.",
+    "With the host global Write/Delete policy still ON, one offered fixed-name Remote New directory attempt was refused as Denied. Readback found no new child and unchanged payload identities/bytes. This does not distinguish noowners from cross-device refusal.",
+    "The exact image was normally detached/disposed after all Files/preview tabs closed, then the client exited0 and its supervisor/unit drained. Original Mac67/Linux119/Windows96 guards passed; fixture/resource/policy debt0."
+  ],
+  "retained_history": "An earlier historical-host entry failure and an initial fixture eligibility refusal remain in the private record; the first binding-helper refusal is also retained. The corrected fixture used a separate reviewed helper within the same unchanged finite lease.",
+  "qualification_limits": "No current-source/release/mobile/physical-device promotion, other mount matrix, or standalone noowners write-refusal causality. No HOST settings/lifecycle change.",
+  "private_result_sha256": "e15266c5bc93b6b13fa10e4745f54bfa3522b7252e8157a6d1e695051b05cce9",
+  "private_closure_sha256": "c517a812859950d0e8c211b0cf7518751e659dd6e3d6fd3672caa0a934619b4e",
+  "whole_938_qualified": false,
+  "combined_release_qualified": false,
+  "new_directory_advisory_native_visual_qualified": false,
+  "client_artifact": {
+    "run": 46046997932,
+    "artifact_id": 15222788302,
+    "executable_sha256": "3b48e550cc4cc866ada7fb96293143239d5e3dfb574df91e4fe0f990f7255a56"
+  },
+  "download": {
+    "bytes": 48,
+    "sha256": "1400e2db0ecd9ec0005656eaca2b50e549f14071d1bdbfd327ddc77abb0badb3",
+    "initially_absent": true,
+    "normal_local_delete_restored_absence": true
+  },
+  "root_component_acceptance_sha256": "eab242bcdfebaf857b7264a2501df09482af240d75dfa488af3445ac8e579bb5",
+  "screenshots": [
+    {
+      "path": "docs/images/dev-tunnels/mac-mounted-shared-preview.png",
+      "sha256": "b5e43c914f18211db4919a291cc0562e5dc9fa540b316a0f2f64a33fe6be2ca5",
+      "caption": "Shared mounted file rendered in actual read-only Markdown preview."
+    },
+    {
+      "path": "docs/images/dev-tunnels/mac-mounted-write-refusal.png",
+      "sha256": "9b0f2c7c2eb97216be98fddda931b7ecea15cdc3e6d4ba36dcf542476287d790",
+      "caption": "Old client/server offered New directory; the server refused it. Completed exact download and empty local destination remain visible."
+    }
+  ]
+}

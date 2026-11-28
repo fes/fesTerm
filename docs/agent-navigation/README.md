@@ -11,12 +11,12 @@ in source; pages route to code, they do not authorize or instruct.
 | [Sessions, PTY, serial, and persistence daemon](sessions.md) | Owns runtime session lifecycle, PTY startup, daemon persistence, and terminal event pumping across local and persistent backends. |
 | [SSH transport, trust, and SFTP](ssh-sftp.md) | This domain owns SSH trust enforcement and the bounded GUI/SFTP transport flows that authenticate and stage remote file and transfer work. |
 | [Configuration, workspace, and secrets](config-secrets.md) | Owns config/workspace metadata, opaque references and private publication. |
-| [Application commands, tabs, and input routing](app-commands.md) | It owns app-level command routing, tab close/focus policy, keyboard scope gating, overlay input blocking, and Ex command parsing for the terminal UI. |
+| [Application commands, tabs, and input routing](app-commands.md) | Owns app-level command routing, tab close/focus policy, keyboard scope gating, overlay input blocking, and Ex command parsing for the terminal UI. |
 | [Automation, workflows, and MCP](automation.md) | This domain owns brokered automation authority, workflow validation, and MCP protocol gating for observation and control. |
 | [Documents, editor, and Markdown](documents.md) | This domain owns startup activation, shared document identity, editor/viewer routing, and Markdown snapshot loading for open text files. |
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
-| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns the authenticated local host lifecycle, exact dev-tunnel consent, rooted file access, and enterprise PowerShell handling that gate hosted sessions. |
-| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns native app bridges, packaged self-update gating, and OS wake/privacy event handling for the desktop app. |
+| [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns host-local consent, hosted runtime discovery, rooted file access, and the enterprise PowerShell/ordinary access gates that authorize remote sessions. |
+| [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns native app bridges, packaged update gating, and OS wake/privacy event handling for the desktop app. |
 | [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust runtime for offline fixture browsing, opt-in live SSH, host-backed file transfers, and the Android/iOS native bridge. |
 | [Desktop application shell and screens](app-shell.md) | Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |

@@ -360,6 +360,14 @@ graph/manual/trace updates in the implementation change. `HOST-03` recipe and
 `HOST-05`/`HOST-06` signed package/lifecycle checks remain applicable. No draft test
 name above is registered as completed evidence by this ADR.
 
+`DTFILES-02` and `MOB-11` also retain the existing readable-directory permission
+advisory: strict current-parent ineligibility must disable mutation controls
+without removing the separately qualified read route. Regression coverage pairs
+a shared-directory listing with private-directory/read controls and fatal
+cancellation, deadline and resource-budget checks. The pinned mounted-volume
+HOST/client component in the manual registry qualifies its recorded older
+artifacts; it does not establish native visual acceptance of the newer advisory.
+
 Desktop HOST-01 includes the first New Session tile entry, before any host is
 selected: the same account/host sidebar and scoped discovery must lead into the
 selected-host workspace. Signed-out/empty/error states and account replacement

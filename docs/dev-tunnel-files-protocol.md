@@ -850,6 +850,14 @@ Alias-derived paths and their descendants are read-only. Desktop and mobile
 reuse their existing file managers and permissions to disable upload, mkdir and
 Delete through those paths. Jobs retain their original alias spelling. Direct
 access to an allowed target keeps the existing grant and strict mutation rules.
+An opened readable directory also reports `read_only` when strict mutation
+qualification cannot reopen that same held directory. This includes direct
+shared or subordinate noowners directories whose allowed root still qualifies
+for mutations. The advisory probe shares the request's native-work, descriptor,
+deadline and cancellation limits. Eligibility failure preserves the readable
+route; request-budget failures still abort. The flag is retained for subsequent
+pages. It does not replace action-time checks or promise that later writes will
+succeed.
 All new readable file handles are ineligible for expected replacement proof,
 including after the original name changes into a direct name for the same inode.
 Replacement review continues to use strict `open_read`. Failed read/cursor fences

@@ -25,6 +25,31 @@ pub(crate) struct ReadBudget {
     retained: usize,
     live: usize,
 }
+
+/// Advisory only: strict mutation qualification must never replace or deny the
+/// independently qualified readable route. Compare the exact held directory,
+/// not merely another object that now occupies the same path.
+pub(crate) fn mutation_directory_matches(
+    fs: &Filesystem,
+    path: &str,
+    held: &File,
+    budget: &mut ReadBudget,
+) -> io::Result<bool> {
+    let Some(roots) = fs.locations.as_ref() else {
+        return Ok(false);
+    };
+    let Ok((root, relative)) = super::selected(roots, path) else {
+        return Ok(false);
+    };
+    budget.native(&root.path.join(relative))?;
+    let matches = fs
+        .directory(path)
+        .and_then(|strict| same_object(&strict.into_std_file(), held))
+        .unwrap_or(false);
+    budget.check()?;
+    Ok(matches)
+}
+
 impl ReadBudget {
     pub(crate) fn new(deadline: Instant, cancel: CancellationToken) -> Self {
         Self {
@@ -1013,6 +1038,38 @@ mod tests {
             std::os::windows::fs::symlink_file(&native, path).unwrap();
         }
     }
+    #[test]
+    fn mutation_directory_advisory_preserves_request_budget_errors() {
+        let Some((_base, fs)) = fixture() else {
+            return;
+        };
+        let root = &fs.locations.as_ref().unwrap()[0];
+        let path = root.virtual_root();
+        let held = root.current().unwrap().try_clone().unwrap().into_std_file();
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let cancelled = ReadBudget::new(Instant::now() + std::time::Duration::from_secs(1), cancel);
+        let expired = ReadBudget::new(Instant::now(), CancellationToken::new());
+        let mut descriptors = budget();
+        descriptors.retain(READ_DESCRIPTOR_LIMIT).unwrap();
+        let mut spent_after_probe = budget();
+        spent_after_probe.work = 1;
+        for (mut limited, expected) in [
+            (cancelled, io::ErrorKind::Interrupted),
+            (expired, io::ErrorKind::TimedOut),
+            (descriptors, io::ErrorKind::OutOfMemory),
+            (spent_after_probe, io::ErrorKind::TimedOut),
+        ] {
+            assert_eq!(
+                mutation_directory_matches(&fs, &path, &held, &mut limited)
+                    .expect_err("request failure must not become a successful readonly advisory")
+                    .kind(),
+                expected
+            );
+        }
+    }
+
     #[test]
     fn readable_links_union_directory_file_and_direct_access_keep_provenance() {
         let Some((base, fs)) = fixture() else {

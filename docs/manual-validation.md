@@ -8232,8 +8232,10 @@ Delete and verify further writes/publication/deletion refuse with recovery
 and originals preserved. Mutation controls and failures must reflect current
 eligibility. Existing grants and OS
 permissions must not be broadened for a test. The user's `/` plus `~` example is
-not consent to change the production HOME grant. Native allowlist client workflows remain unrun; isolated macOS API and
-in-process components are not whole-product acceptance.
+not consent to change the production HOME grant. Separately pinned native
+allowlist client components retain their recorded scope; wider mount, race and
+account qualification remains pending. Isolated macOS API and in-process
+components are not whole-product acceptance.
 The opt-in ignored component
 `filesystem::tests::macos_noowners_allowed_location_reads_and_refuses_mutation`
 requires `FESTERM_MACOS_NOOWNERS_TEST_PARENT` to name an existing dedicated,
@@ -8255,6 +8257,27 @@ left no fixture debt. This supplies only the mounted in-process Files component;
 HOST/client, VM, alias/race and whole-#938 qualification remain pending. Other mode/ACL
 conditions may also refuse strict mutation; the test does not claim exclusivity
 of the noowners cause.
+
+A separate [Linux Desktop to Mac HOST component](../validation/dev-tunnels/macos-noowners-host-client-native-component.json)
+connected before an owned APFS/local/nodev/noowners volume was mounted beneath
+the unchanged allowed root. Refresh discovered it; private `0700` and shared
+`0770` Markdown files rendered in actual preview. One 48-byte shared-file
+download matched its source hash, and normal Local Delete restored the empty
+destination. One offered New directory attempt was Denied without a new child;
+this does not isolate noowners from cross-device refusal. Normal image disposal,
+client exit and all three original host checks passed with no remaining debt.
+The record preserves the earlier historical-host selection failure and fixture
+eligibility correction. This is a pinned HOST/client component, not another
+mount matrix, mobile, current-source or combined-release qualification.
+
+The server's readable-directory advisory now reuses strict current-parent
+qualification, so an otherwise readable shared or noowners directory can disable
+mutation controls even when the configured root qualifies. Regression coverage
+must retain a readable shared-parent case, a qualifying private control and
+fatal request-budget checks. The native component above used the older advisory:
+its offered New directory and server refusal do not qualify the new disabled
+control visually. Verify that on the next suitable HOST build without repeating
+the already accepted browse, preview and download checks.
 
 The new macOS scope currently requires the qualified 27.2.1 containment
 boundary. On older macOS versions, verify explicit refusal before setup effects
