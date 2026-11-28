@@ -1,0 +1,27 @@
+{
+  "build": {
+    "binary_sha256": "bc3e9152cc89d56fd80529e134da8bd51e2383a7515a6f1f35964257d1e14726",
+    "dependency_attribution": "The initial offline locked build stopped because the detached crate required lockfile reconciliation. A separate offline pass pruned unused dependency graph entries. All retained registry names, versions, sources and checksums matched the project lock. The first refusal was retained.",
+    "source_adaptation": "Existing crate and production Rust code retained. A minimal workspace wrapper and an isolated lockfile were used. Only the existing test was amended to print an explicit marker after its successful byte and identity assertions."
+  },
+  "combined_release_qualified": false,
+  "component": "linux-production-regular-file-reopen-in-foreign-pid-namespace",
+  "observed": [
+    "The same binary passed exactly one test in the ambient namespace and exactly one in a distinct child PID namespace. Each invocation reached the successful branch, matched its own original object and read the expected 13 bytes. Both used the same mount and user namespaces.",
+    "The child ran as UID and GID 1000 with no supplementary groups or capabilities and with no_new_privs set. Its process ID was 1 in the child namespace, while the inherited outer procfs resolved the same process by its outer PID. The mount and user namespaces were unchanged.",
+    "The build and both test groups drained, and exact scratch cleanup retained only the declared source and binary cache. All original host guards and VM states passed after the temporary Windows pause was restored."
+  ],
+  "platform": "Linux ARM64 dedicated lab VM",
+  "private_result_sha256": "7175f9cc8bcd030ea35b3ceb4def89e4f917dfec9faf236ea58ece94cadef8b0",
+  "private_selected_proof_sha256": "dc54b674562ee208fd2516c9a7fbfad4ae585b7356f8aa98c5aaa159ef481630",
+  "qualification_limits": "In-process foreign-procfs production reopen only. This does not qualify a same-inode bind cover, an unsupported subordinate mount, a deployed HOST/client or mobile path, or a combined release.",
+  "record_version": 1,
+  "rust_version": "1.99.1",
+  "source_commit": "e7305d5b06fbe2d3316d3f8e5230f7f752e570dd",
+  "status": "SCOPED_NATIVE_PASS",
+  "test": "contained_data::linux_tests::pinned_regular_reopen_uses_kernel_self_proc_and_mount_identity",
+  "tracker": "https://github.com/fes/fesTerm/issues/938",
+  "whole_938_qualified": false,
+  "date_utc": "2026-11-28",
+  "private_reliability_review_sha256": "22cf9d42b522d919b297f3daa89c112a3aeae6b47e30c3003260f36571d8f83b"
+}

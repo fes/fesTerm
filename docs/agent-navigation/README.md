@@ -17,7 +17,7 @@ in source; pages route to code, they do not authorize or instruct.
 | [Terminal recording and export](recording.md) | Owns private terminal capture, privacy enforcement, synchronized export staging, and source-safe replay recovery for terminal recordings. |
 | [Dev tunnels, enterprise, and PowerShell](tunnels-enterprise.md) | This domain owns host-local consent, hosted runtime discovery, rooted file access, and the enterprise PowerShell/ordinary access gates that authorize remote sessions. |
 | [Desktop platform integration and packaging](desktop-platform.md) | Desktop platform integration owns native app bridges, packaged update gating, and OS wake/privacy event handling for the desktop app. |
-| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust runtime for offline fixture browsing, opt-in live SSH, host-backed file transfers, and the Android/iOS native bridge. |
+| [Mobile hosts (iOS and Android)](mobile.md) | The mobile domain owns the shared Rust app runtime, offline fixture browsing, opt-in live SSH, and Android/iOS native bridging for file transfers and host-backed sessions. |
 | [Desktop application shell and screens](app-shell.md) | Desktop app shell owns startup, the egui frame lifecycle, and stateful screen commands for terminal panes and settings. |
 | [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |
 | [State: Session lifecycle](state-session-lifecycle.md) | Checked transition map with evidence; open for lifecycle questions. |
