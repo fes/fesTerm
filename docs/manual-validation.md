@@ -2598,6 +2598,32 @@ route, not directory creation or the previously failing typing API. Physical,
 current-main mobile and release qualification remain separate.
 [iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
 
+MOB-13 iOS Simulator/Linux119 separately passed metadata-only Files-profile
+Edit/Cancel and unchanged Save only on pinned SDK e4d2d682, without opening
+another Files connection. The suggested destination retained the same UUID,
+name, creation time, full destination and all other fields across Save and
+reopened Edit. Fresh normal Delete removed only the test shortcut and restored
+zero Files profiles, all five original recipes and the original account.
+Sixteen bounded calls and owner/boot exit0 preserved Documents9, metadata and
+all three hosts, with zero debt. No actual network outage or offline
+connection was tested. Rename was not attempted in this Simulator cohort;
+sign-out, lock, restart and physical/current-release claims remain separate.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
+MOB-12/MOB-13 physical iPhone checks are separately **user-reported** on
+TestFlight 0.17.30 (2611280131), updated without deleting app data. Against
+the user's macOS host, the user reported Remote and This iPhone creation
+of `fesTerm check 0131 café`, existing-name refusal on both sides without
+replacement, and a saved Files destination renamed through Edit → Save only
+with the persisted name visible after reopening Edit. The server was last
+separately observed on HOST 0.17.29; this report does not freshly attest it.
+The folders and renamed profile remain user-created test data; no Root cleanup,
+phone screenshots, exact hashes or original-data restoration are claimed.
+Linux/Windows Remote mkdir, explicit device layout/keyboard-mode checks and
+combined-release qualification remain separate. Earlier Simulator Create
+attempts remain UNOBSERVED.
+[iOS component record](../validation/dev-tunnels/mobile-files-ios-native-components.json)
+
 MOB-13 Android/Linux111 separately verified read-only controls on APK `60657878`
 (source `30890c49`): Upload and remote New folder disabled, remote Delete absent,
 and one 83-byte download with an exact hash. Fresh local Delete removed only that

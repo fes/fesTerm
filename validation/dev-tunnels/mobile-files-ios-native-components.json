@@ -646,12 +646,78 @@
       "private_receipt_sha256": "5e01954e1efe91fecbf796b6f463ffde9e3e2bbb899babc15c8b74bc3ab86be8",
       "private_closure_sha256": "f98cb80a819017a9a5e8fce7f8431bd43b39d3a9c340f77e004804f9a6fca2ff",
       "private_acceptance_sha256": "cecdbbfabe717c81b089ea06ba57a4a791dd69680453e2e1b58d082a1d0cbdea"
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "e4d2d68236339e37c411981896c47abdcf8de8cd",
+        "tree": "a720cbfa3b2db4b396573c840ecc63899a7f773d",
+        "sdk_artifact_receipt_sha256": "f2268b24a4d365770d48a3cac3aabd1181f1c71f09eec217e2aae0c50b298b61",
+        "executable_sha256": "5bf5308928716742a5fe690c0d4f2cc96f625aae1240ccea0963548b5b3f6194",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "runtime_epoch": 119,
+        "native_epoch": 96
+      },
+      "accepted_components": [
+        "Saved a suggested Files destination, closed Files with no open work and opened its metadata-only Edit screen without opening another Files connection. Cancel preserved the shortcut.",
+        "Fresh offline Edit and Save only without text changes retained the same profile UUID, name, creation time, full destination and all other fields. Reopening Edit showed the persisted value; last-used remained exact.",
+        "Fresh normal Delete profile review and one confirmation removed only the test shortcut, restoring zero Files profiles, all five original recipes and the original account."
+      ],
+      "preservation": "Sixteen bounded calls passed; owner and boot exited zero. Original Documents9 and metadata, all three hosts, owned-process closure, Simulator shutdown and original VM states were preserved with zero debt.",
+      "limits": [
+        "Optional rename was not attempted and remains unqualified in this Simulator cohort; no keyboard or typing repair is claimed.",
+        "Pinned Simulator component only; no physical-device/current-main mobile/release or whole-pair promotion.",
+        "Metadata-only offline editing is qualified; no actual network-outage or offline-connect behavior is claimed."
+      ],
+      "private_receipt_sha256": "cd82f0ac4ec24d5384cf1b1094107df5a634efe6cb14368964698479667e5c16",
+      "private_final_seal_sha256": "dacd4070afeac5a277ed2fab5e4c7dd34d9bc8422d7bd7687e3a2c57814ed718",
+      "private_closed_map": {
+        "entries": 820,
+        "sha256": "b0369728b999b1ac05dce4ee850e81bb1039ba43081fd3d0f22ad72e639b143a"
+      },
+      "private_acceptance_sha256": "113ddbc722fda851e9e33f87e7c738f2b9063194a1e21bc45440e7d13c47e6c0"
+    },
+    {
+      "evidence_kind": "USER-REPORTED physical-device manual checks",
+      "client_build": {
+        "platform": "Physical iPhone",
+        "distribution": "TestFlight",
+        "version": "0.17.30",
+        "build": "2611280131",
+        "distribution_source_commit": "ed63100d7a343f4ad2dd84e867a8152a2c30dfb7",
+        "installation": "User reported updating without deleting app data; no independent installed-byte attestation."
+      },
+      "server": {
+        "label": "User's macOS host",
+        "os": "macOS",
+        "version": "Last separately observed HOST 0.17.29; not freshly attested by this report.",
+        "grant": "Existing personal home-folder grant; no configuration change requested."
+      },
+      "user_response": "All checks pass",
+      "accepted_components": [
+        "Remote and This iPhone each created the exact spaced Unicode folder name fesTerm check 0131 café.",
+        "Repeating that exact name on each side refused the existing name without replacement.",
+        "Saved the Files destination, renamed it through Edit and Save only, then reopened Edit and observed the persisted name."
+      ],
+      "preservation": "The user reported updating with app data preserved. The test folders and renamed profile were intentionally user-created and were not removed by Root; no exact original-data restoration claim.",
+      "limits": [
+        "User-reported observations, not independently captured screenshots, phone filesystem identities/hashes or a fresh server attestation.",
+        "Remote product creation is qualified only against this macOS host; actual iOS Remote creation on Linux and Windows remains pending.",
+        "No explicit keyboard-mode, occlusion or compact-layout validation; no account/lock/identity-retirement or combined-release promotion.",
+        "Prior Simulator Create attempts remain separately UNOBSERVED; this report does not relabel them."
+      ],
+      "private_user_report_sha256": "68369299f1180edbff7996266717be874de44dc05e3fd66392f1e82d0c526526"
     }
   ],
   "pending": [
     "Full iOS pairs and the combined mobile Files campaign.",
-    "Product folder creation, physical-device validation, and wider Local and remote Delete crosscuts. Pinned on-screen name entry is qualified separately.",
-    "Wider in-flight transfer, same-queue continuation and background-completion coverage beyond the scoped macOS retirement and reconnect runs below.",
+    "Actual iOS Remote product folder creation on Linux and Windows, remaining folder-name validation, explicit physical-device layout and keyboard-mode checks, and wider Local and remote Delete crosscuts remain pending. Pinned name entry and user-reported iPhone/macOS creation, existing-name refusal and persisted profile rename are qualified separately.",
+    "Native account, lock and identity retirement and interrupted-result cases remain pending; reuse the separately accepted active-cancellation, same-queue continuation and foreground-retirement components. Optional background transfer completion remains separate.",
     "Native testing of current main and production-release qualification."
   ]
 }
