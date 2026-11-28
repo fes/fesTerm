@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "91d88847798145d8b3e6c547e041002748ea8e78cd3aa0ac3ad8265fd4234348"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "905f80ee64d3d768e1fbef9dabbf80529d9c30931ecc4603b60f136a0f95e674"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration owns native app bridges, packaged self-update gating, and OS wake/privacy event handling for the desktop app.
+Desktop platform integration owns native app bridges, packaged update gating, and OS wake/privacy event handling for the desktop app.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -13,10 +13,10 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 Use for: How does a packaged build decide whether self-update is available and which install kind it is?
 
 - [`InstallationKind`](../../app/festerm/src/updates.rs) — maps build markers to developer, managed, and self-update states
-- [`UpdateController`](../../app/festerm/src/updates.rs) — carries install kind, verification key, and the gated update flow
+- [`UpdateController`](../../app/festerm/src/updates.rs) — holds install kind, verification key, and the gated update flow
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — packaged releases refuse update checks without a verification key
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — packaged builds refuse update checks without a verification key
 - [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — only supported packaged self-update markers are installable
 
 Caveats:
@@ -60,8 +60,8 @@ Caveats:
 
 Use for: Which wake or privacy events trigger resume and lost-state handling?
 
-- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — listens for Linux logind resume notifications and invokes wake
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — listens for Windows resume broadcasts and invokes wake
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — wakes on Linux logind resume notifications
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — wakes on Windows resume broadcasts
 
 Evidence:
 - [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — only resume edges wake; suspend is intentionally ignored
