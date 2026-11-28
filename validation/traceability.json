@@ -7822,6 +7822,8 @@
         "readable_links_budget_cancel_and_unsupported_resource_errors_are_fatal",
         "readable_links_requests_refuse_without_explicit_locations",
         "readable_links_directory_rows_and_descendants_are_read_only",
+        "readable_directory_reports_strict_parent_eligibility_without_blocking_reads",
+        "mutation_directory_advisory_preserves_request_budget_errors",
         "readable_links_union_directory_file_and_direct_access_keep_provenance",
         "readable_links_alias_root_and_popped_directory_changes_fail_validation",
         "readable_links_same_inode_cutover_never_supplies_replacement_proof",

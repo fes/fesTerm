@@ -945,6 +945,13 @@ impl Session {
                 )
                 .map_err(locations::ReadError::into_io)?;
                 let value = metadata(&resolved.file)?;
+                let read_only = resolved.read_only
+                    || !locations::mutation_directory_matches(
+                        &self.filesystem,
+                        &path,
+                        &resolved.file,
+                        &mut budget,
+                    )?;
                 budget.check_live(3)?;
                 let directory = Dir::from_std_file(resolved.file.try_clone()?);
                 let entries = Box::new(directory.entries()?);
@@ -955,13 +962,13 @@ impl Session {
                     .validate(&self.filesystem, &resolved.file, &mut budget)?;
                 Reply::ReadableDirectory {
                     metadata: value,
-                    read_only: resolved.read_only,
+                    read_only,
                     handle: self.insert(Handle::Directory {
                         path,
                         entries,
                         held: resolved.file,
                         readable_proof: Some(resolved.proof),
-                        read_only: resolved.read_only,
+                        read_only,
                         _parents: Vec::new(),
                     })?,
                 }
@@ -1763,6 +1770,118 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn readable_directory_reports_strict_parent_eligibility_without_blocking_reads() {
+        use std::os::unix::fs::PermissionsExt;
+        fn observed(session: &mut Session, operation: Operation, stage: &str) -> Reply {
+            session
+                .execute(operation, vec![], &CancellationToken::new())
+                .unwrap_or_else(|error| panic!("{stage}: {error:?}"))
+                .0
+        }
+        fn read_private_original(session: &mut Session, path: &str) {
+            let read = handle(observed(
+                session,
+                Operation::OpenReadableFile { path: path.into() },
+                "open private-route original file",
+            ));
+            let (_, bytes) = session
+                .execute(
+                    Operation::Read {
+                        handle: read,
+                        offset: "0".into(),
+                        length: 32,
+                    },
+                    vec![],
+                    &CancellationToken::new(),
+                )
+                .expect("read previously permitted private-route file bytes");
+            assert_eq!(bytes.unwrap(), b"original");
+            run(session, Operation::Close { handle: read });
+        }
+        let Some((base, mut session, selector)) = readable_fixture() else {
+            return;
+        };
+        let allowed = base.path().join("allowed");
+        let shared = allowed.join("inside");
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o770)).unwrap();
+        std::fs::write(shared.join("original"), b"original").unwrap();
+        std::fs::write(allowed.join("readable-original"), b"original").unwrap();
+        let root = session.filesystem.location_metadata().unwrap().remove(0);
+        if !root.mutations_available {
+            assert!(session.filesystem.directory(&selector).is_err());
+            eprintln!("strict private-root positive control unavailable on this native fixture");
+            return;
+        }
+        let shared_path = format!("{selector}/inside");
+        let private_file = format!("{selector}/readable-original");
+        read_private_original(&mut session, &private_file);
+        assert!(session.filesystem.directory(&shared_path).is_err());
+        let Reply::ReadableDirectory {
+            handle: cursor,
+            read_only,
+            ..
+        } = observed(
+            &mut session,
+            Operation::OpenReadableDirectory {
+                path: shared_path.clone(),
+            },
+            "open readable shared directory",
+        )
+        else {
+            panic!("readable shared directory");
+        };
+        assert!(
+            read_only,
+            "direct shared parent must advertise strict mutation refusal"
+        );
+        let Reply::ReadableEntries { entries, .. } = observed(
+            &mut session,
+            Operation::ReadDirectory {
+                handle: cursor,
+                limit: rpc::PAGE_LIMIT,
+            },
+            "list readable shared directory",
+        ) else {
+            panic!("shared directory remains listable");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "original");
+        assert!(entries[0].read_only);
+        run(&mut session, Operation::Close { handle: cursor });
+        read_private_original(&mut session, &private_file);
+        assert!(session
+            .execute(
+                Operation::Mkdir {
+                    path: format!("{shared_path}/refused"),
+                },
+                vec![],
+                &CancellationToken::new(),
+            )
+            .is_err());
+        let Reply::ReadableDirectory {
+            handle: private,
+            read_only,
+            ..
+        } = observed(
+            &mut session,
+            Operation::OpenReadableDirectory { path: selector },
+            "open qualified private control",
+        )
+        else {
+            panic!("qualified private control");
+        };
+        assert!(
+            !read_only,
+            "strictly eligible private parent remains available"
+        );
+        run(&mut session, Operation::Close { handle: private });
+        assert!(session.handles.is_empty());
+        assert_eq!(std::fs::read(shared.join("original")).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&shared).unwrap().count(), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn readable_links_directory_rows_and_descendants_are_read_only() {
         use std::os::unix::fs::symlink;
         let Some((base, mut session, selector)) = readable_fixture() else {
@@ -1772,6 +1891,8 @@ mod tests {
         std::fs::write(allowed.join("inside/target"), b"original").unwrap();
         symlink("inside", allowed.join("alias")).unwrap();
         symlink("inside", allowed.join("alias-two")).unwrap();
+        let root_read_only =
+            !session.filesystem.location_metadata().unwrap()[0].mutations_available;
         let root = handle(run(
             &mut session,
             Operation::OpenReadableDirectory {
@@ -1797,7 +1918,12 @@ mod tests {
             };
             pages += 1;
             assert!(pages <= 4, "short pages must advance the same cursor");
-            assert!(page.iter().filter(|entry| entry.read_only).count() <= 1);
+            assert!(
+                page.iter()
+                    .filter(|entry| matches!(entry.name.as_str(), "alias" | "alias-two"))
+                    .count()
+                    <= 1
+            );
             entries.extend(page);
             if done {
                 break;
@@ -1813,7 +1939,7 @@ mod tests {
             && entry.read_only));
         assert!(entries.iter().any(|entry| entry.name == "inside"
             && matches!(entry.kind, rpc::Kind::Directory)
-            && !entry.read_only));
+            && entry.read_only == root_read_only));
         run(&mut session, Operation::Close { handle: root });
         let alias = format!("{selector}/alias");
         assert!(session
@@ -2680,6 +2806,21 @@ mod tests {
             assert_eq!(roots.len(), 1);
             let root = &roots[0];
             assert!(root.available && !root.mutations_available);
+            let Reply::ReadableDirectory {
+                handle: cursor,
+                read_only,
+                ..
+            } = run(
+                &mut session,
+                Operation::OpenReadableDirectory {
+                    path: root.virtual_root(),
+                },
+            )
+            else {
+                panic!("noowners directory remains readable");
+            };
+            assert!(read_only, "noowners directory must not advertise mutations");
+            run(&mut session, Operation::Close { handle: cursor });
             let path = format!("{}/{MARKER}", root.virtual_root());
             let read = handle(run(
                 &mut session,

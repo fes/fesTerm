@@ -2,7 +2,8 @@
 //! of each immutable virtual path; pane selection never retargets an object.
 mod links;
 pub(super) use links::{
-    resolve_read, resolve_read_child, ReadBudget, ReadError, ReadProof, READ_DESCRIPTOR_LIMIT,
+    mutation_directory_matches, resolve_read, resolve_read_child, ReadBudget, ReadError, ReadProof,
+    READ_DESCRIPTOR_LIMIT,
 };
 
 use super::*;
