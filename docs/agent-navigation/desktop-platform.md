@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "d3c204d7736c7643e8c35002496f50595c3cc2726706372dfe0bf9afba78d7dc"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "a81b225b5939fd6586b2fafd6dfd93ab72285a2f9283877cb2cad1d5ce48583f"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -12,12 +12,12 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: How does a packaged build decide whether self-update is available and which install kind it is?
 
-- [`InstallationKind`](../../app/festerm/src/updates.rs) — Maps build markers to developer, managed, and self-update states.
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Carries install kind, verification key, and the gated update flow.
+- [`InstallationKind`](../../app/festerm/src/updates.rs) — maps build markers to developer, managed, and self-update states
+- [`UpdateController`](../../app/festerm/src/updates.rs) — carries install kind, verification key, and the gated update flow
 
 Evidence:
-- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — Packaged releases refuse update checks without a verification key.
-- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — Only supported packaged self-update markers are installable.
+- [`packaged_builds_fail_closed_without_a_public_key`](../../app/festerm/src/updates.rs) — packaged releases refuse update checks without a verification key
+- [`known_self_update_formats_are_installable`](../../app/festerm/src/updates.rs) — only supported packaged self-update markers are installable
 
 Caveats:
 - Install markers gate updater availability, not code signing.
@@ -28,12 +28,12 @@ Caveats:
 
 Use for: What does CI prove for a live native window and PTY in the app event loop?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Runs the real PTY smoke flow inside the production app event loop.
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Builds the smoke run from env and enforces required result-path setup.
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — runs the real PTY smoke flow inside the production app event loop
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — builds the smoke run from env and enforces required result-path setup
 
 Evidence:
-- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — Enforces the one-of env-var contract for native smoke mode.
-- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — Validates emoji width and trailing ASCII in the smoke fixture.
+- [`smoke_mode_requires_an_explicit_environment_variable`](../../app/festerm/src/native_smoke.rs) — enforces the one-of env-var contract for native smoke mode
+- [`native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii`](../../app/festerm/src/native_smoke.rs) — validates emoji width and trailing ASCII in the smoke fixture
 
 Caveats:
 - Exactly one smoke mode and result path may be active.
@@ -44,12 +44,12 @@ Caveats:
 
 Use for: How do Finder or AppKit events enter the macOS app and turn into commands?
 
-- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — Installs the Finder AppleEvent bridge before app activation.
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Emits shared app commands from native AppKit menu selectors.
+- [`install_open_document_bridge`](../../crates/festerm-macos-window/src/lib.rs) — installs the Finder AppleEvent bridge before app activation
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — emits shared app commands from native AppKit menu selectors
 
 Evidence:
-- [`open_document_appleevent_descriptor_coerces_file_urls_to_paths`](../../crates/festerm-macos-window/src/lib.rs) — Exercises queued Finder opens through a real AppleEvent file URL flow.
-- [`native_menu_actions_map_to_shared_commands`](../../crates/festerm-macos-window/src/lib.rs) — Confirms AppKit menu actions map to shared app commands.
+- [`open_document_appleevent_descriptor_coerces_file_urls_to_paths`](../../crates/festerm-macos-window/src/lib.rs) — exercises queued Finder opens through a real AppleEvent file URL flow
+- [`native_menu_actions_map_to_shared_commands`](../../crates/festerm-macos-window/src/lib.rs) — confirms AppKit menu actions map to shared app commands
 
 Caveats:
 - The bridge queues Finder opens until the app drains and routes them.
@@ -60,12 +60,12 @@ Caveats:
 
 Use for: Which wake or privacy events trigger resume and lost-state handling?
 
-- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — Listens for Linux logind resume notifications and invokes wake.
-- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Listens for Windows resume broadcasts and invokes wake.
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — listens for Linux logind resume notifications and invokes wake
+- [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — listens for Windows resume broadcasts and invokes wake
 
 Evidence:
-- [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — Only resume edges wake; suspend is intentionally ignored.
-- [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — Treats resume broadcasts as actual wake events.
+- [`only_resume_prepare_for_sleep_events_wake`](../../crates/festerm-linux-power/src/lib.rs) — only resume edges wake; suspend is intentionally ignored
+- [`automatic_and_user_visible_resume_events_wake`](../../crates/festerm-windows-power/src/lib.rs) — treats resume broadcasts as actual wake events
 
 Caveats:
 - Resume counts as wake; suspend is intentionally ignored.
