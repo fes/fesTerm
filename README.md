@@ -82,9 +82,12 @@ remains pending under [#938](https://github.com/fes/fesTerm/issues/938). A pinne
 [Linux-to-Mac mounted-volume component](validation/dev-tunnels/macos-noowners-host-client-native-component.json)
 passed discovery of a later-mounted APFS/noowners volume, private/shared-folder
 preview, exact-hash download and a refused write, with complete cleanup.
-Readable-directory metadata also reports strict parent ineligibility to the
-existing mutation controls; that advisory correction has separate regression
-coverage and is not a new-build native visual claim. New peers can
+Separate in-process components qualify the [source-pinned macOS noowners advisory](validation/dev-tunnels/macos-noowners-files-native-component.json)
+and [Linux regular-file reopening with foreign procfs](validation/dev-tunnels/linux-foreign-procfs-native-component.json).
+These preserve their source and fixture attribution; neither is a deployed
+control-state or combined-release claim. Readable-directory metadata reports
+strict parent ineligibility to existing mutation controls; a fresh disabled-control
+visual check remains pending. New peers can
 negotiate read-only link traversal within the explicit allowed union; legacy
 operations retain link refusal. Broader Desktop/mobile link workflow
 qualification remains open; production HOME access is unchanged. On macOS, the

@@ -81,5 +81,38 @@
     "No mount, OS-permission, production-grant or server-setting changes.",
     "No alias traversal, raced replacement, mount cutover, account retirement, ownership-enforcing positive mutations or broader mounted/shared matrix credit.",
     "Noowners UID/mode does not prove inter-user exclusivity; quiescence is an operator prerequisite and check-then-unlink is not atomic against concurrent local replacement."
+  ],
+  "follow_up_components": [
+    {
+      "component": "macos-noowners-current-readable-directory-advisory",
+      "date_utc": "2026-11-28",
+      "status": "SCOPED_IN_PROCESS_NATIVE_PASS",
+      "source_commit": "e9f80c648b0fdd9b779788c873eb1b0da6718462",
+      "tested_rust_sha256": {
+        "crates/festerm-tunnel-bridge/src/filesystem.rs": "0c2245f943179f37dfc58a57e5e4e63711984b9f8e2eeb9597babe946e67e66d",
+        "crates/festerm-tunnel-bridge/src/filesystem/locations.rs": "c329f250671bcd165848a1a77a02fa0fe07b7080461397d0c6d52f361121d48c",
+        "crates/festerm-tunnel-bridge/src/filesystem/locations/links.rs": "5d2440b300aa07f5116fd5685bae06af3d35e14ccfb0dca66d81f110b657dbca"
+      },
+      "test_binary_sha256": "f0085c1294aa93a51902910853eb4e8ec2bc84ff6c1c5d589eb5c132004cb88a",
+      "version": "0.17.30",
+      "platform": "Operator macOS27.2.1; existing local APFS/nodev/noowners volume",
+      "test": "filesystem::tests::macos_noowners_allowed_location_reads_and_refuses_mutation",
+      "observed": [
+        "The exact ignored component executed once, with a raw OS exclusive mkdir/write/read positive control and successful production Files read.",
+        "OpenReadableDirectory returned read_only=true on the actual noowners parent. Mkdir, upload staging and Delete review were Denied with global grants enabled; no effects, leaked handles or fixture changes.",
+        "Exact owned child and parent cleanup completed, the test process group drained, and all three original host guards and VM states were preserved after the temporary Windows pause."
+      ],
+      "retained_history": "The prior pre-effect pressure refusal is retained separately and is not counted as a native pass.",
+      "limits": [
+        "In-process production API evidence only; this is not a deployed HOST/client visual qualification or whole#938/combinedrelease acceptance.",
+        "Mode or ACL conditions may additionally deny mutations; no claim that noowners was the exclusive cause.",
+        "Existing Linux GUI3eb consumer already maps the flag to mutation controls; actual new signed-HOST control visuals remain a separate narrowly scoped check."
+      ],
+      "private_result_sha256": "a8e47e3a98ce31ded1d0e0c41f17932d62b33ab1b6c3fcf99de746d80ae03f43",
+      "private_native_stdout_sha256": "860547ccd07fcf82ddcd6399a437c770e3978747b1c49590fbe1ccbcecb38db0",
+      "private_native_stderr_sha256": "372016a967556a2777e810ed461b507a874accc421474a4610813feaf65a9c41",
+      "whole_938_qualified": false,
+      "combined_release_qualified": false
+    }
   ]
 }

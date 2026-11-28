@@ -8258,6 +8258,23 @@ HOST/client, VM, alias/race and whole-#938 qualification remain pending. Other m
 conditions may also refuse strict mutation; the test does not claim exclusivity
 of the noowners cause.
 
+A separately attributed follow-up in that macOS API record ran the current
+production directory advisory once on the operator's existing noowners volume:
+`OpenReadableDirectory` returned `read_only=true`, ordinary read succeeded, and
+Mkdir, upload staging and Delete review were Denied with global grants enabled.
+The raw OS write control and exact cleanup passed. This is in-process API
+qualification, not a deployed HOST/client visual check.
+
+A [Linux production reopen component](../validation/dev-tunnels/linux-foreign-procfs-native-component.json)
+ran the same source-pinned binary once in the ambient PID namespace and once
+in a distinct PID namespace with the original procfs, user and mount namespaces.
+Each invocation matched its own original object and read the expected 13 bytes;
+the foreign test process itself reported PID 1 while procfs identified its outer
+PID. The candidate executed as UID/GID 1000 after capability removal and
+`no_new_privs`. The marker-only test adaptation, isolated lock graph, initial
+lock refusal and clean closure remain attributed. This does not qualify a
+same-inode bind cover, unsupported subordinate mount or deployed HOST/client.
+
 A separate [Linux Desktop to Mac HOST component](../validation/dev-tunnels/macos-noowners-host-client-native-component.json)
 connected before an owned APFS/local/nodev/noowners volume was mounted beneath
 the unchanged allowed root. Refresh discovered it; private `0700` and shared
@@ -8276,8 +8293,12 @@ mutation controls even when the configured root qualifies. Regression coverage
 must retain a readable shared-parent case, a qualifying private control and
 fatal request-budget checks. The native component above used the older advisory:
 its offered New directory and server refusal do not qualify the new disabled
-control visually. Verify that on the next suitable HOST build without repeating
-the already accepted browse, preview and download checks.
+control visually. On the next suitable signed HOST build, keep one known Local
+public file selected and verify New directory and Upload are enabled in a
+strictly eligible private parent, disabled after opening a readable ineligible
+shared/noowners parent, and restored after returning to the eligible parent.
+Reuse the accepted browse, preview and download components; do not repeat their
+transfers or a whole native matrix for this control-state check.
 
 The new macOS scope currently requires the qualified 27.2.1 containment
 boundary. On older macOS versions, verify explicit refusal before setup effects
