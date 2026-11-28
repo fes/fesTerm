@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "15a57d70860147af85a45be42f49b056bea1eab3bd6bd6d9d3324e7b4a5ade42"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "de2e48be8f962d4b3a31fead5656f044fb1cdd934eb33a8ee6159d53c6cea589"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Owns the app-level command router, tab activation lifecycle, keyboard gating, modal overlays, and editor command parsing for the terminal UI.
+It owns app-level command routing, tab close/focus policy, keyboard scope gating, overlay input blocking, and Ex command parsing for the terminal UI.
 
 Canonical docs: [docs/application-command-model.md](../../docs/application-command-model.md), [docs/gui-action-graph.md](../../docs/gui-action-graph.md), [docs/keyboard-shortcuts.md](../../docs/keyboard-shortcuts.md)
 
@@ -14,6 +14,7 @@ Use for: A widget or launcher needs to turn a gesture into a state-changing app 
 
 - [`AppCommand`](../../app/festerm/src/tabs.rs) — typed app intents emitted by widgets, menus, and launchers
 - [`dispatch`](../../app/festerm/src/tabs.rs) — single mutation path from command to tab and session state
+- [`AppState`](../../app/festerm/src/tabs.rs) — stores active tab, history, singleton surfaces, and routed state
 
 Evidence:
 - [`closing_a_tab_returns_to_the_one_it_was_opened_from`](../../app/festerm/src/tabs.rs) — proves opener fallback beats adjacent-tab fallback
@@ -29,6 +30,7 @@ Caveats:
 Use for: A tab is closing and the fallback focus target must be chosen
 
 - [`close`](../../app/festerm/src/tabs.rs) — removes the tab and selects the next active tab
+- [`AppState`](../../app/festerm/src/tabs.rs) — records activation history for fallback decisions and singleton exclusions
 
 Evidence:
 - [`without_a_history_a_close_falls_back_to_the_tab_on_the_left`](../../app/festerm/src/tabs.rs) — proves neighbor fallback when activation history is empty
