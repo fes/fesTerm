@@ -1,7 +1,7 @@
 {
   "record_version": 1,
   "tracker": "https://github.com/fes/fesTerm/issues/778",
-  "date_utc": "2026-11-27",
+  "date_utc": "2026-11-28",
   "status": "Scoped iOS Simulator Files components accepted against three pinned hosts. Full pair and release qualification remain open.",
   "mobile_files_item25_complete": false,
   "combined_release_qualified": false,
@@ -577,6 +577,75 @@
         "entries": 628,
         "sha256": "1ab39bc271e332a7a2ebebb628ed5eb4fb732955a8ad5159425857e8a1033d36"
       }
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "e4d2d68236339e37c411981896c47abdcf8de8cd",
+        "tree": "a720cbfa3b2db4b396573c840ecc63899a7f773d",
+        "sdk_artifact_sha256": "f2268b24a4d365770d48a3cac3aabd1181f1c71f09eec217e2aae0c50b298b61",
+        "executable_sha256": "5bf5308928716742a5fe690c0d4f2cc96f625aae1240ccea0963548b5b3f6194",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "runtime_epoch": 117,
+        "native_epoch": 96,
+        "write": true,
+        "delete": true,
+        "original_singleton_policy": true
+      },
+      "accepted_components": [
+        "One Remote Refresh while an owned current folder was held absent showed Not found and an empty Remote listing with no selected item. The stale entry disappeared and Download and Remote New folder were disabled.",
+        "During the Remote error, the original Local file remained selectable and opened a fresh Local Delete review. Cancel preserved it. Normal Up cleared the Remote error, loaded the parent, and enabled Upload for the retained Local selection. No transfer or Delete Confirm was attempted."
+      ],
+      "prior_native_failure": {
+        "source_commit": "30890c49165c7b7d2a89d6f0cb344f1db484b676",
+        "runtime_epoch": 117,
+        "observation": "The prior private SDK retained a selectable cached Remote entry after Not found and enabled Download when selected. No transfer ran.",
+        "private_receipt_sha256": "f9c88414584ba7f6a2ad59040a83d36fd7a0721d8baa5786ae8219d54a55211a"
+      },
+      "first_results_retained": "The host initially reported Busy during inventory. One explicit read-only Retry recovered the same host inventory. The cause of Busy is unknown. Two local control refusals occurred before their respective fixture effects and were corrected before proceeding.",
+      "preservation": "One in-place product install passively relocated the Data container with the same Data and Documents identities, all nine original Documents entries and metadata. The frozen R9 runner was reused. The exact held fixture was restored and removed. All eleven bounded calls passed, both owner and boot supervisor exited 0, and all three strict host checks, owned-process drain, Simulator shutdown and VM restoration passed with zero debt.",
+      "limits": "Covers this pinned iOS Simulator and Linux failed-refresh case only. Physical-device, release and full mobile Files qualification remain pending.",
+      "private_receipt_sha256": "f4a4a64155cf5dc955f525307490aa2bea6b3c2ce1da159bea8eeb0a537576ca",
+      "private_closure_sha256": "eeb4e8df4663e86737a8913da7971d81e85f11675f01db87fb4b3ff12eca4289",
+      "private_acceptance_sha256": "3698f1e586659d5293768628979264be9b96dc3b37a7324c2891001307c14f24"
+    },
+    {
+      "client_build": {
+        "platform": "arm64 iOS Simulator",
+        "kind": "Private host-clients SDK",
+        "commit": "e4d2d68236339e37c411981896c47abdcf8de8cd",
+        "tree": "a720cbfa3b2db4b396573c840ecc63899a7f773d",
+        "sdk_artifact_sha256": "f2268b24a4d365770d48a3cac3aabd1181f1c71f09eec217e2aae0c50b298b61",
+        "executable_sha256": "5bf5308928716742a5fe690c0d4f2cc96f625aae1240ccea0963548b5b3f6194",
+        "bundle": "org.festerm.mobile-spike"
+      },
+      "server": {
+        "os": "Linux",
+        "version": "0.17.30",
+        "desktop_gui_commit": "3eb9b4caf9d82d4767b1fd10c335665707d402f2",
+        "initial_runtime_epoch": 117,
+        "disabled_lifecycle_epoch": 118,
+        "restored_runtime_epoch": 119,
+        "native_epoch": 96,
+        "write": true,
+        "delete": true
+      },
+      "accepted_components": [
+        "Opened a Remote Delete review for the original 83-byte file without confirming. Normal host Disable completed at lifecycle epoch 118, stopped runtime 117, and retired the open review and Remote listing. The client displayed an interrupted connection with Reconnect.",
+        "One normal Enable started runtime 119 with the original singleton root, Start, and full settings, native registration and update record. An explicit Reconnect to the same host opened the configured root with no selection or old review and an empty Transfers sheet.",
+        "After Reconnect, one Remote New folder field focus showed the software keyboard. Taps on the visible keys entered ftqx and Cancel dismissed the form. Nine bounded keyboard diagnostic lines contained only keyboard modes and flags. No Create was submitted."
+      ],
+      "first_result_retained": "The first GUI actor binding refused before GUI input or a policy action. Restoring the exact admitted preservation guard corrected the binding.",
+      "preservation": "The original reviewed file, all nine original Documents entries and metadata were preserved. All twelve bounded R9 calls passed. The desktop GUI exited normally and drained. Owner and boot supervisor exited 0, all three strict host checks passed, owned processes drained, Simulators shut down, and original VM states were restored with zero debt.",
+      "limits": "Scoped pinned iOS Simulator and Linux live-grant retirement and same-host reconnect only. The old runtime ended. No transfer or Delete Confirm ran. Optional name entry and Cancel cover neither directory creation nor the cause of earlier software keyboard invisibility. Physical-device, release and wider native coverage remain pending.",
+      "private_receipt_sha256": "5e01954e1efe91fecbf796b6f463ffde9e3e2bbb899babc15c8b74bc3ab86be8",
+      "private_closure_sha256": "f98cb80a819017a9a5e8fce7f8431bd43b39d3a9c340f77e004804f9a6fca2ff",
+      "private_acceptance_sha256": "cecdbbfabe717c81b089ea06ba57a4a791dd69680453e2e1b58d082a1d0cbdea"
     }
   ],
   "pending": [

@@ -51,6 +51,13 @@ test evidence still covers instead of relabelling it as a new-head execution.
 
 ## Keep coordination and evidence proportional
 
+- Batch compatible validations in one run and record each outcome separately.
+  An ordinary failure should not automatically end a healthy run: continue
+  independent checks whose setup and authority remain known, preserve the first
+  failure, and distinguish any recovery from the initial result. Stop dependent
+  mutations when identity, authorization or publication state is uncertain; do
+  not blindly retry them. Reuse successful setup and builds, then close owned
+  resources once the useful batch is complete.
 - Reuse a working lane for ordinary iterations. Create another worktree for
   real parallel ownership or isolation, not for each compiler correction.
   Preserve historical commits and evidence without requiring every old
